@@ -21,7 +21,8 @@
 #define SAMPLE_RATE_HZ   200      // leitura do IMU / fusão
 #define TX_RATE_HZ       50       // envio ESP-NOW
 #define OLED_RATE_HZ     5
-#define DIAG_PRINT_HZ    10       // diagnóstico: taxa de impressão das leituras brutas
+#define DIAG_PRINT_HZ    1        // diagnóstico: taxa de impressão das leituras brutas
+#define DIAG_AVG_SAMPLES 400      // diagnóstico: leituras na média com a placa parada (2 s)
 
 // ---------- Fusão ----------
 #define COMP_FILTER_ALPHA 0.98f   // peso do giroscópio no filtro complementar

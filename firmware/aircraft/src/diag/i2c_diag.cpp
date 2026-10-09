@@ -1,8 +1,10 @@
 // Diagnóstico do barramento I2C do ESP A (ambiente i2cscan, não faz parte do firmware de voo).
 // 1) Varre 0x08..0x77 e identifica os chips conhecidos pelos registradores de ID.
 // 2) Compara com os endereços de config.h.
-// 3) Se o MPU6050 responder, imprime leituras brutas a DIAG_PRINT_HZ.
-// Envie 's' pela serial para varrer de novo (útil ao mexer em cabos e soldas).
+// 3) Se o MPU6050 responder, aceita comandos pela serial:
+//      s  varre de novo (útil ao mexer em cabos e soldas)
+//      l  liga/desliga o fluxo de leituras brutas a DIAG_PRINT_HZ (começa desligado)
+//      m  média e desvio padrão de DIAG_AVG_SAMPLES leituras (placa parada)
 // Acesso direto por registrador, sem bibliotecas, para isolar problemas de hardware.
 #include <Arduino.h>
 #include <Wire.h>
@@ -16,6 +18,7 @@ static const uint8_t BME_REG_CHIP_ID    = 0xD0;   // 0x60 BME280, 0x58 BMP280
 static const uint8_t HMC_REG_ID_A       = 0x0A;   // 0x0A..0x0C = "H43"
 
 static bool g_mpuOk = false;
+static bool g_stream = false;
 
 static bool probe(uint8_t addr) {
     Wire.beginTransmission(addr);
@@ -103,10 +106,48 @@ static void scan() {
     g_mpuOk = probe(ADDR_MPU6050) && writeReg(ADDR_MPU6050, MPU_REG_PWR_MGMT_1, 0x00);
     if (g_mpuOk) {
         delay(100);
-        Serial.println("[diag] MPU6050 brutos: ax ay az (LSB) | gx gy gz (LSB) | ax ay az (g) | gx gy gz (°/s) | T (°C)");
+        Serial.println("[diag] comandos: s = novo scan | l = liga/desliga leituras | m = média parada");
     } else {
-        Serial.println("[diag] MPU6050 indisponível: sem leituras brutas");
+        Serial.println("[diag] MPU6050 indisponível: sem leituras brutas (s = novo scan)");
     }
+}
+
+// Lê accel, temp e gyro; v: ax ay az temp gx gy gz
+static bool readMpu(int16_t v[7]) {
+    uint8_t b[14];
+    if (!readRegs(ADDR_MPU6050, MPU_REG_ACCEL_XOUT, b, sizeof(b))) return false;
+    for (int i = 0; i < 7; i++) v[i] = (int16_t)((b[2 * i] << 8) | b[2 * i + 1]);
+    return true;
+}
+
+static void printHeader() {
+    Serial.println("[diag] ax ay az (LSB) | gx gy gz (LSB) | ax ay az (g) | gx gy gz (°/s) | T (°C)");
+}
+
+// Média e desvio padrão com a placa parada: offsets do giroscópio e eixo que marca 1 g
+static void average() {
+    double sum[7] = {0}, sq[7] = {0};
+    unsigned n = 0;
+    Serial.printf("[diag] média de %d leituras, mantenha a placa parada...\n", DIAG_AVG_SAMPLES);
+    for (int k = 0; k < DIAG_AVG_SAMPLES; k++) {
+        int16_t v[7];
+        if (readMpu(v)) {
+            for (int i = 0; i < 7; i++) { sum[i] += v[i]; sq[i] += (double)v[i] * v[i]; }
+            n++;
+        }
+        delay(1000 / SAMPLE_RATE_HZ);
+    }
+    if (n == 0) { Serial.println("[diag] falha de leitura do MPU6050"); return; }
+    const char *name[7] = {"ax", "ay", "az", "T", "gx", "gy", "gz"};
+    const float scale[7] = {16384.0f, 16384.0f, 16384.0f, 1.0f, 131.0f, 131.0f, 131.0f};
+    for (int i = 0; i < 7; i++) {
+        if (i == 3) continue;
+        double mean = sum[i] / n;
+        double sd = sqrt(sq[i] / n - mean * mean);
+        Serial.printf("  %s  média %8.1f LSB = %7.3f %s   desvio %6.1f LSB\n", name[i], mean,
+                      mean / scale[i], i < 3 ? "g" : "°/s", sd);
+    }
+    Serial.printf("  T   média %5.1f °C   (%u leituras)\n", sum[3] / n / 340.0 + 36.53, n);
 }
 
 void setup() {
@@ -118,19 +159,25 @@ void setup() {
 
 void loop() {
     if (Serial.available()) {
-        if (Serial.read() == 's') scan();
+        switch (Serial.read()) {
+        case 's': g_stream = false; scan(); break;
+        case 'l':
+            if (!g_mpuOk) break;
+            g_stream = !g_stream;
+            if (g_stream) printHeader();
+            else Serial.println("[diag] leituras pausadas");
+            break;
+        case 'm': if (g_mpuOk) { g_stream = false; average(); } break;
+        }
     }
-    if (!g_mpuOk) return;
+    if (!g_stream) return;
 
-    uint8_t b[14];
-    if (!readRegs(ADDR_MPU6050, MPU_REG_ACCEL_XOUT, b, sizeof(b))) {
+    int16_t v[7];
+    if (!readMpu(v)) {
         Serial.println("[diag] falha de leitura do MPU6050");
         delay(1000 / DIAG_PRINT_HZ);
         return;
     }
-    int16_t v[7];
-    for (int i = 0; i < 7; i++) v[i] = (int16_t)((b[2 * i] << 8) | b[2 * i + 1]);
-    // v: ax ay az temp gx gy gz
     Serial.printf("%6d %6d %6d | %6d %6d %6d | %5.2f %5.2f %5.2f | %7.1f %7.1f %7.1f | %5.1f\n",
                   v[0], v[1], v[2], v[4], v[5], v[6],
                   v[0] / 16384.0f, v[1] / 16384.0f, v[2] / 16384.0f,

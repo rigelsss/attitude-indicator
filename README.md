@@ -61,6 +61,18 @@ Para apenas compilar, execute somente `pio run -e aircraft` ou `pio run -e groun
 
 O comportamento esperado do código atual é a mensagem de inicialização na serial e a alternância do LED definido em `include/config.h`: GPIO 2 no A e GPIO 27 no B. O LED do B precisa estar conectado conforme essa configuração.
 
+### Diagnóstico I2C do ESP A
+
+O ambiente `i2cscan` grava, no lugar do firmware normal, um diagnóstico que varre o barramento I2C, identifica os sensores e imprime as leituras brutas do MPU6050:
+
+```powershell
+cd firmware/aircraft
+pio run -e i2cscan -t upload
+pio device monitor -b 115200
+```
+
+O procedimento e os resultados observados ficam em [docs/hardware.md](docs/hardware.md).
+
 ## Fluxo futuro de Wi-Fi e página web
 
 Após a implementação do AP, servidor HTTP/WebSocket e página web, o fluxo previsto será:

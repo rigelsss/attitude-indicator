@@ -5,11 +5,12 @@
 #define PIN_I2C_SDA      21
 #define PIN_I2C_SCL      22
 #define I2C_FREQ_HZ      400000
+#define I2C_FREQ_DIAG_HZ 100000   // diagnóstico: mais tolerante a fios longos e soldas ruins
 
 // Endereços esperados (confirmar com I2C scan)
 #define ADDR_MPU6050     0x68
 #define ADDR_BME280      0x76     // 0x77 se SDO estiver em VCC
-#define ADDR_QMC5883L    0x0D     // se aparecer 0x1E, o GY-273 é HMC5883L
+#define ADDR_HMC5883L    0x1E     // GY-273 com HMC5883L (um clone QMC5883L responderia em 0x0D)
 #define ADDR_OLED_STATUS 0x3C
 
 // ---------- GPIO ----------
@@ -20,6 +21,7 @@
 #define SAMPLE_RATE_HZ   200      // leitura do IMU / fusão
 #define TX_RATE_HZ       50       // envio ESP-NOW
 #define OLED_RATE_HZ     5
+#define DIAG_PRINT_HZ    10       // diagnóstico: taxa de impressão das leituras brutas
 
 // ---------- Fusão ----------
 #define COMP_FILTER_ALPHA 0.98f   // peso do giroscópio no filtro complementar

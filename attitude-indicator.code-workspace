@@ -1,0 +1,18 @@
+{
+	// Abra este arquivo no VS Code (File > Open Workspace from File...).
+	// Cada firmware vira uma pasta própria, e o PlatformIO gera o IntelliSense de cada uma.
+	"folders": [
+		{ "name": "aircraft (ESP A)", "path": "firmware/aircraft" },
+		{ "name": "ground (ESP B)", "path": "firmware/ground" },
+		{ "name": "repositório", "path": "." }
+	],
+	"settings": {
+		// Arquivos fora dos projetos PlatformIO (ex.: firmware/shared) usam o compilador do ESP32
+		"C_Cpp.default.compilerPath": "${env:USERPROFILE}/.platformio/packages/toolchain-xtensa-esp32/bin/xtensa-esp32-elf-gcc.exe",
+		"C_Cpp.default.includePath": [
+			"${workspaceFolder}/firmware/shared/include"
+		],
+		"C_Cpp.default.cStandard": "c11",
+		"C_Cpp.default.cppStandard": "gnu++17"
+	}
+}

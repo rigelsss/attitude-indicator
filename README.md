@@ -16,6 +16,6 @@ ESP A (avião) ──ESP-NOW──▶ ESP B (solo) ──Wi-Fi AP / WebSocket─
 | `docs` | Plano, protocolo, pinagem, relatório |
 
 ## Uso rápido
-1. Gravar o ESP A: `cd firmware/aircraft && pio run -t upload`
-2. Gravar o ESP B: `cd firmware/ground && pio run -t upload && pio run -t uploadfs`
+1. Gravar o ESP A: `cd firmware/aircraft && pio run -e aircraft -t upload`
+2. Gravar o ESP B: `cd firmware/ground && pio run -e ground -t upload && pio run -e ground -t uploadfs`
 3. Conectar no Wi-Fi `Horizonte-ESP` e abrir `http://192.168.4.1`

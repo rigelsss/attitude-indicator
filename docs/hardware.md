@@ -17,7 +17,7 @@ O diagnóstico varre o barramento, identifica os chips pelos registradores de ID
 | Tecla | Ação |
 |---|---|
 | `s` | Varre o barramento de novo (depois de mexer em cabos) |
-| `l` | Liga ou pausa o fluxo de leituras brutas do MPU (5 por segundo; começa pausado) |
+| `l` | Liga ou pausa o fluxo de leituras brutas do MPU (`DIAG_PRINT_HZ` leituras por segundo, hoje 1; começa pausado) |
 | `m` | Média e desvio padrão de 400 leituras (2 s) com a placa parada |
 
 Para sair do monitor, use `Ctrl+C`; não é preciso desconectar a placa. Para voltar ao firmware normal, grave o ambiente `aircraft`.
@@ -56,10 +56,11 @@ Comando `m` (400 leituras em 2 s), executado duas vezes seguidas, com a placa pa
 
 Conclusões:
 
-- **Giroscópio.** O bias é grande, mas estável: entre as duas medidas variou menos de 0,01 °/s. Sem correção, o eixo X derivaria cerca de 295° por minuto. Uma média de 2 s parada no boot estima o bias com incerteza de cerca de 0,006 °/s (15 LSB / √400). O bias muda com a temperatura, então a calibração deve acontecer no boot e se repetir sob comando.
-- **Acelerômetro.** O módulo da gravidade medido é 1,103 g, 10 % acima do esperado. Isso está acima da tolerância de escala do datasheet (±3 %) e perto do limite de offset do eixo Z (±80 mg). Com uma única posição não dá para separar offset de escala; isso exige a calibração em seis posições (cada eixo em +1 g e −1 g).
+- **Giroscópio.** O bias é grande, mas estável: entre as duas medidas variou menos de 0,01 °/s. Sem correção, o eixo X derivaria cerca de 295° por minuto. Uma média de 2 s parada no boot estima o bias com incerteza de cerca de 0,006 °/s (15 LSB / √400). O bias muda com a temperatura, então a calibração deve acontecer no boot e se repetir sob comando, mas só deve ser aceita com a placa comprovadamente parada (ver [calibracao.md](calibracao.md)).
+- **Acelerômetro.** O módulo da gravidade medido é 1,103 g, 10 % acima do esperado. Isso está acima da tolerância de escala do datasheet (±3 %) e perto do limite de offset do eixo Z (±80 mg). Com uma única posição não dá para separar offset de escala; isso exige a calibração em seis posições (cada eixo em +1 g e −1 g). Sobre o efeito na atitude: roll = atan2(ay, az) e pitch = atan2(−ax, √(ay² + az²)) dependem só de razões entre eixos, então um erro de escala **igual nos três eixos** se cancela no ângulo. Offsets e escalas **diferentes por eixo** distorcem o ângulo, e com uma posição só não dá para saber qual é o caso. Mesmo um erro uniforme precisa ser corrigido, porque o módulo |a| será usado como critério: na detecção de repouso (|a| ≈ 1 g) e no filtro complementar (confiar menos no acelerômetro quando |a| se afasta de 1 g). Com 1,10 g em repouso, os dois critérios falhariam.
 - **Inclinação aparente.** Os valores de ax e ay correspondem a cerca de 2,1° de pitch e 1,0° de roll. Na primeira sessão (leituras a olho, com a placa em outra posição) eles eram −0,02 g e +0,06 g. Como mudaram de uma sessão para outra, refletem sobretudo a posição em que a placa estava apoiada, e não um offset fixo. Para separar uma coisa da outra é preciso girar a placa 180° sobre a mesma superfície.
 - **Ruído.** É compatível com o datasheet e não mostra nenhum sinal de mau contato. Com o ruído do acelerômetro, um ângulo calculado a partir de uma única amostra oscila cerca de 0,2°; o filtro complementar reduz isso. Ligar o DLPF do MPU (por exemplo, em 42 Hz) também reduz o ruído sem prejudicar a amostragem a 200 Hz.
+- **Limiares de repouso.** O ruído medido define o critério de "placa parada" usado na calibração do giroscópio: desvio padrão de cada eixo do giroscópio abaixo de ~50 LSB (≈ 0,4 °/s, cerca de 3× o maior desvio observado) e |a| entre 0,95 g e 1,05 g, este último só depois da calibração do acelerômetro. Revalidar os limiares com o MPU montado no modelo e o DLPF ligado.
 - **Barramento.** Dois scans seguidos deram o mesmo resultado: apenas o MPU responde.
 
 ## Orientação de montagem do MPU6050
@@ -73,3 +74,8 @@ Pendente. Com a placa parada em cada posição, anote qual eixo do acelerômetro
 | Asa direita para baixo | |
 
 A partir dessa tabela se definem os sinais de roll e pitch, que depois entram no contrato (`telemetry.h`).
+
+Preencher **com o MPU já fixado na posição final do modelo**. Requisitos de montagem:
+
+- MPU rigidamente fixo e alinhado aos eixos do modelo. Fita dupla-face espessa age como amortecedor e gera vibração no sinal.
+- Magnetômetro longe do powerbank e dos fios de alimentação: a corrente gera campo magnético e distorce a proa. Calibrar o magnetômetro já montado.

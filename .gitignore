@@ -8,5 +8,4 @@ __pycache__/
 .venv/
 logs/
 *.csv
-CLAUDE.md
 /docs/revisao-local.md

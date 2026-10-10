@@ -45,6 +45,7 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 10/10/2026 | A | Montagem 4: MPU recolado depois de soltar da caixa | 100 kHz | Seis posições sem falhas na média; `Error -1` de I2C antes da posição 6 | Erro sumiu depois de ajustar os fios: há mau contato na fiação |
 | 10/10/2026 | A | Montagem 5: fiação reorganizada e presa melhor | 100 kHz | Seis posições, 400 de 400 leituras válidas em todas, nenhum erro de I2C | Ver "Montagem 5" |
 | 10/10/2026 | A | Montagem 5, com o INT da GY-521 ligado ao GPIO 19 | 100 e 400 kHz | Teste de contato sem falhas nas duas frequências; INT a 201,5 Hz | Ver "Contato a 400 kHz e pino INT" |
+| 10/10/2026 | A | Montagem 5, depois de soltar o AD0 do chicote e prender o fio do INT | 100 e 400 kHz | Eixos alinhados à gravidade dentro de ±6 LSB da montagem 5 (Z: +17); contato sem falhas; INT a 201,5 Hz | Ver "Revalidação após mexer no AD0 e no INT" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -176,6 +177,29 @@ Conclusões:
 - **Mexer nos fios moveu levemente a caixa ou o módulo.** O ay em repouso passou de +393 LSB, no primeiro `m`, para +586 e +589 LSB depois dos testes de contato, uma mudança de cerca de 0,7° em roll. O valor final está mais próximo do valor da montagem 5 na posição 1 (+615). A causa provável é a caixa se acomodar na mesa, e não o módulo se soltar. Mesmo assim, convém evitar que os fios fiquem esticados entre a caixa e o ESP32.
 
 Com estes testes, o MPU6050 está validado na bancada: identificação, calibração em seis posições, orientação dos eixos, repouso e ruído, contato a 100 e a 400 kHz e pino INT.
+
+### Revalidação após mexer no AD0 e no INT (10/10/2026)
+
+O AD0 foi solto do chicote, ficando sem conexão, e o fio do INT foi preso ao GPIO 19, sem mexer de propósito no módulo. Para checar se algo mudou, foi feito um teste rápido em cinco posições, sem a face para baixo. Em cada posição, compara-se com a montagem 5 o eixo alinhado à gravidade: nesse eixo, uma inclinação de até cerca de 3° altera a leitura em menos de 25 LSB, então uma mudança maior que isso vem do sensor, e não do apoio da caixa. A tolerância adotada foi de ±30 LSB. Temperatura: 25,9–26,1 °C.
+
+| Passo | Posição | Eixo | Medido | Montagem 5 | Diferença |
+|---|---|---|---|---|---|
+| P2/P10 | Face para cima | az | +18 027 | +18 010 | +17 ✔ |
+| P3 | Nariz para cima | ax | +16 744 | +16 738 | +6 ✔ |
+| P4 | Nariz para baixo | ax | −16 193 | −16 198 | +5 ✔ |
+| P5 | Asa direita para baixo | ay | +16 422 | +16 419 | +3 ✔ |
+| P6 | Asa esquerda para baixo | ay | −16 388 | −16 392 | +4 ✔ |
+
+| Eixo | Offset | Escala | Montagem 5 |
+|---|---|---|---|
+| X | +275 LSB | 16 468 LSB/g | +270, 16 468 |
+| Y | +17 LSB | 16 405 LSB/g | +14, 16 406 |
+| Z | não medido (sem a face para baixo) | — | +1 486, 16 524 |
+
+- **A calibração da montagem 5 continua valendo.** Offset e escala de X e de Y repetiram dentro de 5 LSB (0,3 mg). O az com a face para cima ficou 17 LSB (≈ 1 mg) acima, bem abaixo da mudança de cerca de 100 LSB observada quando a fixação mudou entre as montagens 2 e 3. Com os coeficientes da montagem 5, |a| corrigido com a face para cima (P10) dá 1,002 g.
+- **O P2 teve movimento:** o desvio de gz foi de 88 LSB, acima do critério de 50. A medida P10, na mesma posição e parada, deu o mesmo az (+18 027), então o valor de Z é confiável.
+- **Os eixos laterais mudaram até cerca de 330 LSB (≈ 1,1°)** em relação à montagem 5. Isso mistura a recolocação da caixa no esquadro com um possível pequeno deslocamento do módulo, e não afeta a calibração. O desalinhamento fica para o zero de nível do firmware.
+- **AD0 e INT:** o MPU continua em 0x68 com o AD0 solto. No teste de contato a 400 kHz, mexendo nos fios, foram 10 751 leituras sem falhas. O INT deu 201,5 Hz, igual ao teste anterior.
 
 ## Orientação de montagem do MPU6050
 

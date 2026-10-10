@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 236" width="600" height="416" role="img" aria-labelledby="titulo">
+  <title id="titulo">Arquitetura: ESP32 A (avião) envia telemetria por ESP-NOW ao ESP32 B (solo), que a disponibiliza ao computador por Wi-Fi e WebSocket</title>
+  <style>
+    svg { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .t { fill: #1f2328; }
+    .l { stroke: #1f2328; fill: none; }
+    @media (prefers-color-scheme: dark) {
+      .t { fill: #e6edf3; }
+      .l { stroke: #e6edf3; }
+    }
+  </style>
+
+  <!-- ESP32 A -->
+  <rect x="8" y="15" width="142" height="142" rx="10" fill="#12836c" fill-opacity=".10" stroke="#12836c" stroke-width="1.5"/>
+  <text class="t" x="79" y="38" font-size="13" font-weight="bold" text-anchor="middle">ESP32 A — Avião</text>
+  <rect x="20" y="47" width="118" height="21" rx="4" fill="#12836c" fill-opacity=".13"/>
+  <text class="t" x="79" y="61" font-size="10.5" text-anchor="middle">MPU6050</text>
+  <rect x="20" y="73" width="118" height="21" rx="4" fill="#12836c" fill-opacity=".13"/>
+  <text class="t" x="79" y="87" font-size="10.5" text-anchor="middle">BME280 / GY-273</text>
+  <rect x="20" y="99" width="118" height="21" rx="4" fill="#12836c" fill-opacity=".13"/>
+  <text class="t" x="79" y="113" font-size="10.5" text-anchor="middle">Fusão de atitude</text>
+  <rect x="20" y="125" width="118" height="21" rx="4" fill="#12836c" fill-opacity=".13"/>
+  <text class="t" x="79" y="139" font-size="10.5" text-anchor="middle">ESP-NOW TX</text>
+
+  <!-- ESP32 B -->
+  <rect x="190" y="15" width="142" height="142" rx="10" fill="#307bd4" fill-opacity=".10" stroke="#307bd4" stroke-width="1.5"/>
+  <text class="t" x="261" y="38" font-size="13" font-weight="bold" text-anchor="middle">ESP32 B — Solo</text>
+  <rect x="202" y="47" width="118" height="21" rx="4" fill="#307bd4" fill-opacity=".13"/>
+  <text class="t" x="261" y="61" font-size="10.5" text-anchor="middle">ESP-NOW RX</text>
+  <rect x="202" y="73" width="118" height="21" rx="4" fill="#307bd4" fill-opacity=".13"/>
+  <text class="t" x="261" y="87" font-size="10.5" text-anchor="middle">Horizonte TFT / OLED</text>
+  <rect x="202" y="99" width="118" height="21" rx="4" fill="#307bd4" fill-opacity=".13"/>
+  <text class="t" x="261" y="113" font-size="10.5" text-anchor="middle">Alarmes / Encoder</text>
+  <rect x="202" y="125" width="118" height="21" rx="4" fill="#307bd4" fill-opacity=".13"/>
+  <text class="t" x="261" y="139" font-size="10.5" text-anchor="middle">Wi-Fi + WebSocket</text>
+
+  <!-- A → B: telemetria por ESP-NOW -->
+  <text class="t" x="170" y="84" font-size="8" text-anchor="middle">ESP-NOW</text>
+  <path class="l" d="M150 91 H190" stroke-width="1.7"/>
+  <path class="l" d="M183 86 L190 91 L183 96" stroke-width="1.7"/>
+
+  <!-- B ↔ computador: telemetria e comandos -->
+  <path class="l" d="M261 157 V180 H170 V195" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <path class="l" d="M256 164 L261 157 L266 164" stroke-width="1.5"/>
+  <path class="l" d="M165 188 L170 195 L175 188" stroke-width="1.5"/>
+  <text class="t" x="215" y="176" font-size="8" text-anchor="middle">Wi-Fi AP / WebSocket</text>
+
+  <!-- Computador -->
+  <rect x="50" y="195" width="240" height="33" rx="7" fill="#888888" fill-opacity=".13" stroke="#888888" stroke-opacity=".5"/>
+  <text class="t" x="170" y="216" font-size="12" font-weight="bold" text-anchor="middle">Computador — Web + Python</text>
+</svg>

@@ -6,6 +6,7 @@
 #define PIN_I2C_SCL      22
 #define I2C_FREQ_HZ      400000
 #define I2C_FREQ_DIAG_HZ 100000   // diagnóstico: mais tolerante a fios longos e soldas ruins
+#define I2C_TIMEOUT_MS   5        // limite por transação (padrão do Wire: 50 ms); 128 bytes a 400 kHz ≈ 3 ms
 
 // Endereços esperados (confirmar com I2C scan)
 #define ADDR_MPU6050     0x68
@@ -25,6 +26,16 @@
 #define DIAG_AVG_SAMPLES 400      // diagnóstico: leituras na média com a placa parada (2 s)
 #define DIAG_STRESS_MS   5000     // diagnóstico: duração do teste de contato
 #define DIAG_INT_TEST_MS 2000     // diagnóstico: duração da contagem de pulsos do INT
+
+// ---------- MPU6050 (firmware de voo) ----------
+#define MPU_ACCEL_RANGE_G       4      // faixa do acelerômetro: ±4 g
+#define MPU_GYRO_RANGE_DPS      500    // faixa do giroscópio: ±500 °/s
+#define MPU_DLPF_HZ             42     // banda do filtro interno (giroscópio 42 Hz, acelerômetro 44 Hz)
+#define MPU_MAX_FALHAS_SEGUIDAS 5      // leituras falhas seguidas antes de reiniciar o barramento
+#define MPU_INT_QUEUE_LEN       16     // pulsos de "data ready" na fila (80 ms a 200 Hz)
+#define MPU_INT_READ_DELAY_US   100    // espera após o pulso do INT (50 µs) para a borda não cair na leitura
+#define MPU_INT_TIMEOUT_MS      50     // sem pulsos do INT por esse tempo (10 amostras): conferir o MPU
+#define MAIN_PRINT_MS           1000   // main provisório: intervalo do resumo na serial
 
 // ---------- Fusão ----------
 #define COMP_FILTER_ALPHA 0.98f   // peso do giroscópio no filtro complementar

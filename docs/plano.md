@@ -20,5 +20,5 @@ Cada etapa termina com algo **demonstrável**. Tópico da disciplina entre colch
 ## Riscos conhecidos
 - Mesmo canal para o AP e o ESP-NOW (fixo em 1) — validar já na semana 3
 - O GY-273 é HMC5883L (0x1E), mas alguns módulos vendidos assim trazem um clone QMC5883L (0x0D), que usa outra biblioteca: confirmar no diagnóstico `i2cscan`
-- O magnetômetro sofre interferência de motores, ímãs e da própria protoboard: calibrar já montado no modelo
+- O magnetômetro sofre interferência de ímãs, de correntes nos fios de alimentação e da própria protoboard: calibrar já montado no modelo
 - Buzzer ativo direto no GPIO: medir a corrente; se passar de 20 mA, usar transistor

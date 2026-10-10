@@ -46,6 +46,7 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 10/10/2026 | A | Montagem 5: fiação reorganizada e presa melhor | 100 kHz | Seis posições, 400 de 400 leituras válidas em todas, nenhum erro de I2C | Ver "Montagem 5" |
 | 10/10/2026 | A | Montagem 5, com o INT da GY-521 ligado ao GPIO 19 | 100 e 400 kHz | Teste de contato sem falhas nas duas frequências; INT a 201,5 Hz | Ver "Contato a 400 kHz e pino INT" |
 | 10/10/2026 | A | Montagem 5, depois de soltar o AD0 do chicote e prender o fio do INT | 100 e 400 kHz | Eixos alinhados à gravidade dentro de ±6 LSB da montagem 5 (Z: +17); contato sem falhas; INT a 201,5 Hz | Ver "Revalidação após mexer no AD0 e no INT" |
+| 10/10/2026 | A | Montagem 5, firmware `aircraft` com o driver próprio do MPU6050; fio do INT separado do SDA/SCL | 400 kHz | Conversão, taxa (≈ 199,9 Hz, após corrigir a medição), ruído com DLPF, faixa de ±500 °/s e recuperação após soltar SDA e VCC validados; 0 falhas em ~4,5 min | Ver "Driver do MPU6050 no firmware de voo" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -200,6 +201,52 @@ O AD0 foi solto do chicote, ficando sem conexão, e o fio do INT foi preso ao GP
 - **O P2 teve movimento:** o desvio de gz foi de 88 LSB, acima do critério de 50. A medida P10, na mesma posição e parada, deu o mesmo az (+18 027), então o valor de Z é confiável.
 - **Os eixos laterais mudaram até cerca de 330 LSB (≈ 1,1°)** em relação à montagem 5. Isso mistura a recolocação da caixa no esquadro com um possível pequeno deslocamento do módulo, e não afeta a calibração. O desalinhamento fica para o zero de nível do firmware.
 - **AD0 e INT:** o MPU continua em 0x68 com o AD0 solto. No teste de contato a 400 kHz, mexendo nos fios, foram 10 751 leituras sem falhas. O INT deu 201,5 Hz, igual ao teste anterior.
+
+### Driver do MPU6050 no firmware de voo (10/10/2026)
+
+Driver próprio em `firmware/aircraft/lib/mpu6050/`, com acesso direto aos registradores, validado pelo `main.cpp` provisório. Esse `main.cpp` lê uma amostra a cada pulso de "data ready" e imprime um resumo por segundo. Configuração: ±4 g, ±500 °/s, DLPF de 42 Hz (giroscópio) e 44 Hz (acelerômetro), relógio do PLL do giroscópio (`CLKSEL = 1`), 200 Hz, I2C a 400 kHz com timeout de 5 ms. Montagem 5, caixa apoiada, 26,1–26,4 °C. Valores sem calibração, nos eixos do chip.
+
+| Teste | Resultado | Situação |
+|---|---|---|
+| Conversão de unidades (face para cima) | az = 1,101 g; giroscópio −4,89 / +2,67 / +1,00 °/s, iguais ao diagnóstico em ±2 g e ±250 °/s | ✔ |
+| Taxa | ≈ 199,9 Hz com o relógio do PLL: 199 ou 200 pulsos por janela exata de 1 s, com 199 em cerca de 1 a cada 7 janelas (−0,07 %). O relógio interno, no teste `i` do diagnóstico, deu 201,5 Hz (+0,75 %). Os 202 Hz das primeiras versões do `main.cpp` eram erro de medição (ver abaixo). A fusão deve usar o intervalo medido (`micros()`), e não 5 ms fixos | ✔ |
+| Amostras descartadas | 2 por janela (1 %): pulsos que chegam enquanto o `main.cpp` provisório imprime o resumo. A amostra é sobrescrita antes de ser lida. Não acontece mais nada além disso: perdidas 0, falhas 0 em ~4 min | ✔ |
+| Ruído com o DLPF | 1,9–2,5 mg e 0,03–0,04 °/s (desvio padrão do pior eixo, janelas de 1 s). Sem o DLPF, no diagnóstico: 4–6 mg e 0,10–0,15 °/s | ✔ |
+| Faixa de ±500 °/s | Giros rápidos com a mão: picos de 300,9 e 295,8 °/s, sem saturar o giroscópio. Na faixa padrão (±250 °/s), esses giros teriam saturado | ✔ |
+| Detecção de saturação | Um impacto ao apoiar a caixa passou de ±4 g no acelerômetro e foi contado em "saturadas" | ✔ |
+| Retorno ao repouso após movimentos | Mesmas médias e mesmo bias do giroscópio de antes dos movimentos | ✔ |
+| SDA solto por ~3 s | Falhas contadas, barramento reiniciado a cada 5 falhas seguidas; ao recolocar, leituras voltaram sozinhas com a configuração intacta | ✔ |
+| VCC solto por ~2,5 s | Ver abaixo | ✔ após correção |
+
+**Falhas de I2C causadas pelo pino INT.** Na primeira versão, com o fio do INT no mesmo chicote do SDA e do SCL e a leitura começando logo no pulso, houve falhas isoladas (`Error -1`), que o diagnóstico nunca tinha mostrado. No `t` do diagnóstico o INT fica desligado.
+
+| Situação | Falhas | Frequência |
+|---|---|---|
+| INT no chicote, leitura logo após o pulso | 13 em ~72 s | 1 a cada ~5 s (~0,09 % das leituras) |
+| INT separado do SDA/SCL (1–2 cm) | 5 em ~190 s | 1 a cada ~38 s |
+| INT separado e leitura 100 µs após o pulso (`MPU_INT_READ_DELAY_US`) | 0 em ~4,5 min | nenhuma |
+
+Conclusão: as bordas do pulso do INT (50 µs, a 200 Hz) induziam ruído no SDA e no SCL. A borda de descida caía no meio da transação I2C. Separar o fio reduziu as falhas, e esperar o fim do pulso antes de ler as eliminou. O driver tratou cada falha isolada como previsto: descartou a amostra, sem afetar as médias.
+
+**Queda de VCC e chip reiniciado.** Na primeira versão, ao soltar o VCC da GY-521 o firmware ficou parado em "0 Hz, sem pulsos do INT", sem registrar falhas, e não voltou depois de recolocar o VCC. Causa: a leitura só acontecia a cada pulso do INT. Sem pulsos, nenhuma leitura era tentada, e o chip voltava do reinício em sleep, com o INT desligado. Correção: se passarem `MPU_INT_TIMEOUT_MS` (50 ms) sem pulsos, o firmware chama `checkAlive()`, que relê a configuração. Sem resposta, conta falha e segue o fluxo de recuperação; com a configuração perdida, reconfigura. Resultado do teste repetido: com o VCC solto, as falhas subiram de 50 em 50 ms; ao recolocar o VCC, houve 1 recuperação, com a taxa normal, az = 1,101 g e o mesmo bias de antes. As 541 amostras "perdidas" correspondem aos ~2,7 s sem sensor.
+
+Com a medição de janelas corrigida, o teste foi repetido 3 vezes seguidas, com ~30 s entre as desconexões. Resultados:
+- As recuperações subiram 1 → 2 → 3, uma por desconexão.
+- O resumo continuou saindo uma vez por segundo, sem rajadas.
+- az voltou a 1,102 g em todas as vezes, e as perdidas (504, 602 e 492) correspondem aos ~2,5–3 s sem sensor.
+- Na primeira janela depois de cada volta, o ruído ficou alto (74–162 mg, picos de ~100 °/s), provavelmente pelo movimento da caixa ao recolocar o fio. Também pode haver um transitório de partida do giroscópio, que leva ~30 ms para estabilizar depois do reset. Para a fusão, convém descartar as amostras dos primeiros ~100 ms depois de uma reconfiguração.
+- Logo após cada volta, o bias de gx estava em −4,80 a −4,85 °/s, e voltou a −4,87 °/s em ~5 s, enquanto a temperatura subia de 25,9 para 26,2 °C. O chip esfria quando fica sem alimentação, e o bias acompanha a temperatura. Isso reforça que a calibração do giroscópio no boot deve aceitar a janela só com o chip estável.
+
+**Correção da medição de taxa e de perdas no `main.cpp` provisório.** As primeiras versões tinham dois erros de medição. Nenhum dos dois afeta o driver.
+
+- *Taxa inflada.* A janela seguinte só começava a contar o tempo depois da impressão do resumo (~15–20 ms), mas os pulsos que chegavam durante a impressão entravam na sua contagem. Resultado: ~2 pulsos a mais por segundo, e daí os 202 Hz. Correção: janelas contínuas de exatamente 1 s, com limites dados pelos instantes que a interrupção grava. A comparação dos instantes é feita com sinal, para tratar corretamente a virada do `micros()` e os pulsos atrasados.
+- *Leituras repetidas.* A fila guarda os instantes dos pulsos, mas o MPU guarda só a última amostra. Depois de um bloqueio, cada pulso pendente gerava uma leitura da mesma amostra, contada como distinta. As amostras sobrescritas não apareciam em "perdidas", que só detecta pulsos ausentes. Correção: a fila é esvaziada a cada ciclo, só o pulso mais recente gera leitura, e os demais são contados em "descartadas".
+- O efeito nos resultados anteriores é pequeno: ~2 duplicatas em 200 por segundo não mudam as médias e reduzem o ruído calculado em menos de 2 %. Os valores de ruído da tabela continuam válidos. A versão corrigida mediu 2,0–2,4 mg e 0,030–0,037 °/s.
+- Uma revisão de código encontrou ainda um defeito na primeira versão das janelas: um pulso enfileirado antes de a janela avançar pelo relógio, no caminho de timeout, era interpretado como um intervalo enorme (subtração sem sinal) e disparava ~4 300 fechamentos de janela. O defeito foi corrigido antes de aparecer na bancada.
+
+**Observações.**
+- Cada falha gera uma linha `[E][Wire.cpp…]` na serial, que leva ~7 ms a 115200 baud. Em falhas seguidas, esse log, e não o timeout do I2C, é o que limita a taxa do laço.
+- Algumas linhas chegaram ao PC com os primeiros 64 caracteres corrompidos (`����`). 64 bytes é o tamanho de um pacote USB, o que indica o caminho USB até o PC (cabo, porta ou driver), e não o firmware. Os dados do MPU não são afetados.
 
 ## Orientação de montagem do MPU6050
 

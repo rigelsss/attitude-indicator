@@ -47,6 +47,7 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 10/10/2026 | A | Montagem 5, com o INT da GY-521 ligado ao GPIO 19 | 100 e 400 kHz | Teste de contato sem falhas nas duas frequências; INT a 201,5 Hz | Ver "Contato a 400 kHz e pino INT" |
 | 10/10/2026 | A | Montagem 5, depois de soltar o AD0 do chicote e prender o fio do INT | 100 e 400 kHz | Eixos alinhados à gravidade dentro de ±6 LSB da montagem 5 (Z: +17); contato sem falhas; INT a 201,5 Hz | Ver "Revalidação após mexer no AD0 e no INT" |
 | 10/10/2026 | A | Montagem 5, firmware `aircraft` com o driver próprio do MPU6050; fio do INT separado do SDA/SCL | 400 kHz | Conversão, taxa (≈ 199,9 Hz, após corrigir a medição), ruído com DLPF, faixa de ±500 °/s e recuperação após soltar SDA e VCC validados; 0 falhas em ~4,5 min | Ver "Driver do MPU6050 no firmware de voo" |
+| 10/10/2026 | A | Montagem 5, firmware `aircraft` com calibração (`lib/imu_cal`, NVS) | 400 kHz | Seis posições pelo firmware em ±4 g: \|a\| corrigido de 1,0001 a 1,0015 g; bias do giroscópio no boot aceito só em repouso; persistência na NVS | Ver "Calibração no firmware de voo" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -234,7 +235,7 @@ Com a medição de janelas corrigida, o teste foi repetido 3 vezes seguidas, com
 - As recuperações subiram 1 → 2 → 3, uma por desconexão.
 - O resumo continuou saindo uma vez por segundo, sem rajadas.
 - az voltou a 1,102 g em todas as vezes, e as perdidas (504, 602 e 492) correspondem aos ~2,5–3 s sem sensor.
-- Na primeira janela depois de cada volta, o ruído ficou alto (74–162 mg, picos de ~100 °/s), provavelmente pelo movimento da caixa ao recolocar o fio. Também pode haver um transitório de partida do giroscópio, que leva ~30 ms para estabilizar depois do reset. Para a fusão, convém descartar as amostras dos primeiros ~100 ms depois de uma reconfiguração.
+- Na primeira janela depois de cada volta, o ruído ficou alto (74–162 mg, picos de ~100 °/s). Parte disso pode ser movimento da caixa ao recolocar o fio, mas a causa principal é o transitório de partida do giroscópio depois da reconfiguração, confirmado na calibração (ver "Calibração no firmware de voo"). A calibração descarta os primeiros 200 ms depois de cada configuração; a fusão deve fazer o mesmo.
 - Logo após cada volta, o bias de gx estava em −4,80 a −4,85 °/s, e voltou a −4,87 °/s em ~5 s, enquanto a temperatura subia de 25,9 para 26,2 °C. O chip esfria quando fica sem alimentação, e o bias acompanha a temperatura. Isso reforça que a calibração do giroscópio no boot deve aceitar a janela só com o chip estável.
 
 **Correção da medição de taxa e de perdas no `main.cpp` provisório.** As primeiras versões tinham dois erros de medição. Nenhum dos dois afeta o driver.
@@ -247,6 +248,73 @@ Com a medição de janelas corrigida, o teste foi repetido 3 vezes seguidas, com
 **Observações.**
 - Cada falha gera uma linha `[E][Wire.cpp…]` na serial, que leva ~7 ms a 115200 baud. Em falhas seguidas, esse log, e não o timeout do I2C, é o que limita a taxa do laço.
 - Algumas linhas chegaram ao PC com os primeiros 64 caracteres corrompidos (`����`). 64 bytes é o tamanho de um pacote USB, o que indica o caminho USB até o PC (cabo, porta ou driver), e não o firmware. Os dados do MPU não são afetados.
+
+### Calibração no firmware de voo (10/10/2026)
+
+Firmware `aircraft` com a calibração de [calibracao.md](calibracao.md): lógica pura em `lib/imu_cal` (12 testes `native`), NVS em `lib/imu_store` e comandos `c`, `6`, `g` e `r` pelo `main.cpp` provisório. Montagem 5, caixa apoiada, 26,4–26,9 °C, MPU em ±4 g e ±500 °/s com DLPF.
+
+**Seis posições (comando `6`).** Todas as medidas foram aceitas na primeira tentativa.
+
+| Posição | Média medida (g) | \|a\| corrigido |
+|---|---|---|
+| Face para cima | +0,0173 +0,0314 +1,1013 | 1,0005 |
+| Face para baixo | −0,0063 −0,0487 −0,9161 | 1,0015 |
+| Nariz para cima | +1,0217 +0,0060 +0,1070 | 1,0001 |
+| Nariz para baixo | −0,9886 −0,0354 +0,1191 | 1,0010 |
+| Asa direita para baixo | −0,0073 +1,0017 +0,0499 | 1,0012 |
+| Asa esquerda para baixo | +0,0340 −1,0008 +0,1076 | 1,0003 |
+
+| Eixo | Offset (±4 g, firmware) | Montagem 5 (±2 g, diagnóstico) | Escala (firmware) | Montagem 5 |
+|---|---|---|---|---|
+| X | +16,5 mg | +16,5 mg | +0,51 % | +0,51 % |
+| Y | +0,5 mg | +0,8 mg | +0,13 % | +0,13 % |
+| Z | +92,6 mg | +90,7 mg | +0,87 % | +0,86 % |
+
+- Os coeficientes medidos em ±4 g pelo firmware coincidem com os medidos em ±2 g pelo diagnóstico, com diferença de até 1,9 mg e 0,01 %. A conversão de unidades do driver e o cálculo de `lib/imu_cal` estão confirmados com dados reais.
+- **Comando `c` depois de gravar:** \|a\| corrigido de 0,9996 g (face para cima), 1,0000 g (nariz para cima) e 1,0003 g (asa esquerda para baixo), dentro de 0,98–1,02 g. Com a face para cima, ay corrigido = +0,035 g (~2°): é o desalinhamento do módulo em roll, já registrado, a ser tratado pelo zero de nível. O giroscópio corrigido ficou entre −0,033 e +0,011 °/s.
+- **Reinício:** os coeficientes voltaram da NVS ("acelerômetro calibrado"), sem nova calibração.
+
+**Bias do giroscópio no boot.**
+
+| Situação | Resultado |
+|---|---|
+| Primeira versão, caixa parada | A primeira janela **sempre** era recusada como "placa em movimento", com desvio de exatamente 3,382 °/s em dois boots seguidos. A segunda janela era aceita |
+| Com descarte de 200 ms após configurar o MPU (`CAL_MPU_SETTLE_MS`), caixa parada | Primeira janela aceita em dois boots: desvio de 0,033 °/s, bias −4,913 / +2,654…2,659 / +1,011…1,013 °/s |
+| Boot mexendo a caixa | 6 janelas recusadas (desvios de 9 a 91 °/s); `c` mostrou "PROVISÓRIO (bias salvo de antes)"; ao parar, o bias foi aceito |
+| Comando `g` parado / mexendo | Parado: recalibrou. Mexendo (43 °/s): recusado, com o bias anterior mantido |
+
+- **Transitório de partida do giroscópio.** O desvio idêntico nas primeiras janelas (3,382 °/s) mostra que não se tratava de movimento, e sim de um transitório logo depois da configuração do MPU. Ele explica também a primeira linha de todos os resumos do driver (pico de ~60 °/s e ruído de ~5,5 °/s, sempre iguais), que antes tinha sido atribuída à caixa sendo ajeitada. Essa explicação estava errada.
+- **Limite de repouso revisto.** No teste "boot mexendo", a janela aceita no fim teve desvio de 0,122 °/s (caixa ainda se acomodando), contra 0,033 °/s parada, e o bias saiu com gz = +1,066 °/s, contra +1,011 °/s: ~0,055 °/s de erro, ou ~3°/min de deriva em yaw. O limite de 0,4 °/s, definido antes do DLPF, foi reduzido para 0,1 °/s (~3× o ruído em repouso), e o calibracao.md foi atualizado. O mesmo limite vale para as medidas das seis posições.
+- **Revisão de código e nova calibração (11/10/2026).** Uma revisão encontrou três defeitos, corrigidos antes de aparecerem na bancada:
+  - o prazo de descarte voltava a ser comparado depois de vencido, o que bloquearia a calibração após ~36 min ligada;
+  - uma calibração reprovada na validação ainda podia ser gravada;
+  - a gravação na NVS em várias chaves podia ficar parcial.
+
+  Agora cada calibração é um registro único e atômico, e a calibração antiga, no formato anterior, foi descartada. A nova calibração, com o limite de 0,1 °/s, recusou duas medidas da posição 5 por movimento (0,129 e 0,173 °/s) e aceitou a terceira. Resultado: offset +16,8 / −2,4 / +92,5 mg e escala +0,52 / −0,19 / +0,79 %, com |a| corrigido de 1,0005 a 1,0065 g. O Y mudou ~3 mg e 0,3 % em relação à calibração anterior, porque a posição 5 ficou ~6° inclinada. A inclinação não aparece no valor bruto (az = −0,020 g), só depois de descontar o offset de Z (−0,11 g corrigido). Depois do reinício, `c` mostrou os mesmos coeficientes carregados da NVS e |a| corrigido = 1,0004 g.
+- **Bias aceito com a caixa ainda se acomodando.** Depois desse reinício, a primeira janela foi recusada (0,113 °/s), e a segunda foi aceita com desvio de 0,065 °/s (cerca de 2× o ruído em repouso), dando gx = −4,860 °/s. Em boots com a caixa parada, gx deu −4,786 a −4,820 °/s, a 25,7–25,9 °C. Logo depois, `c` mostrou gx corrigido = +0,078 °/s com a caixa parada, um erro bem acima dos ±0,03 °/s das janelas limpas. Ou seja, uma janela que passa no limite de 0,1 °/s ainda pode carregar um erro de bias de ~0,08 °/s.
+- **Desvio não indica bem a qualidade do bias.** No boot seguinte, com a caixa parada, mas digitando no teclado sobre a mesma mesa, as janelas tiveram desvio de 0,094 e 0,080 °/s (`g`), com bias gx −4,807 e −4,817 °/s, e o `c` logo depois mostrou gx corrigido = −0,002 °/s. Janelas com mais desvio (vibração) deram o bias certo, e a janela com menos desvio (0,065 °/s, acomodação) deu o bias errado. Decisão: o critério principal passou a ser a confirmação por duas janelas seguidas com médias diferindo menos de 0,03 °/s, e o limite de desvio subiu para 0,15 °/s, como filtro de movimento. Detalhes em [calibracao.md](calibracao.md).
+- **Confirmação por duas janelas na bancada (11/10/2026).**
+
+  | Teste | Resultado |
+  |---|---|
+  | Boot parado | Diferença entre janelas de 0,006 °/s; g corrigido entre −0,005 e +0,000 °/s |
+  | Toques leves na mesa | Desvio de 0,22–0,40 °/s, recusado pelo filtro de movimento; ao parar, aceito com diferença de 0,005 °/s, e g corrigido ≤ 0,009 °/s |
+  | Mexendo desde o boot e depois apoiando num canto | Recusado enquanto se mexia; aceito com diferença de 0,030 °/s, no limite. O bias (−4,869 °/s) coincidiu com o de boots parados à mesma temperatura (−4,871 e −4,879 °/s). O `c` logo depois mostrou gx corrigido = −0,035 °/s, provavelmente porque a caixa ainda assentava naquele segundo (o `c` mostra dados ao vivo) |
+  | Boot e `g` parados | Diferenças de 0,013 e 0,006 °/s; g corrigido ≤ 0,005 °/s |
+
+- **Deriva térmica do bias do giroscópio.** Bias de gx aceitos com a caixa parada, em 10 e 11/10/2026:
+
+  | Temperatura do chip | Bias gx (°/s) |
+  |---|---|
+  | 25,7 °C | −4,786 |
+  | 25,9 °C | −4,820 |
+  | 26,1–26,2 °C | −4,807 a −4,837 |
+  | 26,3 °C | −4,846 a −4,857 |
+  | 26,5 °C | −4,855 a −4,863 |
+  | 26,6 °C | −4,869 a −4,879 |
+
+  A inclinação é de ~−0,1 °/s por °C. Numa única sessão, o chip esquentou 0,5 °C e o bias andou ~0,06 °/s, um efeito maior que o erro de acomodação corrigido acima. O aviso de temperatura foi reduzido de 10 °C para 1 °C, e a correção da deriva ficou como pendência para a etapa da fusão (ver [calibracao.md](calibracao.md)). Na mesma faixa, gy ficou entre +2,650 e +2,682 °/s e gz entre +0,996 e +1,025 °/s (com um caso de +1,066 °/s a 25,7 °C), sem uma tendência clara com a temperatura.
+- **Linhas corrompidas na serial.** Com `--echo`, os 64 caracteres corrompidos (`����`) passaram a aparecer logo depois de cada tecla digitada. Isso reforça que o problema está no caminho USB/PC, e não no firmware.
 
 ## Orientação de montagem do MPU6050
 

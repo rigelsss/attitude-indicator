@@ -4,7 +4,7 @@ Horizonte artificial em bancada com dois ESP32. Uma placa fica no modelo, mede a
 
 Projeto final da disciplina **Sistemas Embarcados 2026.2**. Usa Arduino via PlatformIO e cobre I2C, SPI, interrupções, FreeRTOS, ESP-NOW e IoT.
 
-> **Estado:** em desenvolvimento. O MPU6050 está validado em bancada, e o firmware do ESP A já o lê por um driver próprio, ainda sem calibração nem cálculo de atitude. Ver [Estado do projeto](#estado-do-projeto).
+> **Estado:** em desenvolvimento. O MPU6050 está validado em bancada, e o firmware do ESP A já o lê por um driver próprio e o calibra (acelerômetro em seis posições e bias do giroscópio no boot), ainda sem cálculo de atitude. Ver [Estado do projeto](#estado-do-projeto).
 
 ## Como funciona
 
@@ -104,15 +104,26 @@ pio run -e ground -t upload
 pio device monitor -b 115200
 ```
 
-No estado atual, o ESP A configura o MPU6050 e imprime, uma vez por segundo, a taxa de amostragem, as médias de aceleração (g) e de velocidade angular (°/s), o ruído, o pico do giroscópio e os contadores de saturação, amostras perdidas e falhas de I2C. Os valores ainda são brutos, sem calibração. O LED da placa pisca a cada resumo. O ESP B só inicializa a serial e pisca o LED.
+No estado atual, o ESP A configura o MPU6050, carrega da NVS a calibração do acelerômetro e mede o bias do giroscópio nos primeiros segundos. A placa precisa estar parada; enquanto ela se mexe, o firmware usa o último bias salvo e tenta de novo. Pelo monitor (use `pio device monitor -b 115200 --echo` para ver o que digita):
+
+| Tecla | Ação |
+|---|---|
+| `c` | Estado da calibração e valores brutos e corrigidos do último segundo |
+| `6` | Calibração do acelerômetro em seis posições, guiada pelo firmware e gravada na NVS depois de confirmar com `s` |
+| `g` | Recalibra o bias do giroscópio (placa parada) |
+| `r` | Liga ou desliga o resumo por segundo do driver (taxa, ruído, perdas e falhas de I2C) |
+
+O LED da placa pisca uma vez por segundo. O ESP B só inicializa a serial e pisca o LED.
 
 Para só compilar, omita `-t upload`. Se houver mais de uma placa conectada, defina `upload_port` e `monitor_port` no `platformio.ini` correspondente, ou passe `-p COMx` no monitor.
 
-Testes da lógica pura (calibração e fusão), que rodam no PC, sem placa:
+Testes da lógica pura (calibração e fusão), que rodam no PC, sem placa, em `firmware/aircraft`:
 
 ```powershell
 pio test -e native
 ```
+
+O ambiente `native` usa o compilador do PC: é preciso ter um GCC no PATH. No Windows, por exemplo, o do MSYS2 UCRT64 (`C:\msys64\ucrt64\bin`).
 
 Página web no ESP B (quando existir): `pio run -e ground -t uploadfs`, em `firmware/ground`. Depois, conecte-se à rede `Horizonte-ESP` e abra `http://192.168.4.1`.
 
@@ -147,7 +158,7 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 - [x] Diagnóstico I2C
 - [x] MPU6050 validado em bancada: endereço, ruído e repouso, seis posições, orientação dos eixos, contato a 100 e 400 kHz e pino INT
 - [x] Driver do MPU6050 no firmware do ESP A: ±4 g, ±500 °/s, DLPF, 200 Hz pelo INT e recuperação de falhas
-- [ ] Calibração no firmware: correção do acelerômetro com persistência na NVS e bias do giroscópio no boot ([estratégia](docs/calibracao.md))
+- [x] Calibração no firmware: correção do acelerômetro com persistência na NVS e bias do giroscópio no boot ([estratégia](docs/calibracao.md)), com testes `native`
 - [ ] Filtro complementar (roll e pitch) com testes `native`
 - [ ] Magnetômetro (proa com compensação de inclinação), BME280 e OLED de status
 - [ ] Tasks FreeRTOS no ESP A acionadas pelo INT

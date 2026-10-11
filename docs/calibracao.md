@@ -11,6 +11,7 @@ Decisões de calibração do ESP A. A evidência de bancada que as motiva está 
 - **Correção aplicada:** a_corrigido = (a_bruto − offset) / escala.
 - **Persistência.** Os coeficientes ficam na NVS (biblioteca `Preferences`) e são carregados no boot. A calibração se refaz só sob comando, porque o acelerômetro não deriva de forma relevante com o tempo.
 - **Validação.** Depois de calibrar, |a| fica entre 0,98 g e 1,02 g em várias posições paradas.
+- **Procedimento no firmware (comando `6`).** As posições seguem uma ordem fixa: face para cima, face para baixo, nariz para cima, nariz para baixo, asa direita para baixo e asa esquerda para baixo. Para cada uma, o firmware mede 2 s e recusa a medida se a caixa se mexeu (mesmo critério de repouso do giroscópio) ou se o eixo esperado não for o dominante, ou estiver fora de 0,8–1,2 g. No fim, mostra os coeficientes e o |a| corrigido de cada posição. Se a validação (|a| entre 0,98 e 1,02 g em todas as posições) falhar, o resultado é descartado e não pode ser gravado. Posições inclinadas ~20° passam pelos outros critérios, mas dão |a| ≈ 1,064 g. Se a validação passar, a gravação na NVS só acontece depois da confirmação (`s`). Cada calibração é gravada como um registro único (versão, faixa do acelerômetro, coeficientes e temperatura) numa só chave, o que torna a gravação atômica. Uma calibração feita em outra faixa é ignorada.
 
 ## Giroscópio: no boot, aceito só em repouso
 
@@ -25,19 +26,31 @@ boot → carrega calibração do acelerômetro (NVS)
                enquanto isso usa o último bias salvo (ST_GYRO_CAL desligado = "provisória")
 ```
 
-- **Critério de repouso.** O desvio padrão de cada eixo do giroscópio fica abaixo de ~50 LSB (≈ 0,4 °/s) e |a| entre 0,95 g e 1,05 g. Os limiares vêm do ruído medido em `hardware.md` e devem ser revalidados com o MPU montado.
+- **Critério de repouso, em duas etapas.** Os limites estão em unidades físicas no `config.h`, porque o tamanho do LSB depende da faixa configurada.
+  1. *Filtro de movimento, em cada janela de 2 s:* o desvio padrão de cada eixo do giroscópio fica abaixo de **0,15 °/s** (`CAL_REST_GYRO_MAX_STD_DPS`), e |a| corrigido fica entre 0,95 g e 1,05 g.
+  2. *Confirmação, entre duas janelas seguidas:* as médias do giroscópio diferem menos de **0,03 °/s** em cada eixo (`CAL_BIAS_MAX_DELTA_DPS`). O bias aceito é a média das duas janelas. Se diferirem, a janela mais recente vira a nova candidata, e o processo segue. O bias definitivo leva, no mínimo, ~4 s.
+  - *Por que duas etapas (10–11/10/2026).* O limite original, ~50 LSB (≈ 0,4 °/s), foi definido antes do DLPF, que reduziu o ruído em repouso para ~0,035 °/s. Reduzir só o limite de desvio não resolveu: com 0,1 °/s, uma janela com desvio de 0,065 °/s, de uma caixa se acomodando, foi aceita com erro de bias de ~0,08 °/s. Já janelas com 0,08–0,09 °/s, por vibração da mesa durante a digitação, deram o bias correto. A vibração aumenta o desvio sem deslocar a média, e a acomodação lenta desloca a média com desvio baixo. Por isso o critério principal passou a ser a estabilidade da média entre janelas, e o desvio ficou só como filtro de movimento. Com desvio de 0,15 °/s e 400 amostras, a diferença entre duas médias varia ~0,011 °/s só por ruído, e o limite de 0,03 °/s fica perto de 3 vezes isso.
+  - O critério de |a| só se aplica depois da calibração do acelerômetro. Sem ela, |a| em repouso é ~1,10 g, e o giroscópio nunca seria aceito no primeiro boot.
+- **Transitório de partida.** Logo depois de configurar o MPU, o giroscópio tem um transitório (pico de ~60 °/s, repetido em todo boot). A calibração descarta os primeiros 200 ms (`CAL_MPU_SETTLE_MS`), no boot e depois de cada recuperação do driver, e a janela de 2 s só começa depois do descarte.
 - **Sem bloqueio.** O sistema nunca fica parado esperando a calibração. Com o bias provisório o horizonte funciona, e a estação de solo mostra o estado pela flag.
-- **Temperatura.** O sistema guarda a temperatura do chip no momento da calibração e avisa se ela variar mais de ~10 °C, o que pede uma nova calibração.
+- **Temperatura.** O sistema guarda a temperatura do chip no momento da calibração e avisa se ela variar mais de **1 °C** (`CAL_TEMP_WARN_C`), o que pede uma nova calibração (`g`). O limite era 10 °C e foi reduzido em 11/10/2026: na bancada, o bias de gx variou ~−0,1 °/s por °C (de −4,79 a −4,88 °/s entre 25,7 e 26,6 °C), e 10 °C equivaleria a ~1 °/s de erro.
+- **Pendência para a etapa da fusão: deriva térmica do bias.** O aviso e o comando `g` cobrem a bancada, mas não corrigem a deriva. Há duas soluções candidatas, a decidir na fusão:
+  - recalibração automática enquanto a placa estiver parada, usando o mesmo detector de repouso que a fusão vai precisar; isso corrige a temperatura e a acomodação;
+  - compensação por um modelo linear do bias em função da temperatura, o que exige medir o bias numa faixa bem maior (por exemplo, de 20 a 35 °C, ligando a placa fria).
+
+  Na fusão, o acelerômetro corrige continuamente roll e pitch, então a deriva afeta principalmente a proa.
 - **Recalibração.** O comando `CMD_CALIBRATE_GYRO` (B → A) roda o mesmo fluxo; durante a janela, `ST_CALIBRATING` fica ligado.
 - **Implementação.** A correção do bias é subtraída no software, sem gravar nos registradores de offset do MPU. Assim é mais simples de testar (`pio test -e native`) e de explicar.
 
 ## Diagnóstico no firmware principal
 
-O ambiente `i2cscan` é um firmware separado. O firmware de voo também precisa de um comando pela serial (por exemplo, `c`) que mostre, sem regravar a placa:
+O ambiente `i2cscan` é um firmware separado. O firmware de voo tem o comando `c` pela serial, implementado em 10/10/2026, que mostra sem regravar a placa:
 
 - leituras brutas e corrigidas;
 - coeficientes em uso (offset e escala do acelerômetro, bias do giroscópio);
 - estado da calibração: definitiva ou provisória, temperatura no momento da calibração e temperatura atual.
+
+Outros comandos: `6` (seis posições), `g` (recalibrar o giroscópio, como o futuro `CMD_CALIBRATE_GYRO`) e `r` (liga ou desliga o resumo por segundo do driver). A lógica está em `lib/imu_cal` (pura, com testes `native`), e a gravação na NVS em `lib/imu_store`.
 
 ## Ligação com o contrato (`telemetry.h`)
 

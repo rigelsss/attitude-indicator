@@ -154,10 +154,12 @@ bool Mpu6050::read(ImuSample &out) {
     int16_t v[7];   // ax ay az temp gx gy gz
     for (int i = 0; i < 7; i++) v[i] = (int16_t)((b[2 * i] << 8) | b[2 * i + 1]);
 
-    bool sat = false;
+    // Saturação separada por sensor: acelerômetro saturado suspende a correção da fusão; giroscópio
+    // saturado tira a confiança da predição
+    bool accSat = false, gyroSat = false;
     for (int i = 0; i < 7; i++) {
         if (i == 3) continue;
-        if (v[i] == INT16_MAX || v[i] == INT16_MIN) sat = true;
+        if (v[i] == INT16_MAX || v[i] == INT16_MIN) (i < 3 ? accSat : gyroSat) = true;
     }
 
     out.ax = v[0] / accelLsbPerG_;
@@ -168,7 +170,8 @@ bool Mpu6050::read(ImuSample &out) {
     out.gy = v[5] / gyroLsbPerDps_;
     out.gz = v[6] / gyroLsbPerDps_;
     out.tUs = t;
-    out.saturated = sat;
+    out.accelSaturated = accSat;
+    out.gyroSaturated = gyroSat;
     return true;
 }
 

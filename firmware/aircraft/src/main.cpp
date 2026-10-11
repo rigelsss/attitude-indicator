@@ -1,8 +1,10 @@
 // ESP A — avião. *** main.cpp PROVISÓRIO (etapa de bancada, antes do RTOS) ***
-// Lê o MPU6050 a cada pulso de "data ready" e cuida da calibração (docs/calibracao.md):
-//   boot: carrega da NVS os coeficientes do acelerômetro e mede o bias do giroscópio em repouso;
-//   serial: c = estado | 6 = seis posições | g = calibrar giroscópio | r = resumo por segundo.
-// A lógica de calibração está em lib/imu_cal (pura, testada com pio test -e native).
+// Lê o MPU6050 a cada pulso de "data ready", cuida da calibração (docs/calibracao.md) e roda o
+// filtro complementar de roll e pitch (docs/fusao.md):
+//   boot: carrega da NVS os coeficientes do acelerômetro e a montagem e mede o bias do giroscópio;
+//   serial: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem |
+//           a = fluxo de atitude | r = resumo por segundo.
+// A lógica está em lib/imu_cal e lib/attitude (puras, testadas com pio test -e native).
 // Na semana 3 este arquivo passa a só inicializar o hardware e criar as tasks (src/tasks/):
 //   sensor_task  (prio 4, core 1) — acordada pela INT do MPU, lê IMU a SAMPLE_RATE_HZ
 //   fusion_task  (prio 3, core 1) — filtro complementar → roll/pitch/heading
@@ -16,6 +18,8 @@
 #include "mpu6050.h"
 #include "imu_cal.h"
 #include "imu_store.h"
+#include "attitude.h"
+#include "level_store.h"
 
 static Mpu6050 g_mpu;
 static QueueHandle_t g_intQueue = nullptr;   // instantes (micros) dos pulsos de "data ready"
@@ -31,10 +35,12 @@ struct Window {
     uint32_t samples = 0;      // leituras válidas
     uint32_t lost = 0;         // pulsos que faltaram (intervalo maior que 1,5 período)
     uint32_t stale = 0;        // pulsos atendidos atrasados: a amostra já tinha sido sobrescrita
-    uint32_t saturated = 0;    // amostras com algum eixo no limite da faixa
+    uint32_t satAcc = 0;       // amostras com algum eixo do acelerômetro no limite da faixa
+    uint32_t satGyro = 0;      // idem, giroscópio
     double   sum[6] = {0}, sq[6] = {0};   // ax ay az gx gy gz
     float    peakGyro = 0;     // maior |g| em qualquer eixo
     float    tempSum = 0;
+    AngleStats att[2];         // roll, pitch com a fusão inicializada (sem o salto de ±180°)
 };
 static const uint32_t WINDOW_US = MAIN_PRINT_MS * 1000UL;
 static Window g_win;
@@ -52,7 +58,9 @@ static bool g_tempWarned = false;
 static BiasConfirmer g_biasConfirm;       // bias só é aceito com duas janelas consistentes
 static float g_candTempC = 0;             // temperatura da janela candidata
 
-enum class CalMode : uint8_t { None, GyroBoot, GyroCmd, SixWait, SixMeasure, SixReview };
+enum class CalMode : uint8_t {
+    None, GyroBoot, GyroCmd, SixWait, SixMeasure, SixReview, LevelWait, LevelMeasure, LevelReview
+};
 static CalMode g_mode = CalMode::None;
 
 // Janela de calibração em andamento (giroscópio ou uma das seis posições)
@@ -78,6 +86,52 @@ static AccelCal g_sixResult;
 static const uint32_t CAL_EXPECTED_SAMPLES = (uint32_t)CAL_WINDOW_MS * SAMPLE_RATE_HZ / 1000;
 static const uint32_t CAL_MIN_SAMPLES = CAL_EXPECTED_SAMPLES * CAL_MIN_SAMPLES_PCT / 100;
 static const PoseLimits POSE_LIMITS = {CAL_POSE_MIN_G, CAL_POSE_MAX_G};
+
+// Calibração de montagem (comando z): duas medidas, a segunda com a caixa girada 180° na mesa
+static int g_levelIdx = 0;
+static Vec3 g_levelF[2];
+static float g_levelTempSum = 0;
+static MountResult g_levelResult;
+
+// ---------- Fusão (lib/attitude, docs/fusao.md) ----------
+
+static const FusionParams FUSION_PARAMS = {COMP_FILTER_TAU_S, FUSION_ACC_FULL_DEV_G, FUSION_ACC_ZERO_DEV_G,
+                                           FUSION_ROLL_MIN_G, FUSION_MAX_DT_MS / 1000.0f, FUSION_INIT_SAMPLES,
+                                           FUSION_INIT_MAX_RATE_DPS};
+static AttitudeFilter g_att(FUSION_PARAMS);
+static AttitudeFilter g_gyroOnly(FUSION_PARAMS, false);   // diagnóstico: deriva só do giroscópio
+static LevelData g_level;                // rotação de montagem em uso (identidade sem calibração)
+static bool g_fusPrevValid = false;      // há um pulso anterior aceito pela fusão (referência do dt)
+static uint32_t g_fusPrevIntUs = 0;
+
+// Fluxo de atitude (comando a): estatística acumulada entre duas linhas
+struct AttStream {
+    bool     on = false;
+    uint32_t nextUs = 0;
+    uint32_t n = 0;            // intervalos integrados
+    float    dtMin = 1e9f, dtMax = 0;
+    double   dtSum = 0;
+    uint32_t lagMaxUs = 0;     // maior atraso pulso → início da leitura
+    uint32_t costSumUs = 0;    // custo de update() (só o filtro, não o ciclo inteiro): soma e máximo
+    uint32_t costMaxUs = 0;
+    uint32_t ambiguous = 0;    // quadros fora da fusão: pulso mais novo durante a leitura (ou atraso excessivo)
+    uint32_t dropped = 0;      // pulsos sem leitura (amostra sobrescrita)
+    uint32_t resets = 0;       // reinícios por intervalo acima de FUSION_MAX_DT_MS
+};
+static AttStream g_as;
+static const uint32_t ATT_PRINT_US = 1000000UL / ATT_PRINT_HZ;
+
+static void fusionReset() {
+    g_att.reset();
+    g_gyroOnly.reset();
+    g_fusPrevValid = false;
+}
+
+// Após configurar o MPU, calibração e fusão descartam amostras por CAL_MPU_SETTLE_MS
+static void beginSettle() {
+    g_settling = true;
+    g_settleUntilUs = micros() + CAL_MPU_SETTLE_MS * 1000UL;
+}
 
 static void IRAM_ATTR onMpuInt() {
     uint32_t t = micros();
@@ -105,9 +159,9 @@ static void startMpu() {
     attachInterrupt(digitalPinToInterrupt(PIN_MPU_INT), onMpuInt, RISING);
     g_mpuReady = true;
     g_lastIntUs = 0;
-    // O giroscópio tem um transitório logo após a configuração: a calibração ignora esse trecho
-    g_settling = true;
-    g_settleUntilUs = micros() + CAL_MPU_SETTLE_MS * 1000UL;
+    // O giroscópio tem um transitório logo após a configuração: calibração e fusão ignoram esse trecho
+    beginSettle();
+    fusionReset();
     g_lastRecoveries = g_mpu.recoveries();
     g_win = Window();
     g_win.startUs = micros();
@@ -123,7 +177,8 @@ static void accumulate(const ImuSample &s) {
     }
     for (int i = 3; i < 6; i++) g_win.peakGyro = fmaxf(g_win.peakGyro, fabsf(v[i]));
     g_win.tempSum += s.tempC;
-    if (s.saturated) g_win.saturated++;
+    if (s.accelSaturated) g_win.satAcc++;
+    if (s.gyroSaturated) g_win.satGyro++;
     g_win.samples++;
 }
 
@@ -146,11 +201,18 @@ static void printWindow() {
     const double sdG = fmax(sd[3], fmax(sd[4], sd[5]));
     Serial.printf("[A] %.0f Hz | a (g) %+.3f %+.3f %+.3f  |a| %.3f | g (°/s) %+.2f %+.2f %+.2f | T %.1f °C\n",
                   rate, mean[0], mean[1], mean[2], amod, mean[3], mean[4], mean[5], g_win.tempSum / n);
-    Serial.printf("    ruído: a %.1f mg, g %.3f °/s | pico |g| %.1f °/s | saturadas %lu | perdidas %lu | "
+    Serial.printf("    ruído: a %.1f mg, g %.3f °/s | pico |g| %.1f °/s | saturadas a %lu g %lu | perdidas %lu | "
                   "descartadas %lu | falhas %lu (seguidas %lu, recuperações %lu)\n",
-                  sdA * 1000.0, sdG, g_win.peakGyro, (unsigned long)g_win.saturated, (unsigned long)g_win.lost,
-                  (unsigned long)g_win.stale, (unsigned long)g_mpu.failTotal(), (unsigned long)g_mpu.failStreak(),
-                  (unsigned long)g_mpu.recoveries());
+                  sdA * 1000.0, sdG, g_win.peakGyro, (unsigned long)g_win.satAcc, (unsigned long)g_win.satGyro,
+                  (unsigned long)g_win.lost, (unsigned long)g_win.stale, (unsigned long)g_mpu.failTotal(),
+                  (unsigned long)g_mpu.failStreak(), (unsigned long)g_mpu.recoveries());
+    const AngleStats *att = g_win.att;
+    if (att[0].count() == 0) {
+        Serial.println("    atitude: não inicializada");
+        return;
+    }
+    Serial.printf("    atitude: roll %+.2f ± %.2f° | pitch %+.2f ± %.2f° (%lu amostras)\n", att[0].mean(),
+                  att[0].stddev(), att[1].mean(), att[1].stddev(), (unsigned long)att[0].count());
 }
 
 // Aviso único quando o chip se afasta da temperatura da calibração do giroscópio
@@ -334,34 +396,83 @@ static void finishSixWindow() {
     g_mode = CalMode::SixReview;
 }
 
+// ---------- Calibração de montagem (z) ----------
+
+static void promptLevel() {
+    static const char *const STEP[2] = {
+        "caixa apoiada na face de baixo, nariz encostado numa referência (borda da mesa ou esquadro)",
+        "mesma face apoiada, girada 180° no plano da mesa e encostada na mesma referência",
+    };
+    Serial.printf("[mont] posição %d/2: %s. Solte a caixa e aperte Enter (x cancela)\n", g_levelIdx + 1,
+                  STEP[g_levelIdx]);
+    g_mode = CalMode::LevelWait;
+}
+
+static const char *levelRestText(LevelRest r) {
+    switch (r) {
+    case LevelRest::Ok:            return "ok";
+    case LevelRest::TooFewSamples: return "janela incompleta";
+    case LevelRest::Moving:        return "caixa em movimento";
+    case LevelRest::Rotating:      return "giroscópio corrigido longe de zero (rotação lenta)";
+    case LevelRest::AccOutOfRange: return "|a| fora da faixa de repouso";
+    }
+    return "?";
+}
+
+static void finishLevelWindow() {
+    const RestLimits lim = {CAL_REST_GYRO_MAX_STD_DPS, CAL_REST_ACC_MIN_G, CAL_REST_ACC_MAX_G};
+    const LevelRest r = checkLevelWindow(g_cw.gyro, g_gyroBias, g_cw.accCorr, CAL_MIN_SAMPLES, lim,
+                                         LEVEL_REST_GYRO_MAX_MEAN_DPS);
+    if (r != LevelRest::Ok) {
+        const Vec3 gm = applyGyroBias(g_cw.gyro.mean(), g_gyroBias);
+        Serial.printf("[mont] medida recusada: %s (desvio máx. %.3f °/s, giro médio %+.3f %+.3f %+.3f °/s, "
+                      "|a| %.3f g): repita\n",
+                      levelRestText(r), g_cw.gyro.maxStddev(), gm.x, gm.y, gm.z, norm(g_cw.accCorr.mean()));
+        promptLevel();
+        return;
+    }
+    g_levelF[g_levelIdx] = chipToBody(g_cw.accCorr.mean());
+    g_levelTempSum += g_cw.tempSum / g_cw.accCorr.count();
+    const Angles a = accelRollPitch(g_levelF[g_levelIdx]);
+    Serial.printf("[mont] ok: roll %+.2f° pitch %+.2f° (sem correção de montagem)\n", a.rollDeg, a.pitchDeg);
+    if (++g_levelIdx < 2) {
+        promptLevel();
+        return;
+    }
+
+    const MountCheck mc = mountFromTwoPoses(g_levelF[0], g_levelF[1], LEVEL_MAX_TILT_DEG, g_levelResult);
+    if (mc == MountCheck::BadInput) {
+        Serial.println("[mont] medidas incoerentes (a mesma face estava apoiada nas duas?): calibração descartada");
+        g_mode = CalMode::None;
+        return;
+    }
+    const MountResult &m = g_levelResult;
+    Serial.printf("[mont] desalinhamento do módulo: roll %+.2f° pitch %+.2f° | inclinação da mesa: roll %+.2f° "
+                  "pitch %+.2f°\n",
+                  m.mountRollDeg, m.mountPitchDeg, m.tableRollDeg, m.tablePitchDeg);
+    if (mc == MountCheck::TooTilted) {
+        Serial.printf("[mont] acima de %.0f°: calibração descartada. Confira a mesa e a fixação do módulo\n",
+                      LEVEL_MAX_TILT_DEG);
+        g_mode = CalMode::None;
+        return;
+    }
+    Serial.println("[mont] s = gravar na NVS | x = descartar");
+    g_mode = CalMode::LevelReview;
+}
+
 static void finishCalWindow() {
     g_cw.active = false;
     switch (g_mode) {
     case CalMode::GyroBoot:
-    case CalMode::GyroCmd:    finishGyroWindow(); break;
-    case CalMode::SixMeasure: finishSixWindow(); break;
-    default:                  break;
+    case CalMode::GyroCmd:      finishGyroWindow(); break;
+    case CalMode::SixMeasure:   finishSixWindow(); break;
+    case CalMode::LevelMeasure: finishLevelWindow(); break;
+    default:                    break;
     }
 }
 
-// Alimenta a janela de calibração com uma amostra válida
+// Alimenta a janela de calibração com uma amostra válida (já fora do descarte de partida)
 static void calSample(const ImuSample &s) {
-    // Reconfiguração do MPU (recuperação): transitório de partida; descarta e recomeça a janela
-    if (g_mpu.recoveries() != g_lastRecoveries) {
-        g_lastRecoveries = g_mpu.recoveries();
-        g_settling = true;
-        g_settleUntilUs = s.tUs + CAL_MPU_SETTLE_MS * 1000UL;
-        g_biasConfirm.reset();   // a candidata é de antes da reconfiguração
-        if (g_cw.active) startCalWindow();
-    }
-    // A comparação só acontece durante o descarte (no máximo CAL_MPU_SETTLE_MS), longe da virada
-    if (g_settling) {
-        if ((int32_t)(s.tUs - g_settleUntilUs) < 0) {
-            if (g_cw.active) g_cw.startUs = s.tUs;   // a janela só começa a contar depois do descarte
-            return;
-        }
-        g_settling = false;
-    }
     if (!g_cw.active) return;
 
     const Vec3 a = {s.ax, s.ay, s.az};
@@ -370,6 +481,96 @@ static void calSample(const ImuSample &s) {
     g_cw.accCorr.add(g_cal.accelValid ? applyAccelCal(g_cal.accel, a) : a);
     g_cw.tempSum += s.tempC;
     if ((uint32_t)(s.tUs - g_cw.startUs) >= CAL_WINDOW_MS * 1000UL) finishCalWindow();
+}
+
+// Reconfiguração do MPU (recuperação em read() ou em checkAlive()): o transitório de partida é
+// descartado, a janela de calibração em andamento recomeça e a fusão perde a referência de tempo
+static void checkRecovery() {
+    if (g_mpu.recoveries() == g_lastRecoveries) return;
+    g_lastRecoveries = g_mpu.recoveries();
+    xQueueReset(g_intQueue);   // pulsos enfileirados são de antes da reconfiguração
+    beginSettle();
+    g_biasConfirm.reset();     // a candidata é de antes da reconfiguração
+    if (g_cw.active) startCalWindow();
+    fusionReset();
+}
+
+// ---------- Fusão ----------
+
+static void printAttitudeLine(const Vec3 &acc, float tempC) {
+    const Angles am = accelRollPitch(acc);
+    char gyroOnly[32] = "  --      --  ";
+    if (g_gyroOnly.initialized()) snprintf(gyroOnly, sizeof(gyroOnly), "%+7.2f %+7.2f", g_gyroOnly.rollDeg(),
+                                           g_gyroOnly.pitchDeg());
+    if (g_att.initialized())
+        Serial.printf("[att] roll %+7.2f pitch %+7.2f | acc %+7.2f %+7.2f | giro %s | |a| %.3f w %.2f | %.2f °C%s\n",
+                      g_att.rollDeg(), g_att.pitchDeg(), am.rollDeg, am.pitchDeg, gyroOnly, norm(acc),
+                      g_att.lastAccWeight(), tempC, g_att.degraded() ? " | DEGRADADO" : "");
+    else
+        Serial.printf("[att] aguardando referência | acc %+7.2f %+7.2f | |a| %.3f w %.2f | %.2f °C\n", am.rollDeg,
+                      am.pitchDeg, norm(acc), g_att.lastAccWeight(), tempC);
+    const AttStream &a = g_as;
+    Serial.printf("      dt %.2f/%.2f/%.2f ms (%lu) | atraso máx %lu µs | filtro méd/máx %.0f/%lu µs | ambíguos %lu | "
+                  "descartados %lu | reinícios %lu\n",
+                  a.n ? a.dtMin * 1e3 : 0.0, a.n ? a.dtSum / a.n * 1e3 : 0.0, a.dtMax * 1e3, (unsigned long)a.n,
+                  (unsigned long)a.lagMaxUs, a.n ? (double)a.costSumUs / a.n : 0.0, (unsigned long)a.costMaxUs,
+                  (unsigned long)a.ambiguous,
+                  (unsigned long)a.dropped, (unsigned long)a.resets);
+}
+
+// Uma amostra válida, fora do descarte: calibração nos eixos do chip → eixos do modelo →
+// rotação de montagem → filtro. intUs: instante do pulso de "data ready" desta amostra;
+// newerPulse: chegou um pulso mais novo antes do fim da leitura.
+static void fusionSample(const ImuSample &s, uint32_t intUs, bool newerPulse) {
+    // Sem FIFO, o quadro lido é o mais recente no instante da leitura. Se um pulso mais novo chegou
+    // antes do fim da leitura, o quadro pode ser dele: o ciclo fica fora da fusão, e o dt seguinte
+    // cobre a lacuna (a referência de tempo não avança). O teto de atraso é só uma rede de segurança
+    // (latência da ISR): um atraso de alguns ms, depois de uma impressão, é normal e o quadro é válido.
+    const uint32_t lag = elapsedUs(intUs, s.tUs);
+    if (newerPulse || lag > FUSION_MAX_INT_LAG_US) {
+        g_as.ambiguous++;
+        return;
+    }
+    if (lag > g_as.lagMaxUs) g_as.lagMaxUs = lag;
+
+    const Vec3 aRaw = {s.ax, s.ay, s.az};
+    const Vec3 aChip = g_cal.accelValid ? applyAccelCal(g_cal.accel, aRaw) : aRaw;
+    const Vec3 gChip = applyGyroBias({s.gx, s.gy, s.gz}, g_gyroBias);
+    const Vec3 acc = mat3Apply(g_level.r, chipToBody(aChip));
+    const Vec3 gyro = mat3Apply(g_level.r, chipToBody(gChip));
+    const float dt = g_fusPrevValid ? elapsedUs(g_fusPrevIntUs, intUs) * 1e-6f : 0.0f;
+    g_fusPrevIntUs = intUs;
+    g_fusPrevValid = true;
+
+    const ImuFlags flags = {s.accelSaturated, s.gyroSaturated};
+    const uint32_t t0 = micros();
+    const AttitudeFilter::Step st = g_att.update(acc, gyro, dt, flags);
+    const uint32_t cost = micros() - t0;
+    if (st == AttitudeFilter::Step::Reset) g_as.resets++;
+    // Diagnóstico só de giroscópio: parte da atitude do filtro e depois só integra
+    if (g_gyroOnly.initialized()) g_gyroOnly.update(acc, gyro, dt, flags);
+    else if (g_att.initialized()) g_gyroOnly.initFrom(g_att.rollDeg(), g_att.pitchDeg());
+
+    if (st == AttitudeFilter::Step::Updated) {
+        g_as.n++;
+        g_as.dtSum += dt;
+        g_as.dtMin = fminf(g_as.dtMin, dt);
+        g_as.dtMax = fmaxf(g_as.dtMax, dt);
+        g_as.costSumUs += cost;
+        if (cost > g_as.costMaxUs) g_as.costMaxUs = cost;
+    }
+    if (g_att.initialized()) {
+        g_win.att[0].add(g_att.rollDeg());
+        g_win.att[1].add(g_att.pitchDeg());
+    }
+
+    if (g_as.on && (int32_t)(intUs - g_as.nextUs) >= 0) {
+        printAttitudeLine(acc, s.tempC);
+        const bool on = g_as.on;
+        g_as = AttStream();
+        g_as.on = on;
+        g_as.nextUs = intUs + ATT_PRINT_US;
+    }
 }
 
 static void printStatus() {
@@ -383,6 +584,16 @@ static void printStatus() {
     } else {
         Serial.println("  acelerômetro: NÃO calibrado (sem dados na NVS para esta faixa): use 6");
     }
+    if (g_level.valid)
+        Serial.printf("  montagem: calibrada | módulo em roll %+.2f° pitch %+.2f° em relação à caixa (%.1f °C)\n",
+                      g_level.mountRollDeg, g_level.mountPitchDeg, g_level.tempC);
+    else
+        Serial.println("  montagem: NÃO calibrada (eixos nominais): use z");
+    if (g_att.initialized())
+        Serial.printf("  atitude: roll %+.2f° pitch %+.2f°%s\n", g_att.rollDeg(), g_att.pitchDeg(),
+                      g_att.degraded() ? " (DEGRADADA: giroscópio saturou)" : "");
+    else
+        Serial.println("  atitude: aguardando referência (caixa parada, |a| perto de 1 g)");
     Serial.printf("  giroscópio: %s | bias %+.3f %+.3f %+.3f °/s | calibrado a %.1f °C\n",
                   g_gyroDefinitive ? "DEFINITIVO (deste boot)"
                                    : (g_cal.gyroValid ? "PROVISÓRIO (bias salvo de antes)" : "PROVISÓRIO (sem bias salvo)"),
@@ -409,7 +620,8 @@ static void printStatus() {
 }
 
 static void printHelp() {
-    Serial.println("[A] comandos: c = estado | 6 = seis posições | g = calibrar giroscópio | r = resumo por segundo");
+    Serial.println("[A] comandos: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem | "
+                   "a = fluxo de atitude | r = resumo por segundo");
 }
 
 static void handleSerial() {
@@ -441,6 +653,7 @@ static void handleSerial() {
                     g_cal.accelTempC = tempC;
                     g_cal.accelRangeG = MPU_ACCEL_RANGE_G;
                     g_cal.accelValid = true;
+                    fusionReset();   // a referência do acelerômetro mudou
                     Serial.println("[cal] calibração do acelerômetro gravada na NVS");
                 } else {
                     Serial.println("[cal] FALHA ao gravar na NVS; calibração anterior mantida");
@@ -449,6 +662,44 @@ static void handleSerial() {
             } else if (ch == 'x') {
                 Serial.println("[cal] resultado descartado; calibração anterior mantida");
                 endSix();
+            }
+            continue;
+        case CalMode::LevelWait:
+            if (ch == '\r' || ch == '\n') {
+                Serial.printf("[mont] medindo %d ms, não toque na caixa...\n", CAL_WINDOW_MS);
+                g_mode = CalMode::LevelMeasure;
+                startCalWindow();
+            } else if (ch == 'x') {
+                Serial.println("[mont] calibração de montagem cancelada");
+                g_mode = CalMode::None;
+            }
+            continue;
+        case CalMode::LevelMeasure:
+            if (ch == 'x') {
+                g_cw.active = false;
+                Serial.println("[mont] calibração de montagem cancelada");
+                g_mode = CalMode::None;
+            }
+            continue;
+        case CalMode::LevelReview:
+            if (ch == 's') {
+                LevelData d;
+                d.valid = true;
+                d.r = g_levelResult.r;
+                d.mountRollDeg = g_levelResult.mountRollDeg;
+                d.mountPitchDeg = g_levelResult.mountPitchDeg;
+                d.tempC = g_levelTempSum / 2;
+                if (levelStoreSave(d)) {
+                    g_level = d;
+                    fusionReset();   // a rotação de montagem mudou
+                    Serial.println("[mont] calibração de montagem gravada na NVS");
+                } else {
+                    Serial.println("[mont] FALHA ao gravar na NVS; montagem anterior mantida");
+                }
+                g_mode = CalMode::None;
+            } else if (ch == 'x') {
+                Serial.println("[mont] resultado descartado; montagem anterior mantida");
+                g_mode = CalMode::None;
             }
             continue;
         default:
@@ -461,6 +712,31 @@ static void handleSerial() {
             Serial.printf("[A] resumo por segundo %s\n", g_summaryOn ? "ligado" : "desligado");
             break;
         case 'g': startGyroCal(CalMode::GyroCmd); break;
+        case 'z':
+            if (g_mode != CalMode::None)
+                Serial.println("[mont] espere a calibração em andamento terminar");
+            else if (!g_cal.accelValid)
+                Serial.println("[mont] acelerômetro sem calibração: faça antes as seis posições (6)");
+            else if (!g_gyroDefinitive)
+                Serial.println("[mont] bias do giroscópio ainda provisório: espere a calibração (ou use g)");
+            else {
+                g_levelIdx = 0;
+                g_levelTempSum = 0;
+                Serial.printf("[mont] calibração de montagem: duas medidas de %d ms, a segunda com a caixa girada "
+                              "180°\n", CAL_WINDOW_MS);
+                promptLevel();
+            }
+            break;
+        case 'a': {
+            const bool on = !g_as.on;
+            g_as = AttStream();
+            g_as.on = on;
+            g_as.nextUs = micros();
+            g_gyroOnly.reset();   // o diagnóstico só de giroscópio recomeça da atitude atual
+            Serial.printf("[att] fluxo de atitude %s (%d Hz): filtro | só acelerômetro | só giroscópio desde o a\n",
+                          on ? "ligado" : "desligado", ATT_PRINT_HZ);
+            break;
+        }
         case '6':
             g_cw.active = false;
             g_sixIdx = 0;
@@ -476,6 +752,9 @@ static void handleSerial() {
 }
 
 void setup() {
+    // Buffer de transmissão em software (antes do begin): sem ele, cada impressão bloqueia o laço
+    // até sobrar só a FIFO de 128 bytes da UART (~10 ms por linha longa a 115200) e descarta amostras
+    Serial.setTxBufferSize(SERIAL_TX_BUFFER_BYTES);
     Serial.begin(115200);
     delay(500);
     pinMode(PIN_LED_STATUS, OUTPUT);
@@ -490,8 +769,10 @@ void setup() {
         g_gyroBias = g_cal.gyroBias;   // provisório até a janela deste boot ser aceita
         g_gyroBiasTempC = g_cal.gyroTempC;
     }
-    Serial.printf("[A] NVS: acelerômetro %s | giroscópio %s\n", g_cal.accelValid ? "calibrado" : "sem calibração",
-                  g_cal.gyroValid ? "com bias salvo" : "sem bias salvo");
+    levelStoreLoad(g_level);
+    Serial.printf("[A] NVS: acelerômetro %s | giroscópio %s | montagem %s\n",
+                  g_cal.accelValid ? "calibrado" : "sem calibração", g_cal.gyroValid ? "com bias salvo" : "sem bias salvo",
+                  g_level.valid ? "calibrada" : "sem calibração");
 
     startMpu();
     printHelp();
@@ -510,28 +791,51 @@ void loop() {
     if (xQueueReceive(g_intQueue, &tInt, pdMS_TO_TICKS(MPU_INT_TIMEOUT_MS)) != pdTRUE) {
         // Pulsos pararam (chip sem alimentação, reiniciado em sleep ou fio do INT solto)
         g_mpu.checkAlive();
+        checkRecovery();   // checkAlive() pode ter reconfigurado o chip
         // Pulsos que chegaram durante a verificação são processados antes de avançar pelo relógio
         if (uxQueueMessagesWaiting(g_intQueue) == 0) closeWindowsUntil(micros());
         return;
     }
 
-    // Esvazia a fila: todos os pulsos contam para a taxa e as perdas, mas só o mais recente é lido,
-    // porque o MPU guarda apenas a última amostra (as anteriores já foram sobrescritas)
-    notePulse(tInt);
-    uint32_t latest = tInt, t;
-    while (xQueueReceive(g_intQueue, &t, 0) == pdTRUE) {
-        g_win.stale++;   // o pulso anterior fica sem leitura; conta na janela dele, antes de avançar
-        notePulse(t);
-        latest = t;
-    }
+    // Esvazia a fila num buffer local e lê o MPU antes de contar as janelas: a contagem pode imprimir
+    // o resumo, e uma leitura feita depois disso seria de um pulso posterior ao último visto.
+    // Só o pulso mais recente é lido, porque o MPU guarda apenas a última amostra.
+    uint32_t pulses[MPU_INT_QUEUE_LEN];
+    size_t n = 0;
+    pulses[n++] = tInt;
+    while (n < MPU_INT_QUEUE_LEN && xQueueReceive(g_intQueue, &pulses[n], 0) == pdTRUE) n++;
+    const uint32_t latest = pulses[n - 1];
 
     // A borda de descida do pulso do INT induz ruído no SDA/SCL; lê só depois dela
     const uint32_t sinceInt = micros() - latest;
     if (sinceInt < MPU_INT_READ_DELAY_US) delayMicroseconds(MPU_INT_READ_DELAY_US - sinceInt);
-
     ImuSample s;
-    if (g_mpu.read(s)) {
-        accumulate(s);
-        calSample(s);
+    const bool ok = g_mpu.read(s);
+    // Um pulso mais novo que o último visto, chegado antes do fim da leitura, torna o quadro ambíguo:
+    // ele pode ser desse pulso, e não de latest. O primeiro da fila é o mais antigo depois de latest.
+    const uint32_t readEndUs = micros();
+    uint32_t nextInt;
+    const bool newerPulse = xQueuePeek(g_intQueue, &nextInt, 0) == pdTRUE && (int32_t)(nextInt - readEndUs) <= 0;
+
+    // Todos os pulsos contam para a taxa e as perdas; os anteriores ao último ficam sem leitura
+    notePulse(pulses[0]);
+    for (size_t i = 1; i < n; i++) {
+        g_win.stale++;   // o pulso anterior fica sem leitura; conta na janela dele, antes de avançar
+        notePulse(pulses[i]);
     }
+    g_as.dropped += n - 1;
+
+    checkRecovery();   // read() pode ter reconfigurado o chip (e então devolveu false)
+    if (!ok) return;
+    accumulate(s);
+    // Descarte de partida: a comparação só acontece durante ele (no máximo CAL_MPU_SETTLE_MS), longe da virada
+    if (g_settling) {
+        if ((int32_t)(s.tUs - g_settleUntilUs) < 0) {
+            if (g_cw.active) g_cw.startUs = s.tUs;   // a janela só começa a contar depois do descarte
+            return;
+        }
+        g_settling = false;
+    }
+    calSample(s);
+    fusionSample(s, latest, newerPulse);
 }

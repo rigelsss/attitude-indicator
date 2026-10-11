@@ -35,7 +35,8 @@ struct ImuSample {
     float    gx, gy, gz;   // °/s
     float    tempC;        // °C
     uint32_t tUs;          // micros() no início da leitura
-    bool     saturated;    // algum eixo atingiu o limite da faixa
+    bool     accelSaturated;   // algum eixo do acelerômetro atingiu o limite da faixa
+    bool     gyroSaturated;    // algum eixo do giroscópio atingiu o limite da faixa
 };
 
 class Mpu6050 {

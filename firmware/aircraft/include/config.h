@@ -36,6 +36,8 @@
 #define MPU_INT_READ_DELAY_US   100    // espera após o pulso do INT (50 µs) para a borda não cair na leitura
 #define MPU_INT_TIMEOUT_MS      50     // sem pulsos do INT por esse tempo (10 amostras): conferir o MPU
 #define MAIN_PRINT_MS           1000   // main provisório: intervalo do resumo na serial
+#define SERIAL_TX_BUFFER_BYTES  1024   // buffer de transmissão da serial: as impressões não bloqueiam o laço
+                                       // (resumo + fluxo a 10 Hz ≈ 4 kB/s, abaixo dos ~11,5 kB/s de 115200)
 
 // ---------- Calibração do MPU6050 (docs/calibracao.md) ----------
 #define CAL_WINDOW_MS                 2000    // janela de média: 400 amostras a 200 Hz
@@ -55,8 +57,23 @@
 #define CAL_MPU_SETTLE_MS             200     // descarte após configurar o MPU (boot e recuperações):
                                               // transitório de partida do giroscópio (pico ~60 °/s)
 
-// ---------- Fusão ----------
-#define COMP_FILTER_ALPHA 0.98f   // peso do giroscópio no filtro complementar
+// ---------- Fusão: filtro complementar de roll e pitch (docs/fusao.md) ----------
+#define COMP_FILTER_TAU_S       1.0f    // constante de tempo; α = τ/(τ + dt) com o dt medido a cada amostra
+                                        // (α fixo de 0,98 a 200 Hz equivaleria a τ ≈ 0,25 s)
+#define FUSION_ACC_FULL_DEV_G   0.05f   // ||a| − 1 g| até isto: peso pleno do acelerômetro
+#define FUSION_ACC_ZERO_DEV_G   0.15f   // a partir disto: peso zero (linear entre os dois)
+#define FUSION_ROLL_MIN_G       0.3f    // projeção √(ay² + az²) mínima para corrigir o roll (≈ |pitch| 72,5°)
+#define FUSION_MAX_DT_MS        50      // intervalo maior que isto: filtro reiniciado (= MPU_INT_TIMEOUT_MS)
+#define FUSION_INIT_SAMPLES     20      // atitude inicial = média de 20 amostras seguidas (0,1 s): ruído ~0,02°
+#define FUSION_INIT_MAX_RATE_DPS 5.0f   // inicialização só com |giroscópio| abaixo disto (caixa sem girar)
+#define FUSION_MAX_INT_LAG_US   4000    // rede de segurança: leitura mais que isto depois do pulso fica fora da
+                                        // fusão (abaixo do período de 5 ms); o critério principal é um pulso
+                                        // mais novo chegar antes do fim da leitura
+#define ATT_PRINT_HZ            10      // main provisório: taxa do fluxo de atitude (comando a)
+
+// ---------- Calibração de montagem (comando z, docs/fusao.md) ----------
+#define LEVEL_REST_GYRO_MAX_MEAN_DPS 0.2f    // repouso: média do giroscópio corrigido abaixo disto em cada eixo
+#define LEVEL_MAX_TILT_DEG           10.0f   // desalinhamento do módulo e inclinação da mesa aceitos
 
 // ---------- Rádio ----------
 #define ESPNOW_CHANNEL   1        // deve ser IGUAL ao canal do AP no ESP B

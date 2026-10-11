@@ -1,0 +1,46 @@
+// level_store.cpp — leitura e gravação da calibração de montagem na NVS. Um registro completo
+// (versão e dados) numa única chave: a NVS grava cada chave de forma atômica.
+#include "level_store.h"
+#include <Preferences.h>
+
+static const char *NAMESPACE = "att_level";
+static const char *KEY = "mntRec";
+static const uint8_t FORMAT_VERSION = 1;
+static const float ROTATION_TOL = 1e-3f;
+
+struct MountRecord {
+    uint8_t version;
+    uint8_t reserved[3];
+    Mat3    r;
+    float   mountRollDeg;
+    float   mountPitchDeg;
+    float   tempC;
+};
+
+void levelStoreLoad(LevelData &out) {
+    out = LevelData();
+    Preferences p;
+    if (!p.begin(NAMESPACE, true)) return;   // namespace ainda não existe
+    MountRecord rec;
+    // isKey() antes de ler: ler uma chave ausente gera um log de erro da biblioteca
+    const bool ok = p.isKey(KEY) && p.getBytesLength(KEY) == sizeof(rec) &&
+                    p.getBytes(KEY, &rec, sizeof(rec)) == sizeof(rec) && rec.version == FORMAT_VERSION &&
+                    mat3IsRotation(rec.r, ROTATION_TOL);
+    p.end();
+    if (!ok) return;
+    out.valid = true;
+    out.r = rec.r;
+    out.mountRollDeg = rec.mountRollDeg;
+    out.mountPitchDeg = rec.mountPitchDeg;
+    out.tempC = rec.tempC;
+}
+
+bool levelStoreSave(const LevelData &data) {
+    if (!mat3IsRotation(data.r, ROTATION_TOL)) return false;
+    Preferences p;
+    if (!p.begin(NAMESPACE, false)) return false;
+    const MountRecord rec = {FORMAT_VERSION, {0, 0, 0}, data.r, data.mountRollDeg, data.mountPitchDeg, data.tempC};
+    const bool ok = p.putBytes(KEY, &rec, sizeof(rec)) == sizeof(rec);
+    p.end();
+    return ok;
+}

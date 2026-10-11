@@ -10,3 +10,4 @@ logs/
 *.csv
 /docs/revisao-local.md
 /docs/explicacao-mpu6050.md
+.txt

@@ -1,0 +1,163 @@
+// imu_cal.cpp — implementação da calibração em lógica pura (sem dependência de Arduino)
+#include "imu_cal.h"
+#include <math.h>
+
+float norm(const Vec3 &v) {
+    return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+
+static float axis(const Vec3 &v, int i) {
+    return i == 0 ? v.x : (i == 1 ? v.y : v.z);
+}
+
+// ---------- WindowStats ----------
+
+void WindowStats::reset() {
+    n_ = 0;
+    for (int i = 0; i < 3; i++) mean_[i] = m2_[i] = 0;
+}
+
+void WindowStats::add(const Vec3 &v) {
+    n_++;
+    for (int i = 0; i < 3; i++) {
+        const double x = axis(v, i);
+        const double d = x - mean_[i];
+        mean_[i] += d / n_;
+        m2_[i] += d * (x - mean_[i]);
+    }
+}
+
+Vec3 WindowStats::mean() const {
+    return {(float)mean_[0], (float)mean_[1], (float)mean_[2]};
+}
+
+Vec3 WindowStats::stddev() const {
+    if (n_ == 0) return {0, 0, 0};
+    return {(float)sqrt(m2_[0] / n_), (float)sqrt(m2_[1] / n_), (float)sqrt(m2_[2] / n_)};
+}
+
+float WindowStats::maxStddev() const {
+    const Vec3 s = stddev();
+    return fmaxf(s.x, fmaxf(s.y, s.z));
+}
+
+// ---------- Acelerômetro ----------
+
+Vec3 applyAccelCal(const AccelCal &cal, const Vec3 &raw) {
+    return {(raw.x - cal.offset.x) / cal.scale.x,
+            (raw.y - cal.offset.y) / cal.scale.y,
+            (raw.z - cal.offset.z) / cal.scale.z};
+}
+
+// Eixo (0 = X, 1 = Y, 2 = Z) e sinal que a posição aponta para cima
+static void poseAxis(Pose p, int &ax, float &sign) {
+    switch (p) {
+    case Pose::ZUp:   ax = 2; sign = +1; break;
+    case Pose::ZDown: ax = 2; sign = -1; break;
+    case Pose::XUp:   ax = 0; sign = +1; break;
+    case Pose::XDown: ax = 0; sign = -1; break;
+    case Pose::YUp:   ax = 1; sign = +1; break;
+    default:          ax = 1; sign = -1; break;   // YDown
+    }
+}
+
+// Mapeamento da montagem (docs/hardware.md): X+ nariz, Y+ asa esquerda, Z+ para cima
+const char *poseName(Pose p) {
+    switch (p) {
+    case Pose::ZUp:   return "nivelada, face para cima";
+    case Pose::ZDown: return "nivelada, face para baixo";
+    case Pose::XUp:   return "nariz para cima";
+    case Pose::XDown: return "nariz para baixo";
+    case Pose::YUp:   return "asa direita para baixo";
+    case Pose::YDown: return "asa esquerda para baixo";
+    default:          return "?";
+    }
+}
+
+PoseCheck checkPose(Pose p, const Vec3 &mean, const PoseLimits &lim) {
+    int ax;
+    float sign;
+    poseAxis(p, ax, sign);
+    // O eixo esperado precisa ser o de maior módulo e ter o sinal da posição
+    int dom = 0;
+    for (int i = 1; i < 3; i++)
+        if (fabsf(axis(mean, i)) > fabsf(axis(mean, dom))) dom = i;
+    const float v = sign * axis(mean, ax);
+    if (dom != ax || v <= 0) return PoseCheck::WrongAxis;
+    if (v < lim.dominantMinG || v > lim.dominantMaxG) return PoseCheck::WeakAxis;
+    return PoseCheck::Ok;
+}
+
+bool sixPositionCal(const Vec3 means[POSE_COUNT], AccelCal &out) {
+    const Pose up[3] = {Pose::XUp, Pose::YUp, Pose::ZUp};
+    const Pose down[3] = {Pose::XDown, Pose::YDown, Pose::ZDown};
+    float off[3], sc[3];
+    for (int i = 0; i < 3; i++) {
+        const float aUp = axis(means[(int)up[i]], i);
+        const float aDown = axis(means[(int)down[i]], i);
+        off[i] = (aUp + aDown) / 2;
+        sc[i] = (aUp - aDown) / 2;
+        if (!(sc[i] > 0.5f && sc[i] < 1.5f)) return false;
+    }
+    out.offset = {off[0], off[1], off[2]};
+    out.scale = {sc[0], sc[1], sc[2]};
+    return true;
+}
+
+bool validateAccelCal(const AccelCal &cal, const Vec3 means[POSE_COUNT], float minG, float maxG,
+                      float normsOut[POSE_COUNT]) {
+    bool ok = true;
+    for (int i = 0; i < POSE_COUNT; i++) {
+        normsOut[i] = norm(applyAccelCal(cal, means[i]));
+        if (!(normsOut[i] >= minG && normsOut[i] <= maxG)) ok = false;
+    }
+    return ok;
+}
+
+// ---------- Giroscópio ----------
+
+GyroBiasResult evaluateGyroWindow(const WindowStats &gyro, const WindowStats &accCorrected,
+                                  uint32_t minSamples, const RestLimits &lim) {
+    GyroBiasResult r;
+    r.bias = gyro.mean();
+    r.gyroMaxStd = gyro.maxStddev();
+    r.accNorm = norm(accCorrected.mean());
+    if (gyro.count() < minSamples || accCorrected.count() < minSamples)
+        r.status = RestCheck::TooFewSamples;
+    else if (r.gyroMaxStd >= lim.gyroMaxStdDps)
+        r.status = RestCheck::Moving;
+    else if (r.accNorm < lim.accMinG || r.accNorm > lim.accMaxG)
+        r.status = RestCheck::AccOutOfRange;
+    else
+        r.status = RestCheck::Ok;
+    return r;
+}
+
+BiasConfirmer::Result BiasConfirmer::feed(const GyroBiasResult &window, float maxDeltaDps) {
+    if (window.status != RestCheck::Ok) {
+        hasCandidate_ = false;
+        return Result::Rejected;
+    }
+    if (!hasCandidate_) {
+        candidate_ = window.bias;
+        hasCandidate_ = true;
+        return Result::Candidate;
+    }
+    const Vec3 &b = window.bias;
+    lastDelta_ = fmaxf(fabsf(b.x - candidate_.x), fmaxf(fabsf(b.y - candidate_.y), fabsf(b.z - candidate_.z)));
+    if (lastDelta_ > maxDeltaDps) {
+        candidate_ = b;
+        return Result::Inconsistent;
+    }
+    accepted_ = {(b.x + candidate_.x) / 2, (b.y + candidate_.y) / 2, (b.z + candidate_.z) / 2};
+    hasCandidate_ = false;
+    return Result::Accepted;
+}
+
+Vec3 applyGyroBias(const Vec3 &raw, const Vec3 &bias) {
+    return {raw.x - bias.x, raw.y - bias.y, raw.z - bias.z};
+}
+
+bool tempDrifted(float calTempC, float nowTempC, float maxDeltaC) {
+    return fabsf(nowTempC - calTempC) > maxDeltaC;
+}

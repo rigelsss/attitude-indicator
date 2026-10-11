@@ -1,0 +1,280 @@
+// Testes da calibração em lógica pura (lib/imu_cal). Rodar no PC: pio test -e native
+#include <math.h>
+#include <unity.h>
+#include "imu_cal.h"
+
+void setUp() {}
+void tearDown() {}
+
+// Ruído determinístico: xorshift32 + aproximação gaussiana (soma de 12 uniformes − 6)
+static uint32_t g_seed = 12345;
+static float uniform01() {
+    g_seed ^= g_seed << 13;
+    g_seed ^= g_seed >> 17;
+    g_seed ^= g_seed << 5;
+    return (g_seed & 0xFFFFFF) / 16777216.0f;
+}
+static float gauss(float sigma) {
+    float s = 0;
+    for (int i = 0; i < 12; i++) s += uniform01();
+    return (s - 6.0f) * sigma;
+}
+
+static const PoseLimits POSE_LIM = {0.8f, 1.2f};
+static const RestLimits REST_LIM = {0.15f, 0.95f, 1.05f};   // mesmos valores do config.h
+
+// Sensor sintético: bruto = offset + escala·g, com g o vetor gravidade (em g) nos eixos do chip
+static Vec3 synth(const AccelCal &truth, const Vec3 &g) {
+    return {truth.offset.x + truth.scale.x * g.x,
+            truth.offset.y + truth.scale.y * g.y,
+            truth.offset.z + truth.scale.z * g.z};
+}
+
+// Gravidade "para cima" de cada posição, opcionalmente inclinada de tiltDeg num eixo lateral
+static Vec3 poseGravity(Pose p, float tiltDeg) {
+    const float c = cosf(tiltDeg * (float)M_PI / 180), s = sinf(tiltDeg * (float)M_PI / 180);
+    switch (p) {
+    case Pose::ZUp:   return {s, 0, c};
+    case Pose::ZDown: return {0, s, -c};
+    case Pose::XUp:   return {c, 0, s};
+    case Pose::XDown: return {-c, s, 0};
+    case Pose::YUp:   return {0, c, s};
+    default:          return {s, -c, 0};   // YDown
+    }
+}
+
+// Coeficientes da montagem 5 (docs/hardware.md), em g
+static const AccelCal TRUTH = {{0.016479f, 0.000824f, 0.090698f}, {1.005127f, 1.001312f, 1.008545f}};
+
+static void test_window_stats_known_sequence() {
+    WindowStats w;
+    for (int i = 1; i <= 5; i++) w.add({(float)i, (float)(2 * i), 7.0f});
+    TEST_ASSERT_EQUAL_UINT32(5, w.count());
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 3.0f, w.mean().x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 6.0f, w.mean().y);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, sqrtf(2.0f), w.stddev().x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 2 * sqrtf(2.0f), w.stddev().y);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.0f, w.stddev().z);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 2 * sqrtf(2.0f), w.maxStddev());
+    w.reset();
+    TEST_ASSERT_EQUAL_UINT32(0, w.count());
+}
+
+static void test_six_position_recovers_synthetic_coefficients() {
+    Vec3 means[POSE_COUNT];
+    for (int i = 0; i < POSE_COUNT; i++) means[i] = synth(TRUTH, poseGravity((Pose)i, 0));
+    AccelCal cal;
+    TEST_ASSERT_TRUE(sixPositionCal(means, cal));
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, TRUTH.offset.x, cal.offset.x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, TRUTH.offset.y, cal.offset.y);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, TRUTH.offset.z, cal.offset.z);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, TRUTH.scale.x, cal.scale.x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, TRUTH.scale.y, cal.scale.y);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, TRUTH.scale.z, cal.scale.z);
+    // Corrigido, |a| = 1 g em todas as posições
+    for (int i = 0; i < POSE_COUNT; i++)
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.0f, norm(applyAccelCal(cal, means[i])));
+}
+
+// Com cada posição inclinada 3°, o erro dos offsets fica abaixo de 2 mg (como na bancada)
+static void test_six_position_tolerates_small_tilt() {
+    Vec3 means[POSE_COUNT];
+    for (int i = 0; i < POSE_COUNT; i++) means[i] = synth(TRUTH, poseGravity((Pose)i, 3.0f));
+    AccelCal cal;
+    TEST_ASSERT_TRUE(sixPositionCal(means, cal));
+    TEST_ASSERT_FLOAT_WITHIN(0.002f, TRUTH.offset.x, cal.offset.x);
+    TEST_ASSERT_FLOAT_WITHIN(0.002f, TRUTH.offset.y, cal.offset.y);
+    TEST_ASSERT_FLOAT_WITHIN(0.002f, TRUTH.offset.z, cal.offset.z);
+    TEST_ASSERT_FLOAT_WITHIN(0.003f, TRUTH.scale.z, cal.scale.z);
+}
+
+// Médias reais da montagem 5 (LSB em ±2 g, docs/hardware.md) convertidas para g
+static void test_six_position_bench_data_montagem5() {
+    const float k = 1.0f / 16384;
+    Vec3 means[POSE_COUNT];
+    means[(int)Pose::ZUp] = {70 * k, 615 * k, 18010 * k};
+    means[(int)Pose::ZDown] = {63 * k, -766 * k, -15038 * k};
+    means[(int)Pose::XUp] = {16738 * k, 217 * k, 1745 * k};
+    means[(int)Pose::XDown] = {-16198 * k, -677 * k, 1468 * k};
+    means[(int)Pose::YUp] = {-111 * k, 16419 * k, 910 * k};
+    means[(int)Pose::YDown] = {580 * k, -16392 * k, 1769 * k};
+    for (int i = 0; i < POSE_COUNT; i++)
+        TEST_ASSERT_EQUAL_INT((int)PoseCheck::Ok, (int)checkPose((Pose)i, means[i], POSE_LIM));
+    AccelCal cal;
+    TEST_ASSERT_TRUE(sixPositionCal(means, cal));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, TRUTH.offset.x, cal.offset.x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, TRUTH.offset.y, cal.offset.y);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, TRUTH.offset.z, cal.offset.z);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, TRUTH.scale.x, cal.scale.x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, TRUTH.scale.y, cal.scale.y);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, TRUTH.scale.z, cal.scale.z);
+    // Critério de validação do calibracao.md: |a| corrigido entre 0,98 e 1,02 g
+    float norms[POSE_COUNT];
+    TEST_ASSERT_TRUE(validateAccelCal(cal, means, 0.98f, 1.02f, norms));
+}
+
+// Posições inclinadas 20°: passam pela verificação de posição e pela faixa de escala, mas a escala
+// sai ~6 % menor e |a| corrigido fica em ~1,064 g. A validação precisa reprovar e impedir a gravação.
+static void test_validation_rejects_large_tilt() {
+    Vec3 means[POSE_COUNT];
+    for (int i = 0; i < POSE_COUNT; i++) {
+        means[i] = synth(TRUTH, poseGravity((Pose)i, 20.0f));
+        TEST_ASSERT_EQUAL_INT((int)PoseCheck::Ok, (int)checkPose((Pose)i, means[i], POSE_LIM));
+    }
+    AccelCal cal;
+    TEST_ASSERT_TRUE(sixPositionCal(means, cal));
+    float norms[POSE_COUNT];
+    TEST_ASSERT_FALSE(validateAccelCal(cal, means, 0.98f, 1.02f, norms));
+    TEST_ASSERT_FLOAT_WITHIN(0.002f, 1.064f, norms[(int)Pose::ZUp]);
+}
+
+static void test_validation_accepts_small_tilt() {
+    Vec3 means[POSE_COUNT];
+    for (int i = 0; i < POSE_COUNT; i++) means[i] = synth(TRUTH, poseGravity((Pose)i, 3.0f));
+    AccelCal cal;
+    TEST_ASSERT_TRUE(sixPositionCal(means, cal));
+    float norms[POSE_COUNT];
+    TEST_ASSERT_TRUE(validateAccelCal(cal, means, 0.98f, 1.02f, norms));
+}
+
+static void test_check_pose_rejects_wrong_and_weak() {
+    TEST_ASSERT_EQUAL_INT((int)PoseCheck::Ok, (int)checkPose(Pose::ZUp, {0.02f, 0.03f, 1.10f}, POSE_LIM));
+    // Outra posição no lugar da pedida: face para baixo em vez de face para cima
+    TEST_ASSERT_EQUAL_INT((int)PoseCheck::WrongAxis, (int)checkPose(Pose::ZUp, {0, 0, -0.92f}, POSE_LIM));
+    // Nariz para cima quando se pede face para cima
+    TEST_ASSERT_EQUAL_INT((int)PoseCheck::WrongAxis, (int)checkPose(Pose::ZUp, {1.0f, 0, 0.05f}, POSE_LIM));
+    // Eixo certo, mas inclinado demais (~45°)
+    TEST_ASSERT_EQUAL_INT((int)PoseCheck::WeakAxis, (int)checkPose(Pose::XUp, {0.72f, 0, 0.70f}, POSE_LIM));
+}
+
+static void test_six_position_rejects_swapped_positions() {
+    Vec3 means[POSE_COUNT];
+    for (int i = 0; i < POSE_COUNT; i++) means[i] = synth(TRUTH, poseGravity((Pose)i, 0));
+    const Vec3 t = means[(int)Pose::XUp];   // nariz para cima e para baixo trocados: escala negativa
+    means[(int)Pose::XUp] = means[(int)Pose::XDown];
+    means[(int)Pose::XDown] = t;
+    AccelCal cal;
+    TEST_ASSERT_FALSE(sixPositionCal(means, cal));
+}
+
+// Janela de 2 s a 200 Hz com bias e ruído típicos da bancada (docs/hardware.md).
+// noiseDps: 0,035 parado; ~0,09 com vibração da mesa (digitação). biasX desloca a média de gx.
+static void fillGyroWindow(WindowStats &g, WindowStats &a, float sineAmpDps, float accZ, int n,
+                           float noiseDps = 0.035f, float biasX = -4.88f) {
+    const Vec3 bias = {biasX, 2.67f, 1.00f};
+    g.reset();
+    a.reset();
+    for (int i = 0; i < n; i++) {
+        const float m = sineAmpDps * sinf(2 * (float)M_PI * i / 100.0f);   // 2 Hz
+        g.add({bias.x + gauss(noiseDps) + m, bias.y + gauss(noiseDps), bias.z + gauss(noiseDps)});
+        a.add({gauss(0.002f), gauss(0.002f), accZ + gauss(0.002f)});
+    }
+}
+
+static void test_gyro_bias_accepted_at_rest() {
+    WindowStats g, a;
+    fillGyroWindow(g, a, 0, 1.0f, 400);
+    const GyroBiasResult r = evaluateGyroWindow(g, a, 360, REST_LIM);
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::Ok, (int)r.status);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -4.88f, r.bias.x);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 2.67f, r.bias.y);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.00f, r.bias.z);
+    const Vec3 c = applyGyroBias({-4.88f, 2.67f, 1.00f}, r.bias);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, c.x);
+}
+
+static void test_gyro_bias_rejected_when_moving() {
+    WindowStats g, a;
+    fillGyroWindow(g, a, 5.0f, 1.0f, 400);   // oscilação de 5 °/s: desvio ≈ 3,5 °/s
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::Moving, (int)evaluateGyroWindow(g, a, 360, REST_LIM).status);
+}
+
+static const float MAX_DELTA = 0.03f;   // mesmo valor do config.h
+
+// Vibração da mesa (bancada, 11/10/2026: desvio 0,08–0,09 °/s com bias correto): passa no filtro
+// de desvio e, como a média não se desloca, as duas janelas confirmam o bias
+static void test_bias_confirmed_with_vibration() {
+    WindowStats g, a;
+    BiasConfirmer bc;
+    fillGyroWindow(g, a, 0, 1.0f, 400, 0.09f);
+    const GyroBiasResult w1 = evaluateGyroWindow(g, a, 360, REST_LIM);
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::Ok, (int)w1.status);
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Candidate, (int)bc.feed(w1, MAX_DELTA));
+    fillGyroWindow(g, a, 0, 1.0f, 400, 0.09f);
+    const GyroBiasResult w2 = evaluateGyroWindow(g, a, 360, REST_LIM);
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Accepted, (int)bc.feed(w2, MAX_DELTA));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -4.88f, bc.bias().x);
+    // O bias aceito é a média das duas janelas
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, (w1.bias.x + w2.bias.x) / 2, bc.bias().x);
+}
+
+// Caixa se acomodando (bancada, 11/10/2026): desvio baixo, mas a média se desloca ~0,08 °/s entre
+// janelas. A diferença é recusada; quando a média se estabiliza, o bias é confirmado
+static void test_bias_inconsistent_while_settling() {
+    WindowStats g, a;
+    BiasConfirmer bc;
+    fillGyroWindow(g, a, 0, 1.0f, 400, 0.05f, -4.86f);
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Candidate,
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+    fillGyroWindow(g, a, 0, 1.0f, 400, 0.05f, -4.78f);
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Inconsistent,
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.08f, bc.lastDelta());
+    fillGyroWindow(g, a, 0, 1.0f, 400, 0.05f, -4.79f);
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Accepted,
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -4.785f, bc.bias().x);
+}
+
+// Uma janela reprovada no meio descarta a candidata: o bias só é aceito com duas janelas seguidas
+static void test_bias_rejected_window_resets_candidate() {
+    WindowStats g, a;
+    BiasConfirmer bc;
+    fillGyroWindow(g, a, 0, 1.0f, 400);
+    bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA);
+    fillGyroWindow(g, a, 5.0f, 1.0f, 400);
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Rejected,
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+    fillGyroWindow(g, a, 0, 1.0f, 400);
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Candidate,
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+}
+
+static void test_gyro_bias_rejected_when_accelerating() {
+    WindowStats g, a;
+    fillGyroWindow(g, a, 0, 1.2f, 400);
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::AccOutOfRange, (int)evaluateGyroWindow(g, a, 360, REST_LIM).status);
+}
+
+static void test_gyro_bias_rejected_when_window_incomplete() {
+    WindowStats g, a;
+    fillGyroWindow(g, a, 0, 1.0f, 200);
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::TooFewSamples, (int)evaluateGyroWindow(g, a, 360, REST_LIM).status);
+}
+
+static void test_temp_drift() {
+    TEST_ASSERT_FALSE(tempDrifted(26.0f, 30.0f, 10.0f));
+    TEST_ASSERT_TRUE(tempDrifted(26.0f, 36.5f, 10.0f));
+    TEST_ASSERT_TRUE(tempDrifted(26.0f, 15.5f, 10.0f));
+}
+
+int main() {
+    UNITY_BEGIN();
+    RUN_TEST(test_window_stats_known_sequence);
+    RUN_TEST(test_six_position_recovers_synthetic_coefficients);
+    RUN_TEST(test_six_position_tolerates_small_tilt);
+    RUN_TEST(test_six_position_bench_data_montagem5);
+    RUN_TEST(test_validation_rejects_large_tilt);
+    RUN_TEST(test_validation_accepts_small_tilt);
+    RUN_TEST(test_check_pose_rejects_wrong_and_weak);
+    RUN_TEST(test_six_position_rejects_swapped_positions);
+    RUN_TEST(test_gyro_bias_accepted_at_rest);
+    RUN_TEST(test_gyro_bias_rejected_when_moving);
+    RUN_TEST(test_bias_confirmed_with_vibration);
+    RUN_TEST(test_bias_inconsistent_while_settling);
+    RUN_TEST(test_bias_rejected_window_resets_candidate);
+    RUN_TEST(test_gyro_bias_rejected_when_accelerating);
+    RUN_TEST(test_gyro_bias_rejected_when_window_incomplete);
+    RUN_TEST(test_temp_drift);
+    return UNITY_END();
+}

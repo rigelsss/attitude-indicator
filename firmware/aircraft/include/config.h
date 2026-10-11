@@ -37,6 +37,24 @@
 #define MPU_INT_TIMEOUT_MS      50     // sem pulsos do INT por esse tempo (10 amostras): conferir o MPU
 #define MAIN_PRINT_MS           1000   // main provisório: intervalo do resumo na serial
 
+// ---------- Calibração do MPU6050 (docs/calibracao.md) ----------
+#define CAL_WINDOW_MS                 2000    // janela de média: 400 amostras a 200 Hz
+#define CAL_MIN_SAMPLES_PCT           90      // janela aceita com pelo menos este % das amostras
+#define CAL_REST_GYRO_MAX_STD_DPS     0.15f   // repouso: desvio de cada eixo do giroscópio abaixo disto
+                                              // (filtro de movimento; tolera vibração da mesa, ~0,09 °/s)
+#define CAL_BIAS_MAX_DELTA_DPS        0.03f   // bias aceito só com duas janelas seguidas com médias
+                                              // diferindo menos que isto em cada eixo (~3σ da diferença)
+#define CAL_REST_ACC_MIN_G            0.95f   // repouso: |a| corrigido dentro desta faixa
+#define CAL_REST_ACC_MAX_G            1.05f
+#define CAL_POSE_MIN_G                0.8f    // seis posições: eixo esperado dentro desta faixa
+#define CAL_POSE_MAX_G                1.2f
+#define CAL_VALID_MIN_G               0.98f   // validação: |a| corrigido em cada posição
+#define CAL_VALID_MAX_G               1.02f
+#define CAL_TEMP_WARN_C               1.0f    // aviso: chip a mais disto da temperatura da calibração
+                                              // (bias de gx varia ~−0,1 °/s por °C, hardware.md)
+#define CAL_MPU_SETTLE_MS             200     // descarte após configurar o MPU (boot e recuperações):
+                                              // transitório de partida do giroscópio (pico ~60 °/s)
+
 // ---------- Fusão ----------
 #define COMP_FILTER_ALPHA 0.98f   // peso do giroscópio no filtro complementar
 

@@ -316,6 +316,87 @@ Firmware `aircraft` com a calibração de [calibracao.md](calibracao.md): lógic
   A inclinação é de ~−0,1 °/s por °C. Numa única sessão, o chip esquentou 0,5 °C e o bias andou ~0,06 °/s, um efeito maior que o erro de acomodação corrigido acima. O aviso de temperatura foi reduzido de 10 °C para 1 °C, e a correção da deriva ficou como pendência para a etapa da fusão (ver [calibracao.md](calibracao.md)). Na mesma faixa, gy ficou entre +2,650 e +2,682 °/s e gz entre +0,996 e +1,025 °/s (com um caso de +1,066 °/s a 25,7 °C), sem uma tendência clara com a temperatura.
 - **Linhas corrompidas na serial.** Com `--echo`, os 64 caracteres corrompidos (`����`) passaram a aparecer logo depois de cada tecla digitada. Isso reforça que o problema está no caminho USB/PC, e não no firmware.
 
+### Fusão no firmware de voo: primeira sessão (11/10/2026)
+
+Filtro complementar de [fusao.md](fusao.md), com τ = 1 s. Montagem 5, caixa apoiada na bancada, 26,7–26,8 °C. Bias do giroscópio aceito no boot (diferença entre janelas de 0,004 e 0,020 °/s).
+
+**Calibração de montagem (`z`), primeira execução:**
+
+| Medida | Roll | Pitch |
+|---|---|---|
+| Posição 1 (sem correção) | +2,41° | +0,44° |
+| Posição 2, girada 180° (sem correção) | +4,73° | +0,88° |
+| Desalinhamento do módulo (resultado) | +3,57° | +0,66° |
+| Inclinação da mesa, vista na posição 1 (resultado) | −1,16° | −0,22° |
+
+- **O resultado é coerente com a geometria.** Depois de gravar, com a caixa ainda na posição 2, o filtro leu +1,21° e +0,23°. É a inclinação da mesa com o sinal trocado, como esperado na posição girada, dentro de 0,05°.
+- **O desalinhamento em roll (3,6°) ficou acima dos ~2,4° estimados na montagem 5.** Aquela estimativa vinha da comparação entre a face para cima e a face para baixo, sem separar a inclinação da mesa. A conferir: com a caixa de volta na posição 1, o filtro deve ler ≈ −1,16° e −0,22°, e o inclinômetro na borda de referência deve indicar ~1,2° de roll na mesa.
+- Antes da primeira gravação, o boot mostra `[E][Preferences.cpp:50] begin(): nvs_open failed: NOT_FOUND`. É o namespace `att_level`, que ainda não existia, aberto para leitura. A mensagem não volta depois da gravação.
+
+**Repouso (fluxo `a` por ~3 s, resumo `r` por ~15 s):**
+
+| Grandeza | Resultado |
+|---|---|
+| Atitude do filtro | roll +1,20 a +1,24°, pitch +0,22 a +0,24°; desvio no `r` de 0,00–0,01° |
+| Atitude só pelo acelerômetro | roll +1,05 a +1,39°, pitch +0,06 a +0,38° (±0,15°) |
+| Atitude só pelo giroscópio | +1,23° → +1,26° em ~3 s: bias residual de ~0,01 °/s |
+| \|a\| corrigido e peso | 0,996–1,005 g; peso 1,00 em todas as linhas |
+| Custo do `update()` | máximo de 184–212 µs (~4 % do período de 5 ms) |
+| Falhas, saturações, reinícios | nenhum |
+
+**Associação pulso → quadro, primeira versão.** Com o critério só por atraso (limite de 1 ms), cada linha do `a` gerou 1 quadro "ambíguo" e 1 descartado: 18 intervalos integrados por 100 ms, com dt médio de 5,56 ms e máximo de 15 ms. A impressão bloqueava ~10 ms, e o último pulso chegava 2–4 ms antes da leitura. O quadro era desse pulso, mas passava do limite e era recusado. Correções feitas em seguida (ver [fusao.md](fusao.md)) e validadas na sessão seguinte (abaixo):
+- ambíguo passou a ser só um pulso mais novo chegando antes do fim da leitura, com uma rede de segurança de 4 ms;
+- a linha do `a` passou a mostrar o custo médio do filtro;
+- a serial ganhou um buffer de transmissão de 1 kB. Sem ele, o `r` causava 3 amostras descartadas por segundo.
+
+### Fusão no firmware de voo: roteiro de validação (11/10/2026)
+
+Roteiro do [fusao.md](fusao.md), com a guarda nova de "ambíguos" e o buffer de transmissão da serial. Montagem 5, montagem calibrada (`z` da primeira sessão), um log contínuo de ~28 min (`device-monitor-261011-165319.log`). Chip a 24,6 °C no boot e 26,4 °C no fim; o bias de gx foi de −4,677 °/s (24,6 °C) para −4,803 °/s (26,2 °C, comando `g` antes do teste de giros), ou seja, −0,08 °/s por °C.
+
+**Referências.**
+- Inclinômetro do celular, com resolução de 1°.
+- Na mesa, ao longo das asas: 1° e 359° (= −1°) com o celular girado 180°. A leitura trocar de sinal é o esperado: a mesa tem ~1° em roll, e o erro do celular é ~0°. Isso confirma, de forma independente, a inclinação de 1,16° obtida pelo `z`.
+- Ao longo do nariz: 0° nas duas orientações, ou seja, mesa abaixo de ~0,5° em pitch. O filtro leu −0,1 a −0,4°.
+- Calço de 2,5 cm. A caixa mede 15,5 cm (nariz–cauda) por 10 cm (asa–asa), o que dá asin(2,5/15,5) = 9,28° em pitch e asin(2,5/10) = 14,48° em roll.
+
+| Teste | Resultado | Situação |
+|---|---|---|
+| Temporização (todo o fluxo `a`, ~4 000 linhas) | dt entre 4,97 e 5,04 ms; 0 ambíguos, 0 descartados e 0 reinícios; atraso pulso → leitura de até 147 µs; resumo `r` sem descartadas | ✔ |
+| Custo do `update()` | médio de 67 µs (1,3 % do período), máximo de 237 µs | ✔ |
+| Nivelado na posição 1 do `z` | roll −1,06 a −1,40° e pitch −0,11 a −0,33° em reposições diferentes da caixa (esperado: −1,16° e −0,22°). A variação de ±0,2° vem do apoio da caixa | ✔ |
+| Sinais | asa direita para baixo: roll até +29° (positivo); nariz para cima: pitch até +26° (positivo) | ✔ |
+| Ângulos conhecidos (calço de 2,5 cm) | ver a tabela abaixo: escala dentro de 0,7 % da geometria | ✔ |
+| Deriva parada, 312 s | filtro: roll −1,20 a −1,12° (0,08° pico a pico) e pitch −0,40 a −0,28° (0,12° pico a pico); meta < 0,2° | ✔ |
+| Deriva só do giroscópio, mesmos 312 s | roll −10,1° (−0,032 °/s em média, acelerando com o aquecimento de 24,8 para 25,2 °C) e pitch −4,0° (−0,013 °/s) | referência |
+| Giros (~37 °/s) | roll até +31,7° e pitch até +39,6°, segurando ~4 s; filtro acompanhou sem atraso visível, sem DEGRADADO; o só-giroscópio voltou a 0,12° do filtro depois das duas excursões | ✔ |
+| Aceleração linear (deslizar a caixa) | só acelerômetro: desvio de até 19,6° em roll e 25,5° em pitch; filtro: até 1,34° e 1,26°, com o peso caindo a 0; voltou à linha de base em ~3 s | ✔ (experimental) |
+| Recuperação (VCC solto ~8 s) | 127 falhas, 1 recuperação, 1 576 amostras perdidas; o transitório de partida (pico de 59 °/s no `r`) ficou fora da fusão; o filtro reinicializou e convergiu ao acelerômetro em ~3 s | ✔ |
+
+Conclusões:
+
+- **A correção da guarda e o buffer da serial funcionaram.** Não houve nenhum quadro ambíguo, nenhuma amostra descartada e nenhum reinício em ~7 min de fluxo a 10 Hz com o resumo ligado. O dt ficou sempre entre 4,97 e 5,04 ms.
+- **O erro estacionário b·τ se confirmou na placa.** Na deriva parada, a diferença entre o filtro e a média do acelerômetro foi de −0,02° no primeiro minuto e de −0,06° no último. O bias residual de roll medido pelo só-giroscópio foi de −0,02 °/s no início e de −0,05 °/s no fim, e com τ = 1 s isso dá exatamente esses erros. O bias de gx, ao derivar com o aquecimento, levaria o horizonte a andar ~10° em 5 min sem o acelerômetro; com o filtro, o efeito ficou em 0,06°. Isso sustenta a decisão de adiar a compensação térmica (calibracao.md).
+- **A tendência de pitch na deriva (−0,05° em 5 min) é real, e não do filtro.** A média do acelerômetro andou o mesmo valor (−0,305 → −0,354°), provavelmente pela acomodação da caixa ou pelo aquecimento.
+- **Aceleração linear:** deslizando a caixa, o acelerômetro sozinho erraria até ~25°; o filtro errou ~1,3°. O resultado depende da intensidade e da duração do movimento, como previsto em fusao.md.
+- **Inicialização a partir de uma única amostra.** Depois da recuperação, o filtro começou em −1,25° de roll, contra −0,95° da média do acelerômetro, e levou ~3 s (≈ 3τ) para convergir. O erro de 0,3° é do ruído de uma amostra (~0,1°) somado a um provável movimento da caixa ao recolocar o fio. Corrigido em seguida: a inicialização passou a usar a média de 20 amostras seguidas (0,1 s), com a caixa sem girar (|giroscópio| < 5 °/s), ver [fusao.md](fusao.md).
+- **Inicialização pela média, validada (11/10/2026, log `device-monitor-261011-173745.log`).** Caixa parada sobre o calço, em roll ~+15°; VCC solto por ~4 s (62 falhas, 783 amostras perdidas, 1 recuperação). Antes da queda, o filtro estava em +15,11° de roll. Depois da volta, apareceu uma linha "aguardando referência" (média em andamento), e a primeira linha inicializada já marcou +15,14°. O valor final foi +15,16° ± 0,01°, sem a convergência de ~3 s da versão de uma amostra. O pitch voltou para −0,36°, contra −0,37° no fim. O transitório de partida (pico de 59,6 °/s no `r`) ficou fora da fusão.
+- **Durante a falta do sensor, o fluxo `a` fica em silêncio.** As linhas só saem quando há uma amostra válida, então o estado "aguardando referência" não aparece nesse caso. O resumo `r` mostra as falhas e o "sem pulsos do INT".
+- **Ângulos conhecidos.** O calço de 2,5 cm foi posto sob cada um dos quatro lados. O nariz está no log acima; os outros três estão no log `device-monitor-261011-172939.log`. Cada valor é a média de 1 s no resumo `r`, ao longo de 10–19 s parado, com desvio de 0,00–0,02°.
+
+  | Calço sob | Filtro | Geometria (asin(h/L)) |
+  |---|---|---|
+  | nariz | pitch +9,29° | +9,28° |
+  | cauda | pitch −9,35° | −9,28° |
+  | lado da asa esquerda (asa direita para baixo) | roll +13,90° | +14,48° |
+  | lado da asa direita (asa esquerda para baixo) | roll −15,27° | −14,48° |
+
+  Cada leitura soma o ângulo do calço com a inclinação da mesa e o apoio da caixa naquele ponto. Para separar os dois, usa-se o par de lados opostos:
+  - **meia diferença** = ângulo do calço: pitch 9,32° (geometria 9,28°, +0,4 %) e roll 14,59° (geometria 14,48°, +0,7 %). As diferenças equivalem a ~0,6–0,7 mm em L, dentro da precisão com que se mede a caixa e o ponto de apoio do calço;
+  - **meia soma** = inclinação da base: −0,03° em pitch e −0,69° em roll. O roll fica entre os −0,1 e −1,4° lidos com a caixa nivelada em reposições diferentes, e perto do ~1° de roll da mesa visto pelo celular.
+
+  A caixa também girou um pouco no outro eixo ao ser apoiada no calço: pitch de −0,09° e −0,65° nos dois lados das asas, roll de −2,37° e −1,37° no nariz e na cauda. Isso é apoio, e não erro do filtro: as leituras ficaram estáveis em 0,01°. Conclusão: a escala da atitude está correta dentro de 1 %, e o erro absoluto de cada leitura fica dentro de ~0,5°, limitado pelo apoio da caixa e pela mesa.
+- **Log corrompido no PC.** O log `device-monitor-261011-172907.log` tem 2 MB e 75 mil linhas repetidas (o início do boot), gravadas em menos de um minuto. A 115200 baud, a placa transmite no máximo ~690 kB por minuto, então a repetição vem do monitor ou do driver USB no PC, e não do firmware. É o mesmo caminho das linhas corrompidas já registradas. O log seguinte, aberto 32 s depois, saiu normal.
+
 ## Orientação de montagem do MPU6050
 
 Preenchido em 10/10/2026 com a montagem 5, que é a montagem definitiva do modelo de bancada. O mesmo mapeamento se repetiu em todas as montagens testadas.

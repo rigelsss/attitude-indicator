@@ -31,14 +31,14 @@ boot → carrega calibração do acelerômetro (NVS)
   2. *Confirmação, entre duas janelas seguidas:* as médias do giroscópio diferem menos de **0,03 °/s** em cada eixo (`CAL_BIAS_MAX_DELTA_DPS`). O bias aceito é a média das duas janelas. Se diferirem, a janela mais recente vira a nova candidata, e o processo segue. O bias definitivo leva, no mínimo, ~4 s.
   - *Por que duas etapas (10–11/10/2026).* O limite original, ~50 LSB (≈ 0,4 °/s), foi definido antes do DLPF, que reduziu o ruído em repouso para ~0,035 °/s. Reduzir só o limite de desvio não resolveu: com 0,1 °/s, uma janela com desvio de 0,065 °/s, de uma caixa se acomodando, foi aceita com erro de bias de ~0,08 °/s. Já janelas com 0,08–0,09 °/s, por vibração da mesa durante a digitação, deram o bias correto. A vibração aumenta o desvio sem deslocar a média, e a acomodação lenta desloca a média com desvio baixo. Por isso o critério principal passou a ser a estabilidade da média entre janelas, e o desvio ficou só como filtro de movimento. Com desvio de 0,15 °/s e 400 amostras, a diferença entre duas médias varia ~0,011 °/s só por ruído, e o limite de 0,03 °/s fica perto de 3 vezes isso.
   - O critério de |a| só se aplica depois da calibração do acelerômetro. Sem ela, |a| em repouso é ~1,10 g, e o giroscópio nunca seria aceito no primeiro boot.
-- **Transitório de partida.** Logo depois de configurar o MPU, o giroscópio tem um transitório (pico de ~60 °/s, repetido em todo boot). A calibração descarta os primeiros 200 ms (`CAL_MPU_SETTLE_MS`), no boot e depois de cada recuperação do driver, e a janela de 2 s só começa depois do descarte.
+- **Transitório de partida.** Logo depois de configurar o MPU, o giroscópio tem um transitório (pico de ~60 °/s, repetido em todo boot). A calibração e a fusão descartam os primeiros 200 ms (`CAL_MPU_SETTLE_MS`), no boot e depois de cada recuperação do driver (em `read()` ou em `checkAlive()`), e a janela de 2 s só começa depois do descarte.
 - **Sem bloqueio.** O sistema nunca fica parado esperando a calibração. Com o bias provisório o horizonte funciona, e a estação de solo mostra o estado pela flag.
 - **Temperatura.** O sistema guarda a temperatura do chip no momento da calibração e avisa se ela variar mais de **1 °C** (`CAL_TEMP_WARN_C`), o que pede uma nova calibração (`g`). O limite era 10 °C e foi reduzido em 11/10/2026: na bancada, o bias de gx variou ~−0,1 °/s por °C (de −4,79 a −4,88 °/s entre 25,7 e 26,6 °C), e 10 °C equivaleria a ~1 °/s de erro.
-- **Pendência para a etapa da fusão: deriva térmica do bias.** O aviso e o comando `g` cobrem a bancada, mas não corrigem a deriva. Há duas soluções candidatas, a decidir na fusão:
-  - recalibração automática enquanto a placa estiver parada, usando o mesmo detector de repouso que a fusão vai precisar; isso corrige a temperatura e a acomodação;
+- **Deriva térmica do bias: decidida na etapa da fusão (11/10/2026).** O aviso e o comando `g` cobrem a bancada, mas não corrigem a deriva. Havia duas soluções candidatas:
+  - recalibração automática enquanto a placa estiver parada, usando o mesmo detector de repouso; isso corrige a temperatura e a acomodação;
   - compensação por um modelo linear do bias em função da temperatura, o que exige medir o bias numa faixa bem maior (por exemplo, de 20 a 35 °C, ligando a placa fria).
 
-  Na fusão, o acelerômetro corrige continuamente roll e pitch, então a deriva afeta principalmente a proa.
+  **Decisão:** as duas ficam adiadas, e continuam o aviso e o `g`. No filtro complementar, o acelerômetro limita o erro de roll e pitch a ~b·τ (~0,1° por °C com τ = 1 s, perto do nível). A decisão está condicionada à medição de deriva na bancada (diagnóstico só de giroscópio do comando `a`). O magnetômetro poderá limitar a deriva da proa, mas isso depende da validação dele. Detalhes em [fusao.md](fusao.md).
 - **Recalibração.** O comando `CMD_CALIBRATE_GYRO` (B → A) roda o mesmo fluxo; durante a janela, `ST_CALIBRATING` fica ligado.
 - **Implementação.** A correção do bias é subtraída no software, sem gravar nos registradores de offset do MPU. Assim é mais simples de testar (`pio test -e native`) e de explicar.
 
@@ -50,7 +50,7 @@ O ambiente `i2cscan` é um firmware separado. O firmware de voo tem o comando `c
 - coeficientes em uso (offset e escala do acelerômetro, bias do giroscópio);
 - estado da calibração: definitiva ou provisória, temperatura no momento da calibração e temperatura atual.
 
-Outros comandos: `6` (seis posições), `g` (recalibrar o giroscópio, como o futuro `CMD_CALIBRATE_GYRO`) e `r` (liga ou desliga o resumo por segundo do driver). A lógica está em `lib/imu_cal` (pura, com testes `native`), e a gravação na NVS em `lib/imu_store`.
+Outros comandos: `6` (seis posições), `g` (recalibrar o giroscópio, como o futuro `CMD_CALIBRATE_GYRO`) e `r` (liga ou desliga o resumo por segundo do driver). Os comandos da fusão, `z` (calibração de montagem) e `a` (fluxo de atitude), estão em [fusao.md](fusao.md). A lógica está em `lib/imu_cal` (pura, com testes `native`), e a gravação na NVS em `lib/imu_store`.
 
 ## Ligação com o contrato (`telemetry.h`)
 

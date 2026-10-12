@@ -10,6 +10,9 @@
 //      i  teste do pino INT: conta pulsos de "data ready" por DIAG_INT_TEST_MS
 // 4) Se o BME280 responder, aceita também:
 //      b  liga/desliga o fluxo de temperatura, pressão e umidade a DIAG_PRINT_HZ (começa desligado)
+// 5) Se o HMC5883L responder, aceita também:
+//      h  liga/desliga o fluxo do campo magnético a DIAG_PRINT_HZ (começa desligado)
+//      x  autoteste do HMC5883L com o campo interno de polarização
 // Acesso direto por registrador, sem bibliotecas, para isolar problemas de hardware.
 #include <Arduino.h>
 #include <Wire.h>
@@ -34,7 +37,20 @@ static const uint8_t BME_REG_CTRL_MEAS  = 0xF4;   // oversampling de temperatura
 static const uint8_t BME_REG_DATA       = 0xF7;   // 8 bytes: pressão (20 bits), temperatura (20), umidade (16)
 static const uint8_t BME_CTRL_HUM_X1    = 0x01;
 static const uint8_t BME_CTRL_MEAS_X1   = 0x25;   // temperatura x1, pressão x1, modo forçado (uma medição)
+static const uint8_t HMC_REG_CRA        = 0x00;   // média de amostras, taxa de saída e polarização
+static const uint8_t HMC_REG_CRB        = 0x01;   // ganho
+static const uint8_t HMC_REG_MODE       = 0x02;
+static const uint8_t HMC_REG_DATA       = 0x03;   // 6 bytes big-endian na ordem X, Z, Y
 static const uint8_t HMC_REG_ID_A       = 0x0A;   // 0x0A..0x0C = "H43"
+static const uint8_t HMC_CRA_NORMAL     = 0x70;   // média de 8, 15 Hz, sem polarização
+static const uint8_t HMC_CRA_BIAS_POS   = 0x71;   // idem, com o campo interno positivo (autoteste)
+static const uint8_t HMC_CRA_BIAS_NEG   = 0x72;   // idem, com o campo interno negativo
+static const uint8_t HMC_CRB_1090       = 0x20;   // ±1,3 Ga, 1090 LSB/Ga (padrão)
+static const uint8_t HMC_CRB_390        = 0xA0;   // ±4,7 Ga, 390 LSB/Ga (ganho do autoteste no datasheet)
+static const uint8_t HMC_MODE_CONT      = 0x00;   // medição contínua
+static const int16_t HMC_OVERFLOW       = -4096;  // valor gravado no eixo saturado
+static const float HMC_LSB_PER_GA_1090  = 1090.0f;
+static const float HMC_LSB_PER_GA_390   = 390.0f;
 
 // Coeficientes de fábrica do BME280, gravados em cada chip (datasheet, seção 4.2.2)
 struct BmeCalib {
@@ -47,10 +63,11 @@ struct BmeCalib {
     int8_t H6;
 };
 
-enum StreamMode { STREAM_OFF, STREAM_MPU, STREAM_BME };
+enum StreamMode { STREAM_OFF, STREAM_MPU, STREAM_BME, STREAM_HMC };
 
 static bool g_mpuOk = false;
 static bool g_bmeOk = false;
+static bool g_hmcOk = false;
 static BmeCalib g_bmeCal;
 static float g_bmeRefHpa = NAN;                   // pressão da primeira leitura do fluxo: referência do Δh
 static StreamMode g_stream = STREAM_OFF;
@@ -195,6 +212,88 @@ static bool bmeRead(float &tempC, float &pressHpa, float &humPct) {
     return true;
 }
 
+// Configura o HMC5883L e espera DIAG_HMC_SETTLE_MS: a primeira saída depois de trocar o ganho ou a
+// polarização ainda usa a configuração antiga e é sobrescrita pela seguinte.
+static bool hmcConfig(uint8_t cra, uint8_t crb) {
+    if (!writeReg(ADDR_HMC5883L, HMC_REG_CRA, cra) || !writeReg(ADDR_HMC5883L, HMC_REG_CRB, crb) ||
+        !writeReg(ADDR_HMC5883L, HMC_REG_MODE, HMC_MODE_CONT))
+        return false;
+    delay(DIAG_HMC_SETTLE_MS);
+    return true;
+}
+
+// Confirma o ID "H43" e deixa o chip medindo em modo contínuo com o ganho padrão
+static bool hmcInit() {
+    uint8_t id[3];
+    if (!readRegs(ADDR_HMC5883L, HMC_REG_ID_A, id, 3) || id[0] != 'H' || id[1] != '4' || id[2] != '3')
+        return false;
+    return hmcConfig(HMC_CRA_NORMAL, HMC_CRB_1090);
+}
+
+// Última saída do chip em LSB, já na ordem X, Y, Z. Lê os 6 bytes de uma vez: uma leitura parcial
+// trava a atualização dos registradores de dados.
+static bool hmcRead(int16_t v[3]) {
+    uint8_t b[6];
+    if (!readRegs(ADDR_HMC5883L, HMC_REG_DATA, b, sizeof(b))) return false;
+    v[0] = (int16_t)((b[0] << 8) | b[1]);   // X
+    v[2] = (int16_t)((b[2] << 8) | b[3]);   // Z
+    v[1] = (int16_t)((b[4] << 8) | b[5]);   // Y
+    return true;
+}
+
+// Média de DIAG_HMC_ST_SAMPLES saídas com a polarização cra, no ganho do autoteste
+static bool hmcBiasMean(uint8_t cra, float mean[3]) {
+    if (!hmcConfig(cra, HMC_CRB_390)) return false;
+    mean[0] = mean[1] = mean[2] = 0.0f;
+    for (int k = 0; k < DIAG_HMC_ST_SAMPLES; k++) {
+        int16_t v[3];
+        if (!hmcRead(v)) return false;
+        for (int i = 0; i < 3; i++) {
+            if (v[i] == HMC_OVERFLOW) return false;
+            mean[i] += v[i];
+        }
+        delay(DIAG_HMC_PERIOD_MS);   // espera a próxima saída
+    }
+    for (int i = 0; i < 3; i++) mean[i] /= DIAG_HMC_ST_SAMPLES;
+    return true;
+}
+
+// Autoteste (datasheet, "Self Test Operation"): com a polarização ligada, o chip mede o campo externo,
+// depois o campo externo mais o da bobina (~1,1 Ga), e grava só a diferença. Cada polarização é validada
+// separadamente contra a faixa do datasheet, em LSB no ganho do autoteste; (positivo − negativo)/2 é
+// mostrado só como informação. A conversão para µT serve apenas para a apresentação.
+static bool hmcInRange(float lsb) { return lsb >= DIAG_HMC_ST_MIN_LSB && lsb <= DIAG_HMC_ST_MAX_LSB; }
+
+static void hmcSelfTest() {
+    Serial.println("[diag] autoteste do HMC5883L: mantenha ímãs e ferramentas longe...");
+    float pos[3], neg[3];
+    bool measured = hmcBiasMean(HMC_CRA_BIAS_POS, pos) && hmcBiasMean(HMC_CRA_BIAS_NEG, neg);
+    // Sempre tenta restaurar: sem isso o h converteria leituras polarizadas ou no ganho errado
+    if (!hmcConfig(HMC_CRA_NORMAL, HMC_CRB_1090)) {
+        g_hmcOk = false;
+        Serial.println("[diag] falha ao restaurar a configuração normal do HMC5883L: indisponível até novo scan (s)");
+        return;
+    }
+    if (!measured) {
+        Serial.println("[diag] falha de leitura ou saturação durante o autoteste");
+        return;
+    }
+    const char *name[3] = {"X", "Y", "Z"};
+    bool all = true;
+    for (int i = 0; i < 3; i++) {
+        bool okP = hmcInRange(pos[i]), okN = hmcInRange(-neg[i]);
+        float p = pos[i] / HMC_LSB_PER_GA_390 * 100.0f;   // µT
+        float n = neg[i] / HMC_LSB_PER_GA_390 * 100.0f;
+        all = all && okP && okN;
+        Serial.printf("  %s  +pol %6.1f µT %-13s  -pol %6.1f µT %-13s  combinado %6.1f µT\n", name[i], p,
+                      okP ? "OK" : "FORA DA FAIXA", n, okN ? "OK" : "FORA DA FAIXA", (p - n) / 2.0f);
+    }
+    Serial.printf("[diag] faixa aceita por eixo e polarização: %d a %d LSB em módulo (%.1f a %.1f µT no ganho de "
+                  "390 LSB/Ga)  =>  %s\n", DIAG_HMC_ST_MIN_LSB, DIAG_HMC_ST_MAX_LSB,
+                  DIAG_HMC_ST_MIN_LSB / HMC_LSB_PER_GA_390 * 100.0f, DIAG_HMC_ST_MAX_LSB / HMC_LSB_PER_GA_390 * 100.0f,
+                  all ? "AUTOTESTE OK" : "AUTOTESTE FALHOU");
+}
+
 static void checkExpected(const char *name, uint8_t addr) {
     Serial.printf("  %-12s 0x%02X  %s\n", name, addr, probe(addr) ? "OK" : "AUSENTE");
 }
@@ -230,6 +329,10 @@ static void scan() {
     g_bmeOk = bmeInit();
     if (g_bmeOk) Serial.println("[diag] BME280: b = temperatura, pressão e umidade");
     else Serial.println("[diag] BME280 indisponível: sem medidas (s = novo scan)");
+
+    g_hmcOk = hmcInit();
+    if (g_hmcOk) Serial.println("[diag] HMC5883L: h = campo magnético | x = autoteste");
+    else Serial.println("[diag] HMC5883L indisponível: sem medidas (s = novo scan)");
 }
 
 // Lê accel, temp e gyro; v: ax ay az temp gx gy gz
@@ -363,6 +466,15 @@ void loop() {
                 Serial.println("[diag] leituras pausadas");
             }
             break;
+        case 'h':
+            if (!g_hmcOk) break;
+            g_stream = (g_stream == STREAM_HMC) ? STREAM_OFF : STREAM_HMC;
+            if (g_stream == STREAM_HMC)
+                Serial.println("[diag] X Y Z (µT) | |B| (µT) | ângulo XY (°, sem calibração nem compensação de inclinação)");
+            else
+                Serial.println("[diag] leituras pausadas");
+            break;
+        case 'x': if (g_hmcOk) { g_stream = STREAM_OFF; hmcSelfTest(); } break;
         case 'm': if (g_mpuOk) { g_stream = STREAM_OFF; average(); } break;
         case 'f': toggleFreq(); break;
         case 't': if (g_mpuOk) { g_stream = STREAM_OFF; stressTest(); } break;
@@ -380,6 +492,24 @@ void loop() {
             // Δh pela fórmula barométrica padrão; perto do solo, 1 hPa ≈ 8,4 m
             float dh = 44330.0f * (1.0f - powf(p / g_bmeRefHpa, 0.1903f));
             Serial.printf("%6.2f | %8.2f | %5.1f | %+6.1f | %+6.2f\n", t, p, h, (p - g_bmeRefHpa) * 100.0f, dh);
+        }
+        delay(1000 / DIAG_PRINT_HZ);
+        return;
+    }
+
+    if (g_stream == STREAM_HMC) {
+        int16_t m[3];
+        if (!hmcRead(m)) {
+            Serial.println("[diag] falha de leitura do HMC5883L");
+        } else if (m[0] == HMC_OVERFLOW || m[1] == HMC_OVERFLOW || m[2] == HMC_OVERFLOW) {
+            Serial.println("SATURADO (campo acima de ±1,3 Ga: ímã ou metal perto do sensor?)");
+        } else {
+            float b[3];
+            for (int i = 0; i < 3; i++) b[i] = m[i] / HMC_LSB_PER_GA_1090 * 100.0f;   // 1 Ga = 100 µT
+            float mod = sqrtf(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+            float ang = atan2f(b[1], b[0]) * 180.0f / PI;
+            if (ang < 0.0f) ang += 360.0f;
+            Serial.printf("%7.2f %7.2f %7.2f | %6.2f | %5.1f\n", b[0], b[1], b[2], mod, ang);
         }
         delay(1000 / DIAG_PRINT_HZ);
         return;

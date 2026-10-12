@@ -22,6 +22,7 @@ O diagnóstico varre o barramento, identifica os chips pelos registradores de ID
 | `f` | Alterna o I2C entre 100 kHz (`I2C_FREQ_DIAG_HZ`) e 400 kHz (`I2C_FREQ_HZ`, a frequência do firmware de voo) |
 | `t` | Teste de contato: lê sem pausa por 5 s e conta falhas e quadros suspeitos (todos os bytes iguais a 0x00 ou a 0xFF). Mexa nos fios durante o teste |
 | `i` | Teste do pino INT: configura "data ready" a 200 Hz e conta os pulsos no GPIO 19 por 2 s; ao final, volta à configuração padrão |
+| `b` | Liga ou pausa o fluxo do BME280 (1 leitura por segundo): temperatura (°C), pressão (hPa), umidade (%) e a variação de pressão (Pa) e de altura (m) desde a primeira leitura do fluxo. Cada leitura é uma medição forçada com oversampling x1 e sem filtro, compensada com os coeficientes de fábrica do chip. A cada scan, o BME280 passa por um soft reset antes da leitura dos coeficientes, para que nenhuma configuração anterior (filtro IIR, por exemplo) fique no chip quando só o ESP reinicia |
 
 Para sair do monitor, use `Ctrl+C`; não é preciso desconectar a placa. Para voltar ao firmware normal, grave o ambiente `aircraft`.
 
@@ -30,8 +31,8 @@ Para sair do monitor, use `Ctrl+C`; não é preciso desconectar a placa. Para vo
 | Componente | Módulo | Endereço no `config.h` | Observado | ID lido |
 |---|---|---|---|---|
 | IMU | MPU6050 (GY-521) | 0x68 | 0x68 (09/10) | WHO_AM_I = 0x68 |
-| Barômetro | BME280 | 0x76 | ausente (09/10) | pendente (esperado chip_id = 0x60) |
-| Magnetômetro | GY-273 com HMC5883L | 0x1E | ausente (09/10) | pendente (esperado "H43") |
+| Barômetro | BME280 | 0x76 | 0x76 (11/10) | chip_id = 0x60 (BME280 legítimo, não BMP280) |
+| Magnetômetro | GY-273 com HMC5883L | 0x1E | 0x1E (11/10) | "H43" (HMC5883L legítimo, não o clone QMC5883L) |
 | OLED de status | SSD1306 0,91" 128x32 | 0x3C | ausente (09/10) | não tem ID |
 
 Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e precisa de outra biblioteca. O diagnóstico detecta esse caso.
@@ -48,6 +49,10 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 10/10/2026 | A | Montagem 5, depois de soltar o AD0 do chicote e prender o fio do INT | 100 e 400 kHz | Eixos alinhados à gravidade dentro de ±6 LSB da montagem 5 (Z: +17); contato sem falhas; INT a 201,5 Hz | Ver "Revalidação após mexer no AD0 e no INT" |
 | 10/10/2026 | A | Montagem 5, firmware `aircraft` com o driver próprio do MPU6050; fio do INT separado do SDA/SCL | 400 kHz | Conversão, taxa (≈ 199,9 Hz, após corrigir a medição), ruído com DLPF, faixa de ±500 °/s e recuperação após soltar SDA e VCC validados; 0 falhas em ~4,5 min | Ver "Driver do MPU6050 no firmware de voo" |
 | 10/10/2026 | A | Montagem 5, firmware `aircraft` com calibração (`lib/imu_cal`, NVS) | 400 kHz | Seis posições pelo firmware em ±4 g: \|a\| corrigido de 1,0001 a 1,0015 g; bias do giroscópio no boot aceito só em repouso; persistência na NVS | Ver "Calibração no firmware de voo" |
+| 11/10/2026 | A | Protótipo: BME280 e GY-273 recém-soldados, cada um sozinho na protoboard junto com o MPU da montagem 5, em 3V3 | 100 kHz | BME280 em 0x76 (chip_id 0x60); HMC5883L em 0x1E ("H43") | Teste dos dois juntos no barramento ainda pendente |
+| 11/10/2026 | A | Protótipo: BME280 na protoboard, longe do ESP (fios mais longos), em paralelo com o MPU | 100 e 400 kHz | BME280 e MPU respondem nas duas frequências; `t` mexendo nos fios do BME280: 10 748 leituras **do MPU** com o BME280 no barramento, 0 falhas | Mostra que o BME280 não atrapalha o barramento (contagem igual à de antes, 10 749–10 751). Não valida o contato dos fios do BME280, que o `t` não lê |
+| 11/10/2026 | A | Idem, comando `b` do diagnóstico | 100 kHz | Temperatura, pressão e umidade coerentes; subida de ~1 m detectada | Ver "BME280 no diagnóstico" |
+| 11/10/2026 | A | Idem, diagnóstico com soft reset do BME280 no scan | 100 kHz | Reset aceito no boot e num segundo scan com o chip em uso; pressão média idêntica antes e depois do reset (1009,816 hPa); desvio de 2,9 e 3,6 Pa | Comportamento igual ao das sessões anteriores: o filtro já estava desligado nelas |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -396,6 +401,27 @@ Conclusões:
 
   A caixa também girou um pouco no outro eixo ao ser apoiada no calço: pitch de −0,09° e −0,65° nos dois lados das asas, roll de −2,37° e −1,37° no nariz e na cauda. Isso é apoio, e não erro do filtro: as leituras ficaram estáveis em 0,01°. Conclusão: a escala da atitude está correta dentro de 1 %, e o erro absoluto de cada leitura fica dentro de ~0,5°, limitado pelo apoio da caixa e pela mesa.
 - **Log corrompido no PC.** O log `device-monitor-261011-172907.log` tem 2 MB e 75 mil linhas repetidas (o início do boot), gravadas em menos de um minuto. A 115200 baud, a placa transmite no máximo ~690 kB por minuto, então a repetição vem do monitor ou do driver USB no PC, e não do firmware. É o mesmo caminho das linhas corrompidas já registradas. O log seguinte, aberto 32 s depois, saiu normal.
+
+### BME280 no diagnóstico (11/10/2026)
+
+Protótipo, BME280 na protoboard, comando `b` (1 leitura por segundo, oversampling x1, sem filtro IIR). Sala a ~23 °C, 1010,1 hPa, UR ~41 %. Objetivo: confirmar que a solda não afetou a medição. Logs `device-monitor-261011-230655.log` e `device-monitor-261011-231431.log`.
+
+| Teste | Resultado |
+|---|---|
+| Repouso, ~30 s (duas sessões) | T estável em ±0,1 °C; UR em ±0,2 %; desvio padrão da pressão de ~3,1–3,3 Pa (≈ 0,27 m) com oversampling x1 e sem filtro. Como referência: é próximo do ruído RMS típico de 3,3 Pa que a Bosch informa para x1 e filtro desligado (datasheet, seção 3.5.1, tabela 7, "weather monitoring"); aquela tabela usa uma amostra por minuto, e o diagnóstico, uma por segundo |
+| Placa levantada ~1 m por ~35 s, mão longe do chip | Δp médio de −12,3 Pa no patamar contra −1,4 Pa antes e −4,0 Pa depois: subida de −9,6 a −10,9 Pa, ou seja, **0,8 a 0,9 m**. A resposta foi imediata e a temperatura não mudou (23,1 °C), então o sinal é de pressão, não térmico |
+| Respiração perto do sensor | UR de 43 % para 61 % em 2 s e volta em ~15 s |
+| Dedo no chip por ~14 s | T de 24 para 30 °C; ao retirar, volta devagar e a UR cai para 35 %, abaixo do ambiente, porque é relativa à temperatura do chip ainda quente |
+| Falhas | Nenhuma falha de leitura do BME280 |
+| Soft reset no scan (log `device-monitor-261011-233144.log`) | Dois fluxos de ~30 s, um depois do boot e outro depois de um novo scan (`s`): médias iguais (1009,816 hPa) e desvio de 2,9 e 3,6 Pa, na mesma faixa das sessões sem reset. Confirma que os resultados anteriores foram obtidos com o filtro desligado |
+
+Observações para a etapa do BME280 no firmware de voo:
+
+- **Pressão sensível à temperatura do chip.** Com o dedo (+6 °C), o Δp subiu +10 a +18 Pa, um falso "desceu ~1 m", e voltou com o resfriamento: ~1,5 Pa/°C, ou ~13 cm/°C. Por isso o BME280 deve ficar longe do calor do ESP32 e a altitude só deve ser zerada depois que a placa estabilizar termicamente.
+- **Zerar com uma única leitura erra.** Na primeira sessão, a leitura de referência ficou 4 Pa abaixo da média do repouso, o que deu Δh ≈ −0,33 m com a placa parada. O zero deve ser a média de várias leituras.
+- **Deriva lenta.** O repouso depois da subida ficou 2,5 Pa (~0,2 m) abaixo do repouso anterior em ~1 min. Pode ser a placa recolocada em outra altura ou variação da pressão ambiente (portas, ventilação), e limita a precisão da altitude relativa em sessões longas.
+- **O ruído de ~0,27 m é alto para mostrar alturas de bancada.** Oversampling maior e o filtro IIR do chip devem reduzi-lo; a escolha fica para o plano da etapa.
+- **Lixo na serial (`����`).** Apareceu três vezes nas duas sessões, sempre ao mexer na placa, às vezes cortando o começo de uma linha. Não houve reboot nem falha de leitura de I2C. Suspeita, não confirmada: problema no caminho serial/USB (cabo ou conector), correlacionado ao movimento da placa. Prender o cabo USB e ver se some.
 
 ## Orientação de montagem do MPU6050
 

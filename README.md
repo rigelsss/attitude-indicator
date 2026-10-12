@@ -147,8 +147,9 @@ O diagnóstico faz um scan a 100 kHz e depois aceita comandos de uma letra, sem 
 | `f` | Alterna o I2C entre 100 e 400 kHz |
 | `t` | Teste de contato: lê sem pausa por 5 s e conta as falhas (mexa nos fios durante o teste) |
 | `i` | Conta os pulsos do pino INT por 2 s (esperado: 200 Hz) |
+| `b` | Liga ou pausa o fluxo do BME280: temperatura (°C), pressão (hPa), umidade (%) e variação de altura desde a primeira leitura |
 
-Os valores mostrados são brutos, sem calibração. O procedimento de cada teste, os resultados e a orientação dos eixos estão em [docs/hardware.md](docs/hardware.md).
+Os valores do MPU são brutos, sem calibração; os do BME280 já vêm compensados com os coeficientes de fábrica do chip. O procedimento de cada teste, os resultados e a orientação dos eixos estão em [docs/hardware.md](docs/hardware.md).
 
 ## Estado do projeto
 

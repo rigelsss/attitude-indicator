@@ -148,8 +148,10 @@ O diagnóstico faz um scan a 100 kHz e depois aceita comandos de uma letra, sem 
 | `t` | Teste de contato: lê sem pausa por 5 s e conta as falhas (mexa nos fios durante o teste) |
 | `i` | Conta os pulsos do pino INT por 2 s (esperado: 200 Hz) |
 | `b` | Liga ou pausa o fluxo do BME280: temperatura (°C), pressão (hPa), umidade (%) e variação de altura desde a primeira leitura |
+| `h` | Liga ou pausa o fluxo do HMC5883L: campo em X, Y e Z (µT), módulo e ângulo no plano XY, sem calibração |
+| `x` | Autoteste do HMC5883L com o campo interno do chip: polarização positiva e negativa de cada eixo entre 243 e 575 LSB em módulo (faixa do datasheet), OK ou FORA DA FAIXA |
 
-Os valores do MPU são brutos, sem calibração; os do BME280 já vêm compensados com os coeficientes de fábrica do chip. O procedimento de cada teste, os resultados e a orientação dos eixos estão em [docs/hardware.md](docs/hardware.md).
+Os valores do MPU são brutos, sem calibração; os do BME280 já vêm compensados com os coeficientes de fábrica do chip, e os do HMC5883L vêm em µT, mas sem calibração. O procedimento de cada teste, os resultados e a orientação dos eixos estão em [docs/hardware.md](docs/hardware.md).
 
 ## Estado do projeto
 

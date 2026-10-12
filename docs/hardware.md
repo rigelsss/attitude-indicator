@@ -23,6 +23,8 @@ O diagnóstico varre o barramento, identifica os chips pelos registradores de ID
 | `t` | Teste de contato: lê sem pausa por 5 s e conta falhas e quadros suspeitos (todos os bytes iguais a 0x00 ou a 0xFF). Mexa nos fios durante o teste |
 | `i` | Teste do pino INT: configura "data ready" a 200 Hz e conta os pulsos no GPIO 19 por 2 s; ao final, volta à configuração padrão |
 | `b` | Liga ou pausa o fluxo do BME280 (1 leitura por segundo): temperatura (°C), pressão (hPa), umidade (%) e a variação de pressão (Pa) e de altura (m) desde a primeira leitura do fluxo. Cada leitura é uma medição forçada com oversampling x1 e sem filtro, compensada com os coeficientes de fábrica do chip. A cada scan, o BME280 passa por um soft reset antes da leitura dos coeficientes, para que nenhuma configuração anterior (filtro IIR, por exemplo) fique no chip quando só o ESP reinicia |
+| `h` | Liga ou pausa o fluxo do HMC5883L (1 leitura por segundo): campo em X, Y e Z (µT), módulo \|B\| e ângulo no plano XY (atan2(Y, X), sem calibração nem compensação de inclinação, só para ver o giro). Modo contínuo a 15 Hz, média de 8 amostras, ganho de ±1,3 Ga; um eixo saturado mostra `SATURADO` |
+| `x` | Autoteste do HMC5883L: média de 4 saídas com o campo interno positivo e de 4 com o negativo, no ganho de 390 LSB/Ga. Com a polarização ligada, o próprio chip subtrai o campo externo. Cada polarização de cada eixo deve ficar entre 243 e 575 LSB em módulo, faixa do datasheet no ganho de 390 LSB/Ga, comparada diretamente em LSB (equivale a ±62,3 a ±147,4 µT; nominal ~116 µT em X e Y e ~108 µT em Z); (positivo − negativo)/2 aparece só como informação. Ao final, volta à configuração do `h`; se a restauração falhar, o HMC fica indisponível até um novo scan |
 
 Para sair do monitor, use `Ctrl+C`; não é preciso desconectar a placa. Para voltar ao firmware normal, grave o ambiente `aircraft`.
 
@@ -53,6 +55,7 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 11/10/2026 | A | Protótipo: BME280 na protoboard, longe do ESP (fios mais longos), em paralelo com o MPU | 100 e 400 kHz | BME280 e MPU respondem nas duas frequências; `t` mexendo nos fios do BME280: 10 748 leituras **do MPU** com o BME280 no barramento, 0 falhas | Mostra que o BME280 não atrapalha o barramento (contagem igual à de antes, 10 749–10 751). Não valida o contato dos fios do BME280, que o `t` não lê |
 | 11/10/2026 | A | Idem, comando `b` do diagnóstico | 100 kHz | Temperatura, pressão e umidade coerentes; subida de ~1 m detectada | Ver "BME280 no diagnóstico" |
 | 11/10/2026 | A | Idem, diagnóstico com soft reset do BME280 no scan | 100 kHz | Reset aceito no boot e num segundo scan com o chip em uso; pressão média idêntica antes e depois do reset (1009,816 hPa); desvio de 2,9 e 3,6 Pa | Comportamento igual ao das sessões anteriores: o filtro já estava desligado nelas |
+| 12/10/2026 | A | Protótipo: GY-273 na protoboard junto com o BME280 e o MPU (três módulos no barramento), em 3V3 | 100 e 400 kHz | 3 dispositivos no scan; autoteste do HMC5883L OK nos três eixos; `b` sem falhas; `t`: 3 043 leituras do MPU a 100 kHz e 10 769 a 400 kHz, 0 falhas | Fecha o teste dos módulos juntos no barramento. Ver "HMC5883L no diagnóstico" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -422,6 +425,38 @@ Observações para a etapa do BME280 no firmware de voo:
 - **Deriva lenta.** O repouso depois da subida ficou 2,5 Pa (~0,2 m) abaixo do repouso anterior em ~1 min. Pode ser a placa recolocada em outra altura ou variação da pressão ambiente (portas, ventilação), e limita a precisão da altitude relativa em sessões longas.
 - **O ruído de ~0,27 m é alto para mostrar alturas de bancada.** Oversampling maior e o filtro IIR do chip devem reduzi-lo; a escolha fica para o plano da etapa.
 - **Lixo na serial (`����`).** Apareceu três vezes nas duas sessões, sempre ao mexer na placa, às vezes cortando o começo de uma linha. Não houve reboot nem falha de leitura de I2C. Suspeita, não confirmada: problema no caminho serial/USB (cabo ou conector), correlacionado ao movimento da placa. Prender o cabo USB e ver se some.
+
+### HMC5883L no diagnóstico (12/10/2026)
+
+Protótipo, GY-273 solto na protoboard, junto com o BME280 e o MPU. Comandos `x` e `h` (modo contínuo a 15 Hz, média de 8, ganho de 1090 LSB/Ga). Objetivo: confirmar que a solda não afetou a medição. Log `device-monitor-261012-001245.log`.
+
+**Autoteste (`x`, duas vezes seguidas):**
+
+| Eixo | +pol (LSB) | −pol (LSB) | Campo interno | Faixa aceita |
+|---|---|---|---|---|
+| X | 487,5 / 488,0 | −478,0 / −478,2 | 123,8 / 123,9 µT | 62,3 a 147,4 µT: OK |
+| Y | 449,2 / 449,8 | −457,5 / −458,5 | 116,2 / 116,4 µT | OK |
+| Z | 465,8 / 466,0 | −457,2 / −457,5 | 118,3 / 118,4 µT | OK |
+
+- Os três eixos passaram, com repetição de 0,2 µT entre as duas execuções. A parte de medição do chip está íntegra.
+- Pelo critério adotado depois (cada polarização validada separadamente), os mesmos valores também passam: positivo de +115,2 a +125,0 µT e negativo de −117,2 a −122,6 µT, todos dentro de 243 a 575 LSB em módulo (≈ 62,3 a 147,4 µT).
+- Z ficou ~10 % acima do nominal do datasheet (~108 µT), dentro da faixa.
+- Conferência do critério por polarização na placa (log `device-monitor-261012-002828.log`): positivo de +115,4 a +125,4 µT e negativo de −117,3 a −122,4 µT, todos OK, a menos de 0,4 µT das execuções anteriores. Logo depois, o `h` mostrou \|B\| = 21,5 µT com ruído de ±0,1 µT. O fluxo é consistente com a restauração da configuração normal. A diferença para os 23,7 µT anteriores vem do módulo em outra orientação (ângulo XY de 106° contra 167°) sem calibração.
+- Com a polarização ligada, o chip faz duas aquisições: a primeira só com o campo externo e a segunda com o campo externo mais o da bobina (~1,1 Ga). A primeira é subtraída da segunda, e só a diferença vai para os registradores de dados (datasheet do HMC5883L, "Self Test Operation"). Os dados são compatíveis com isso: (positivo + negativo)/2 deu só ±5 LSB (~1 µT) por eixo, enquanto o campo ambiente medido logo depois era X ≈ −22 µT (~−86 LSB nesse ganho).
+
+**Fluxo (`h`):**
+
+| Teste | Resultado |
+|---|---|
+| Repouso, ~9 s | X −22,0, Y +5,0, Z +7,1 µT; \|B\| = 23,7 µT, compatível com o campo da Terra no Brasil (~23–25 µT). Ruído de ±0,1 µT, cerca de 1 LSB |
+| Módulo girado com a mão | Y de −15 a +13 µT e Z de +9 a −19 µT, com X entre −18 e −26 µT: o giro foi principalmente em torno de X, não deitado na mesa. Os três eixos respondem à orientação. O \|B\| variou de 22 a 33 µT, o que é esperado sem calibração e com a mão e os objetos em volta |
+| Chave de fenda perto do sensor | X de −22 para −7 µT e \|B\| de 24 para 9 µT, sem saturar; voltou a \|B\| = 23,9 µT ao afastar (Y e Z um pouco diferentes: o módulo mexeu de posição) |
+| Falhas | Nenhuma falha de leitura nem saturação |
+
+Observações para a etapa do magnetômetro:
+
+- A volta completa com o módulo deitado na mesa não foi feita. Ela fica para a calibração de hard/soft iron, que também precisa de giros em todas as orientações e deve ser feita no modelo final.
+- Com 1 LSB de ruído, a resolução não limita a proa: o erro virá da calibração e das distorções do ambiente.
 
 ## Orientação de montagem do MPU6050
 

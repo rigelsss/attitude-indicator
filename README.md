@@ -112,6 +112,8 @@ No estado atual, o ESP A configura o MPU6050, carrega da NVS a calibração do a
 | `6` | Calibração do acelerômetro em seis posições, guiada pelo firmware e gravada na NVS depois de confirmar com `s` |
 | `g` | Recalibra o bias do giroscópio (placa parada) |
 | `r` | Liga ou desliga o resumo por segundo do driver (taxa, ruído, perdas e falhas de I2C) |
+| `b` | Liga ou desliga o fluxo de altitude (10 Hz): temperatura, pressão, altitude relativa e variação de temperatura desde o zero |
+| `0` | Zera a altitude de novo (média de 2 s com a placa parada) |
 
 O LED da placa pisca uma vez por segundo. O ESP B só inicializa a serial e pisca o LED.
 
@@ -177,6 +179,7 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 | [docs/plano.md](docs/plano.md) | Etapas semanais e riscos |
 | [docs/hardware.md](docs/hardware.md) | Registro de bancada: endereços, medidas, calibração e orientação |
 | [docs/calibracao.md](docs/calibracao.md) | Estratégia de calibração do MPU6050 |
+| [docs/barometro.md](docs/barometro.md) | BME280: configuração, altitude relativa, zero e roteiro de validação |
 | [docs/protocolo-websocket.md](docs/protocolo-websocket.md) | Contrato JSON entre o ESP B e os clientes |
 | [firmware/shared/include/telemetry.h](firmware/shared/include/telemetry.h) | Contrato binário ESP-NOW entre o ESP A e o ESP B |
 

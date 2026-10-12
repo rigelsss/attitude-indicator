@@ -13,6 +13,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - `docs/hardware.md`: evidência de bancada (endereços, medidas, testes). Se um teste contradisser o `config.h`, corrija o `config.h` e registre o teste aqui.
 - `docs/calibracao.md`: estratégia de calibração do MPU6050. Siga-a; se precisar divergir, pergunte antes.
 - `docs/fusao.md`: filtro complementar (roll/pitch), calibração de montagem (`z`), limites e roteiro de validação.
+- `docs/barometro.md`: BME280 (perfil "indoor navigation"), altitude relativa, zero (`0`) e roteiro de validação.
 - Antes de concluir uma etapa, atualize o doc afetado (procedimento de uso, resultados, decisões).
 
 ## Regras de código

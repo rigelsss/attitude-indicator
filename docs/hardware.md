@@ -56,6 +56,7 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 11/10/2026 | A | Idem, comando `b` do diagnóstico | 100 kHz | Temperatura, pressão e umidade coerentes; subida de ~1 m detectada | Ver "BME280 no diagnóstico" |
 | 11/10/2026 | A | Idem, diagnóstico com soft reset do BME280 no scan | 100 kHz | Reset aceito no boot e num segundo scan com o chip em uso; pressão média idêntica antes e depois do reset (1009,816 hPa); desvio de 2,9 e 3,6 Pa | Comportamento igual ao das sessões anteriores: o filtro já estava desligado nelas |
 | 12/10/2026 | A | Protótipo: GY-273 na protoboard junto com o BME280 e o MPU (três módulos no barramento), em 3V3 | 100 e 400 kHz | 3 dispositivos no scan; autoteste do HMC5883L OK nos três eixos; `b` sem falhas; `t`: 3 043 leituras do MPU a 100 kHz e 10 769 a 400 kHz, 0 falhas | Fecha o teste dos módulos juntos no barramento. Ver "HMC5883L no diagnóstico" |
+| 12/10/2026 | A | Protótipo, firmware `aircraft` com o BME280 (driver próprio, "indoor navigation") | 400 kHz | Ruído de 1,6 cm; subida de 1 m medida como 0,95–1,0 m; zero rejeita a caixa mexida; MPU sem perdas nem descartes com o BME280 presente; recuperação após queda de alimentação; BME280 ausente no boot sem afetar a atitude | Na queda de alimentação, provável latch-up do BME280 (chip a 40,5 °C). Ver "BME280 no firmware de voo" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -457,6 +458,46 @@ Observações para a etapa do magnetômetro:
 
 - A volta completa com o módulo deitado na mesa não foi feita. Ela fica para a calibração de hard/soft iron, que também precisa de giros em todas as orientações e deve ser feita no modelo final.
 - Com 1 LSB de ruído, a resolução não limita a proa: o erro virá da calibração e das distorções do ambiente.
+
+### BME280 no firmware de voo (12/10/2026)
+
+Protótipo com o MPU, o BME280 e o GY-273 no barramento a 400 kHz. Firmware `aircraft` com o driver próprio do BME280, no perfil "indoor navigation" sem umidade (ver [barometro.md](barometro.md)). Logs `device-monitor-261012-010217.log`, `-011524.log`, `-012159.log` e `-012809.log`.
+
+| Teste | Resultado |
+|---|---|
+| Boot e zero | Zero aceito em ~4 s, com desvio de 0,36 a 0,63 Pa e 50–51 leituras, junto com a calibração do giroscópio |
+| Ruído, sala quieta (48 s, `b`) | Diferença entre leituras seguidas: 1,6 cm de desvio (estimado como desvio das diferenças ÷ √2), praticamente o ruído RMS de 1,7 cm do datasheet. Somada, a variação lenta da sala dá desvio de 9 cm e médias de 1 s entre −0,18 e +0,16 m |
+| Subida de ~1 m | Patamar de 0,95–1,0 m. Subida de 10 % a 90 % em ~4 s e descida em ~3 s: esses tempos são dominados pelo movimento da mão e não medem o filtro IIR (esperado: ~1,3 s de 10 % a 90 %) |
+| Zero com a caixa mexida (`0`) | Janelas recusadas com desvio de 1,94 a 4,03 Pa; aceita quando a caixa parou |
+| Convivência com o MPU (`r` por vários minutos, com e sem `b`) | Perdidas 0, descartadas 0, falhas 0 nos dois sensores |
+| Aviso de temperatura | Apareceu com ΔT de 1,0 °C |
+| BME280 ausente no boot | Mensagem de indisponível, nova tentativa a cada 5 s, atitude e giroscópio normais. Ao religar: configurado e zero aceito a 23,9 °C |
+| Queda de alimentação | Falhas subindo e `FALHANDO`; ao voltar, reconfiguração com o mesmo p₀ (`recuperações 2`) |
+
+**Alimentação parasita (primeira tentativa).** Soltar só o VCC do BME280 não o desligou. O chip continuou medindo, sem falhas, alimentado pelos pull-ups dos outros módulos através dos diodos de proteção dos pinos de I2C. O roteiro do [barometro.md](barometro.md) foi corrigido.
+
+**Provável latch-up (segunda tentativa).** O módulo foi religado com o SDA e o SCL antes do VCC. Em seguida:
+- o barramento travou por ~3 s (`Error 263`, timeout), e o MPU caiu para 4–10 Hz, com 286 amostras perdidas;
+- quando o BME280 voltou a responder, estava a **40,5 °C**, contra 24 °C antes. Esse calor só pode ter vindo do próprio chip;
+- o chip esfriou para 32 °C em 15 s e para ~25 °C em alguns minutos;
+- a pressão lida ficou ~1 hPa abaixo da anterior. Nas sessões anteriores, a pressão vinha caindo só ~0,7 hPa por hora;
+- durante o resfriamento, a altitude variou ~0,8 m por °C, contra os ~13 cm/°C do coeficiente térmico do datasheet.
+
+A sequência (pinos de I/O energizados antes da alimentação, chip aquecendo sozinho e segurando o barramento) é compatível com latch-up. A saúde do sensor está sendo verificada numa sessão nova, com o chip frio. Decisão: **não repetir a queda de alimentação no hardware.** O caminho de recuperação do firmware já foi validado.
+
+**Saúde do BME280 depois do evento (log `device-monitor-261012-013609.log`, sem mexer nos fios).**
+- **Boot:** chip a 23,9 °C, a temperatura da sala, e zero aceito com desvio de 0,38 Pa.
+- **`r` por ~8,5 min:** temperatura do chip estável (ΔT de 0 a −0,3 °C) e MPU sem perdas, descartes nem falhas.
+- **Deriva da altitude:** de +0,11 para cerca de −0,7 m, ou seja, ~10 Pa de aumento da pressão. A deriva térmica explicaria só ~4 cm. O resto é compatível com variação da pressão ambiente (~0,7 hPa por hora), e sem uma referência independente não dá para separar as duas coisas.
+- **Duas subidas rápidas:** degraus de **0,71 m e 0,89 m**, medidos como a média do patamar menos a média antes da subida. De 10 % a 90 % em ~1,2–1,5 s, compatível com o filtro IIR 16 (esperado ~1,3 s). A diferença em relação a 1 m pode ser a altura real da subida, que não foi medida.
+
+Conclusão: temperatura, ruído, tempo de resposta e comportamento térmico normais. Não houve como medir uma diferença de altura conhecida. A sensibilidade fica validada só de forma qualitativa, com subidas feitas à mão (0,71 a 1,0 m em três rodadas, sem trena). O sensor foi mantido.
+
+**Defeito do firmware encontrado.** Com o BME280 fora do barramento, cada uma das 25 tentativas por segundo imprime um erro do I2C (`Error -1`) e atrasa o laço. Resultado: o MPU descartou de 2 a 25 amostras por segundo, contra 0 com o BME280 presente. Correção: enquanto o BME280 está falhando, o firmware tenta só a cada `BARO_FAIL_RETRY_MS` (1 s). Validação (log `device-monitor-261012-015754.log`):
+- **Teste:** só o SDA do BME280 solto por ~17 s, com o chip alimentado.
+- **Falhas:** 5 seguidas a 25 Hz e depois exatamente 1 por segundo, com um `Error -1` por segundo. Total de 22.
+- **MPU:** perdidas, descartadas e falhas em 0 durante todos os 34 s do resumo, inclusive com o BME280 fora.
+- **Ao recolocar o SDA:** `baro: ok` sem reconfiguração (recuperações 0), com a pressão contínua (1007,74 hPa antes e depois).
 
 ## Orientação de montagem do MPU6050
 

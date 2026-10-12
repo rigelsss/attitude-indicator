@@ -85,6 +85,26 @@
 #define LEVEL_REST_GYRO_MAX_MEAN_DPS 0.2f    // repouso: média do giroscópio corrigido abaixo disto em cada eixo
 #define LEVEL_MAX_TILT_DEG           10.0f   // desalinhamento do módulo e inclinação da mesa aceitos
 
+// ---------- BME280: temperatura, pressão e altitude relativa (docs/barometro.md) ----------
+// Perfil "indoor navigation" do datasheet (tabela 9), sem a umidade: ruído RMS de 0,2 Pa (1,7 cm),
+// resposta a 75 % de um degrau em ~0,9 s (22 amostras do filtro IIR 16 a ~25 Hz)
+#define BARO_OSRS_P              16       // oversampling da pressão
+#define BARO_OSRS_T              2        // oversampling da temperatura
+#define BARO_IIR_COEF            16       // filtro IIR do chip
+#define BARO_STANDBY_US          500      // espera entre medições: medição de ~37,5 ms + 0,5 ms ≈ 26 Hz
+#define BARO_READ_HZ             25       // leitura pelo firmware, logo depois de uma leitura do MPU
+#define BARO_MAX_FAIL_STREAK     5        // falhas seguidas até ST_BARO_OK cair
+#define BARO_RETRY_MS            5000     // BME280 ausente no boot: nova tentativa
+#define BARO_FAIL_RETRY_MS       1000     // BME280 falhando (ST_BARO_OK caído): uma tentativa por intervalo,
+                                          // para as falhas não atrasarem as leituras do MPU
+#define BARO_SETTLE_MS           2000     // após configurar: espera antes da janela de zero
+#define BARO_ZERO_WINDOW_MS      2000     // janela de zero: média de ~50 leituras
+#define BARO_ZERO_MIN_SAMPLES_PCT 90      // janela aceita com pelo menos este % das leituras
+#define BARO_ZERO_MAX_STD_PA     1.5f     // desvio máximo da pressão na janela (≈ 12 cm): placa parada
+#define BARO_TEMP_WARN_C         1.0f     // aviso: chip a mais disto da temperatura do zero
+                                          // (TCOP do datasheet: ±1,5 Pa/K ≈ ±13 cm/K)
+#define BARO_PRINT_HZ            10       // main provisório: taxa do fluxo de altitude (comando b)
+
 // ---------- Rádio ----------
 #define ESPNOW_CHANNEL   1        // deve ser IGUAL ao canal do AP no ESP B
 // MAC da Placa B (estação de solo)

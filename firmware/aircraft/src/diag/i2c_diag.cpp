@@ -8,6 +8,8 @@
 //      f  alterna o I2C entre I2C_FREQ_DIAG_HZ e I2C_FREQ_HZ (a do firmware de voo)
 //      t  teste de contato: lê o mais rápido possível por DIAG_STRESS_MS e conta falhas
 //      i  teste do pino INT: conta pulsos de "data ready" por DIAG_INT_TEST_MS
+// 4) Se o BME280 responder, aceita também:
+//      b  liga/desliga o fluxo de temperatura, pressão e umidade a DIAG_PRINT_HZ (começa desligado)
 // Acesso direto por registrador, sem bibliotecas, para isolar problemas de hardware.
 #include <Arduino.h>
 #include <Wire.h>
@@ -22,10 +24,36 @@ static const uint8_t MPU_REG_PWR_MGMT_1 = 0x6B;
 static const uint8_t MPU_REG_ACCEL_XOUT = 0x3B;   // 14 bytes: accel, temp, gyro (big-endian)
 static const uint8_t MPU_REG_WHO_AM_I   = 0x75;   // 0x68 no MPU6050
 static const uint8_t BME_REG_CHIP_ID    = 0xD0;   // 0x60 BME280, 0x58 BMP280
+static const uint8_t BME_REG_CALIB_TP   = 0x88;   // 26 bytes: dig_T1..dig_P9, um byte livre, dig_H1
+static const uint8_t BME_REG_RESET      = 0xE0;   // escrever BME_RESET_CMD reinicia o chip
+static const uint8_t BME_RESET_CMD      = 0xB6;
+static const uint8_t BME_REG_CALIB_H    = 0xE1;   // 7 bytes: dig_H2..dig_H6
+static const uint8_t BME_REG_CTRL_HUM   = 0xF2;   // oversampling da umidade (vale ao escrever ctrl_meas)
+static const uint8_t BME_REG_STATUS     = 0xF3;   // bit 3: medição em andamento; bit 0: im_update
+static const uint8_t BME_REG_CTRL_MEAS  = 0xF4;   // oversampling de temperatura e pressão e modo
+static const uint8_t BME_REG_DATA       = 0xF7;   // 8 bytes: pressão (20 bits), temperatura (20), umidade (16)
+static const uint8_t BME_CTRL_HUM_X1    = 0x01;
+static const uint8_t BME_CTRL_MEAS_X1   = 0x25;   // temperatura x1, pressão x1, modo forçado (uma medição)
 static const uint8_t HMC_REG_ID_A       = 0x0A;   // 0x0A..0x0C = "H43"
 
+// Coeficientes de fábrica do BME280, gravados em cada chip (datasheet, seção 4.2.2)
+struct BmeCalib {
+    uint16_t T1;
+    int16_t T2, T3;
+    uint16_t P1;
+    int16_t P2, P3, P4, P5, P6, P7, P8, P9;
+    uint8_t H1, H3;
+    int16_t H2, H4, H5;
+    int8_t H6;
+};
+
+enum StreamMode { STREAM_OFF, STREAM_MPU, STREAM_BME };
+
 static bool g_mpuOk = false;
-static bool g_stream = false;
+static bool g_bmeOk = false;
+static BmeCalib g_bmeCal;
+static float g_bmeRefHpa = NAN;                   // pressão da primeira leitura do fluxo: referência do Δh
+static StreamMode g_stream = STREAM_OFF;
 static uint32_t g_i2cFreq = I2C_FREQ_DIAG_HZ;
 static volatile uint32_t g_intCount = 0;          // só a ISR escreve; leitura de 32 bits é atômica
 
@@ -88,6 +116,85 @@ static void identify(uint8_t addr) {
     }
 }
 
+// Confirma o chip_id, reinicia o chip e lê os coeficientes de fábrica (little-endian).
+// O soft reset devolve todos os registradores ao padrão (sleep, filtro IIR desligado): reiniciar o ESP
+// não reinicia o BME280, e uma configuração antiga mudaria o ruído e a resposta das medidas.
+static bool bmeInit() {
+    uint8_t id, st, c[26], e[7];
+    if (!readRegs(ADDR_BME280, BME_REG_CHIP_ID, &id, 1) || id != 0x60) return false;
+    if (!writeReg(ADDR_BME280, BME_REG_RESET, BME_RESET_CMD)) return false;
+    delay(DIAG_BME_RESET_WAIT_MS);
+    uint32_t t0 = millis();
+    do {   // im_update: o chip ainda copia os coeficientes da NVM para os registradores
+        if (!readRegs(ADDR_BME280, BME_REG_STATUS, &st, 1)) return false;
+        if (millis() - t0 > DIAG_BME_TIMEOUT_MS) return false;
+    } while (st & 0x01);
+    if (!readRegs(ADDR_BME280, BME_REG_CALIB_TP, c, sizeof(c))) return false;
+    if (!readRegs(ADDR_BME280, BME_REG_CALIB_H, e, sizeof(e))) return false;
+    auto u16 = [&](int i) { return (uint16_t)(c[i] | (c[i + 1] << 8)); };
+    BmeCalib &k = g_bmeCal;
+    k.T1 = u16(0);           k.T2 = (int16_t)u16(2);  k.T3 = (int16_t)u16(4);
+    k.P1 = u16(6);           k.P2 = (int16_t)u16(8);  k.P3 = (int16_t)u16(10);
+    k.P4 = (int16_t)u16(12); k.P5 = (int16_t)u16(14); k.P6 = (int16_t)u16(16);
+    k.P7 = (int16_t)u16(18); k.P8 = (int16_t)u16(20); k.P9 = (int16_t)u16(22);
+    k.H1 = c[25];
+    k.H2 = (int16_t)(e[0] | (e[1] << 8));
+    k.H3 = e[2];
+    k.H4 = (int16_t)(((int8_t)e[3] * 16) | (e[4] & 0x0F));   // 12 bits com sinal, divididos entre 0xE4 e 0xE5
+    k.H5 = (int16_t)(((int8_t)e[5] * 16) | (e[4] >> 4));
+    k.H6 = (int8_t)e[6];
+    return true;
+}
+
+// Uma medição forçada, compensada com as fórmulas em ponto flutuante do datasheet (seção 8.1).
+// Saída em unidades físicas: °C, hPa e % de umidade relativa.
+static bool bmeRead(float &tempC, float &pressHpa, float &humPct) {
+    if (!writeReg(ADDR_BME280, BME_REG_CTRL_HUM, BME_CTRL_HUM_X1) ||
+        !writeReg(ADDR_BME280, BME_REG_CTRL_MEAS, BME_CTRL_MEAS_X1))
+        return false;
+    delay(DIAG_BME_WAIT_MS);
+    uint32_t t0 = millis();
+    uint8_t st;
+    do {
+        if (!readRegs(ADDR_BME280, BME_REG_STATUS, &st, 1)) return false;
+        if (millis() - t0 > DIAG_BME_TIMEOUT_MS) return false;
+    } while (st & 0x08);
+
+    uint8_t d[8];
+    if (!readRegs(ADDR_BME280, BME_REG_DATA, d, sizeof(d))) return false;
+    int32_t adcP = ((int32_t)d[0] << 12) | (d[1] << 4) | (d[2] >> 4);
+    int32_t adcT = ((int32_t)d[3] << 12) | (d[4] << 4) | (d[5] >> 4);
+    int32_t adcH = (d[6] << 8) | d[7];
+    if (adcT == 0x80000 || adcP == 0x80000 || adcH == 0x8000) return false;   // valores de "não medido"
+
+    const BmeCalib &k = g_bmeCal;
+    double v1 = (adcT / 16384.0 - k.T1 / 1024.0) * k.T2;
+    double v2 = (adcT / 131072.0 - k.T1 / 8192.0) * (adcT / 131072.0 - k.T1 / 8192.0) * k.T3;
+    double tFine = v1 + v2;
+    tempC = tFine / 5120.0;
+
+    v1 = tFine / 2.0 - 64000.0;
+    v2 = v1 * v1 * k.P6 / 32768.0;
+    v2 = v2 + v1 * k.P5 * 2.0;
+    v2 = v2 / 4.0 + k.P4 * 65536.0;
+    v1 = (k.P3 * v1 * v1 / 524288.0 + k.P2 * v1) / 524288.0;
+    v1 = (1.0 + v1 / 32768.0) * k.P1;
+    if (v1 == 0.0) return false;                    // evita divisão por zero com coeficientes inválidos
+    double p = 1048576.0 - adcP;
+    p = (p - v2 / 4096.0) * 6250.0 / v1;
+    v1 = k.P9 * p * p / 2147483648.0;
+    v2 = p * k.P8 / 32768.0;
+    p = p + (v1 + v2 + k.P7) / 16.0;                // Pa
+    pressHpa = p / 100.0;
+
+    double h = tFine - 76800.0;
+    h = (adcH - (k.H4 * 64.0 + k.H5 / 16384.0 * h)) *
+        (k.H2 / 65536.0 * (1.0 + k.H6 / 67108864.0 * h * (1.0 + k.H3 / 67108864.0 * h)));
+    h = h * (1.0 - k.H1 * h / 524288.0);
+    humPct = h < 0.0 ? 0.0 : h > 100.0 ? 100.0 : h;
+    return true;
+}
+
 static void checkExpected(const char *name, uint8_t addr) {
     Serial.printf("  %-12s 0x%02X  %s\n", name, addr, probe(addr) ? "OK" : "AUSENTE");
 }
@@ -119,6 +226,10 @@ static void scan() {
     } else {
         Serial.println("[diag] MPU6050 indisponível: sem leituras brutas (s = novo scan)");
     }
+
+    g_bmeOk = bmeInit();
+    if (g_bmeOk) Serial.println("[diag] BME280: b = temperatura, pressão e umidade");
+    else Serial.println("[diag] BME280 indisponível: sem medidas (s = novo scan)");
 }
 
 // Lê accel, temp e gyro; v: ax ay az temp gx gy gz
@@ -235,20 +346,44 @@ void setup() {
 void loop() {
     if (Serial.available()) {
         switch (Serial.read()) {
-        case 's': g_stream = false; scan(); break;
+        case 's': g_stream = STREAM_OFF; scan(); break;
         case 'l':
             if (!g_mpuOk) break;
-            g_stream = !g_stream;
-            if (g_stream) printHeader();
+            g_stream = (g_stream == STREAM_MPU) ? STREAM_OFF : STREAM_MPU;
+            if (g_stream == STREAM_MPU) printHeader();
             else Serial.println("[diag] leituras pausadas");
             break;
-        case 'm': if (g_mpuOk) { g_stream = false; average(); } break;
+        case 'b':
+            if (!g_bmeOk) break;
+            g_stream = (g_stream == STREAM_BME) ? STREAM_OFF : STREAM_BME;
+            if (g_stream == STREAM_BME) {
+                g_bmeRefHpa = NAN;
+                Serial.println("[diag] T (°C) | P (hPa) | UR (%) | Δp (Pa) e Δh (m) desde a primeira leitura");
+            } else {
+                Serial.println("[diag] leituras pausadas");
+            }
+            break;
+        case 'm': if (g_mpuOk) { g_stream = STREAM_OFF; average(); } break;
         case 'f': toggleFreq(); break;
-        case 't': if (g_mpuOk) { g_stream = false; stressTest(); } break;
-        case 'i': if (g_mpuOk) { g_stream = false; intTest(); } break;
+        case 't': if (g_mpuOk) { g_stream = STREAM_OFF; stressTest(); } break;
+        case 'i': if (g_mpuOk) { g_stream = STREAM_OFF; intTest(); } break;
         }
     }
-    if (!g_stream) return;
+    if (g_stream == STREAM_OFF) return;
+
+    if (g_stream == STREAM_BME) {
+        float t, p, h;
+        if (!bmeRead(t, p, h)) {
+            Serial.println("[diag] falha de leitura do BME280");
+        } else {
+            if (isnan(g_bmeRefHpa)) g_bmeRefHpa = p;
+            // Δh pela fórmula barométrica padrão; perto do solo, 1 hPa ≈ 8,4 m
+            float dh = 44330.0f * (1.0f - powf(p / g_bmeRefHpa, 0.1903f));
+            Serial.printf("%6.2f | %8.2f | %5.1f | %+6.1f | %+6.2f\n", t, p, h, (p - g_bmeRefHpa) * 100.0f, dh);
+        }
+        delay(1000 / DIAG_PRINT_HZ);
+        return;
+    }
 
     int16_t v[7];
     if (!readMpu(v)) {

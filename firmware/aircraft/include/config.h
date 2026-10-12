@@ -26,6 +26,9 @@
 #define DIAG_AVG_SAMPLES 400      // diagnóstico: leituras na média com a placa parada (2 s)
 #define DIAG_STRESS_MS   5000     // diagnóstico: duração do teste de contato
 #define DIAG_INT_TEST_MS 2000     // diagnóstico: duração da contagem de pulsos do INT
+#define DIAG_BME_WAIT_MS 10       // diagnóstico: espera da medição forçada do BME280 (máx. 9,3 ms com oversampling x1)
+#define DIAG_BME_TIMEOUT_MS 50    // diagnóstico: limite para o BME280 terminar a medição ou o reset
+#define DIAG_BME_RESET_WAIT_MS 2  // diagnóstico: espera após o soft reset do BME280 (partida do chip: 2 ms)
 
 // ---------- MPU6050 (firmware de voo) ----------
 #define MPU_ACCEL_RANGE_G       4      // faixa do acelerômetro: ±4 g

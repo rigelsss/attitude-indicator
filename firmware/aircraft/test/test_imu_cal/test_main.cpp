@@ -189,7 +189,8 @@ static void test_gyro_bias_rejected_when_moving() {
     TEST_ASSERT_EQUAL_INT((int)RestCheck::Moving, (int)evaluateGyroWindow(g, a, 360, REST_LIM).status);
 }
 
-static const float MAX_DELTA = 0.03f;   // mesmo valor do config.h
+static const float MAX_DELTA = 0.03f;   // mesmos valores do config.h
+static const float MAX_TILT = 0.1f;
 
 // Vibração da mesa (bancada, 11/10/2026: desvio 0,08–0,09 °/s com bias correto): passa no filtro
 // de desvio e, como a média não se desloca, as duas janelas confirmam o bias
@@ -199,10 +200,10 @@ static void test_bias_confirmed_with_vibration() {
     fillGyroWindow(g, a, 0, 1.0f, 400, 0.09f);
     const GyroBiasResult w1 = evaluateGyroWindow(g, a, 360, REST_LIM);
     TEST_ASSERT_EQUAL_INT((int)RestCheck::Ok, (int)w1.status);
-    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Candidate, (int)bc.feed(w1, MAX_DELTA));
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Candidate, (int)bc.feed(w1, MAX_DELTA, MAX_TILT));
     fillGyroWindow(g, a, 0, 1.0f, 400, 0.09f);
     const GyroBiasResult w2 = evaluateGyroWindow(g, a, 360, REST_LIM);
-    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Accepted, (int)bc.feed(w2, MAX_DELTA));
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Accepted, (int)bc.feed(w2, MAX_DELTA, MAX_TILT));
     TEST_ASSERT_FLOAT_WITHIN(0.01f, -4.88f, bc.bias().x);
     // O bias aceito é a média das duas janelas
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, (w1.bias.x + w2.bias.x) / 2, bc.bias().x);
@@ -215,14 +216,14 @@ static void test_bias_inconsistent_while_settling() {
     BiasConfirmer bc;
     fillGyroWindow(g, a, 0, 1.0f, 400, 0.05f, -4.86f);
     TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Candidate,
-                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT));
     fillGyroWindow(g, a, 0, 1.0f, 400, 0.05f, -4.78f);
     TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Inconsistent,
-                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT));
     TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.08f, bc.lastDelta());
     fillGyroWindow(g, a, 0, 1.0f, 400, 0.05f, -4.79f);
     TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Accepted,
-                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT));
     TEST_ASSERT_FLOAT_WITHIN(0.01f, -4.785f, bc.bias().x);
 }
 
@@ -231,13 +232,87 @@ static void test_bias_rejected_window_resets_candidate() {
     WindowStats g, a;
     BiasConfirmer bc;
     fillGyroWindow(g, a, 0, 1.0f, 400);
-    bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA);
+    bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT);
     fillGyroWindow(g, a, 5.0f, 1.0f, 400);
     TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Rejected,
-                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT));
     fillGyroWindow(g, a, 0, 1.0f, 400);
     TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Candidate,
-                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA));
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT));
+}
+
+// Janela de 2 s a 200 Hz com a caixa girando a rateDps constante em torno do eixo X do chip
+// (horizontal com a placa nivelada): gx = bias + taxa e a gravidade gira no plano YZ.
+// startDeg: inclinação no início da janela
+static void fillRotatingWindow(WindowStats &g, WindowStats &a, float rateDps, float startDeg) {
+    g.reset();
+    a.reset();
+    for (int i = 0; i < 400; i++) {
+        const float th = (startDeg + rateDps * i / 200.0f) * (float)M_PI / 180.0f;
+        g.add({-4.88f + rateDps + gauss(0.035f), 2.67f + gauss(0.035f), 1.00f + gauss(0.035f)});
+        a.add({gauss(0.002f), sinf(th) + gauss(0.002f), cosf(th) + gauss(0.002f)});
+    }
+}
+
+// Caso da revisão de 13/10/2026: rotação constante de 10 °/s passa pelo desvio, pela norma de a e
+// pela comparação das médias do giroscópio. A gravidade gira 20° entre as janelas: recusada sempre
+static void test_bias_rejects_constant_horizontal_rotation() {
+    WindowStats g, a;
+    BiasConfirmer bc;
+    fillRotatingWindow(g, a, 10.0f, 0);
+    const GyroBiasResult w1 = evaluateGyroWindow(g, a, 360, REST_LIM);
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::Ok, (int)w1.status);   // os critérios da janela passam
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Candidate, (int)bc.feed(w1, MAX_DELTA, MAX_TILT));
+    for (int k = 1; k <= 3; k++) {
+        fillRotatingWindow(g, a, 10.0f, 20.0f * k);
+        TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Inconsistent,
+                              (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT));
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, 20.0f, bc.lastTilt());
+        TEST_ASSERT_TRUE(bc.lastDelta() < MAX_DELTA);   // só a gravidade denuncia
+    }
+}
+
+// Rotação lenta: 0,1 °/s inclina 0,2° entre as janelas (recusada); 0,02 °/s inclina 0,04° (passa,
+// e o erro de bias fica abaixo do próprio limite de 0,03 °/s entre janelas)
+static void test_bias_tilt_threshold() {
+    WindowStats g, a;
+    BiasConfirmer bc;
+    fillRotatingWindow(g, a, 0.1f, 0);
+    bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT);
+    fillRotatingWindow(g, a, 0.1f, 0.2f);
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Inconsistent,
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT));
+    BiasConfirmer slow;
+    fillRotatingWindow(g, a, 0.02f, 0);
+    slow.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT);
+    fillRotatingWindow(g, a, 0.02f, 0.04f);
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Accepted,
+                          (int)slow.feed(evaluateGyroWindow(g, a, 360, REST_LIM), MAX_DELTA, MAX_TILT));
+}
+
+// Limitação documentada: rotação constante em torno do eixo vertical (Z do chip com a placa
+// nivelada) não muda a gravidade e é aceita como bias. Só uma referência externa (magnetômetro)
+// distingue esse caso
+static void test_bias_vertical_rotation_not_detectable() {
+    WindowStats g, a;
+    BiasConfirmer bc;
+    fillGyroWindow(g, a, 0, 1.0f, 400, 0.035f);
+    GyroBiasResult w = evaluateGyroWindow(g, a, 360, REST_LIM);
+    w.bias.z += 10.0f;   // gz = bias + 10 °/s, gravidade parada
+    bc.feed(w, MAX_DELTA, MAX_TILT);
+    fillGyroWindow(g, a, 0, 1.0f, 400, 0.035f);
+    w = evaluateGyroWindow(g, a, 360, REST_LIM);
+    w.bias.z += 10.0f;
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Accepted, (int)bc.feed(w, MAX_DELTA, MAX_TILT));
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 11.0f, bc.bias().z);
+}
+
+static void test_angle_between() {
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.0f, angleBetweenDeg({0, 0, 1}, {0, 0, 2}));
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 90.0f, angleBetweenDeg({1, 0, 0}, {0, 0, 1}));
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 180.0f, angleBetweenDeg({0, 0, 1}, {0, 0, -1}));
+    const float r = 0.01f * (float)M_PI / 180.0f;   // 0,01°: acos em float não resolveria
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.01f, angleBetweenDeg({0, 0, 1}, {0, sinf(r), cosf(r)}));
 }
 
 static void test_gyro_bias_rejected_when_accelerating() {
@@ -316,6 +391,10 @@ int main() {
     RUN_TEST(test_bias_confirmed_with_vibration);
     RUN_TEST(test_bias_inconsistent_while_settling);
     RUN_TEST(test_bias_rejected_window_resets_candidate);
+    RUN_TEST(test_bias_rejects_constant_horizontal_rotation);
+    RUN_TEST(test_bias_tilt_threshold);
+    RUN_TEST(test_bias_vertical_rotation_not_detectable);
+    RUN_TEST(test_angle_between);
     RUN_TEST(test_gyro_bias_rejected_when_accelerating);
     RUN_TEST(test_gyro_bias_rejected_when_window_incomplete);
     RUN_TEST(test_temp_drift);

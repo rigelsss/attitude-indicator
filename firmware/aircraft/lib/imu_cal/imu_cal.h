@@ -99,6 +99,7 @@ struct GyroBiasResult {
     Vec3      bias;          // média do giroscópio na janela (válida mesmo se recusada, para diagnóstico)
     float     gyroMaxStd;    // °/s
     float     accNorm;       // |média do acelerômetro corrigido|, g
+    Vec3      accMean;       // média do acelerômetro corrigido: direção da gravidade na janela
 };
 
 // Avalia uma janela: estatísticas do giroscópio bruto e do acelerômetro já corrigido
@@ -109,27 +110,40 @@ GyroBiasResult evaluateGyroWindow(const WindowStats &gyro, const WindowStats &ac
 // O desvio padrão sozinho não basta: vibração (oscila em torno de zero) aumenta o desvio sem
 // deslocar a média, e a acomodação lenta da caixa desloca a média com desvio baixo
 // (bancada, 11/10/2026: janela com desvio 0,065 °/s e erro de bias ~0,08 °/s).
+// Uma rotação constante passa pelos dois critérios do giroscópio (desvio baixo, média estável) e
+// seria aceita como bias. Em torno de um eixo não vertical, ela inclina a gravidade de ω·T entre
+// as janelas (T = duração da janela), e por isso a direção da média do acelerômetro também é
+// comparada. Rotação em torno do eixo vertical não muda a gravidade: a IMU sozinha não a distingue
+// de bias (revisão de 13/10/2026; docs/calibracao.md).
 class BiasConfirmer {
 public:
     enum class Result : uint8_t {
         Rejected,       // janela reprovada no critério de repouso; candidata descartada
         Candidate,      // primeira janela ok: aguarda a próxima para comparar
-        Inconsistent,   // médias diferem mais que o limite: a mais recente vira a nova candidata
+        Inconsistent,   // médias do giroscópio ou direções da gravidade diferem mais que o limite:
+                        // a mais recente vira a nova candidata
         Accepted,       // duas janelas consistentes: bias = média das duas
     };
     void   reset() { hasCandidate_ = false; }
-    Result feed(const GyroBiasResult &window, float maxDeltaDps);
-    Vec3   bias() const { return accepted_; }       // válido depois de Accepted
-    float  lastDelta() const { return lastDelta_; }  // maior diferença entre eixos, °/s
+    Result feed(const GyroBiasResult &window, float maxDeltaDps, float maxTiltDeg);
+    Vec3   bias() const { return accepted_; }         // válido depois de Accepted
+    float  lastDelta() const { return lastDelta_; }    // maior diferença entre eixos, °/s
+    float  lastTilt() const { return lastTiltDeg_; }   // ângulo entre as direções da gravidade, graus
 
 private:
     bool  hasCandidate_ = false;
     Vec3  candidate_{0, 0, 0};
+    Vec3  candidateAcc_{0, 0, 0};
     Vec3  accepted_{0, 0, 0};
     float lastDelta_ = 0;
+    float lastTiltDeg_ = 0;
 };
 
 Vec3 applyGyroBias(const Vec3 &raw, const Vec3 &bias);
+
+// Ângulo entre dois vetores, em graus (atan2 do produto vetorial e escalar: preciso também para
+// ângulos pequenos, onde acos perde resolução em float). 0 se algum for nulo.
+float angleBetweenDeg(const Vec3 &a, const Vec3 &b);
 
 // Bias utilizável: finito e com |bias| ≤ maxDps em cada eixo (conferido ao carregar da NVS)
 bool gyroBiasPlausible(const Vec3 &bias, float maxDps);

@@ -59,6 +59,10 @@
                                               // (filtro de movimento; tolera vibração da mesa, ~0,09 °/s)
 #define CAL_BIAS_MAX_DELTA_DPS        0.03f   // bias aceito só com duas janelas seguidas com médias
                                               // diferindo menos que isto em cada eixo (~3σ da diferença)
+#define CAL_BIAS_MAX_TILT_DEG         0.1f    // e com a direção da gravidade mudando menos que isto entre elas:
+                                              // rotação constante em eixo não vertical acima de ~0,05 °/s
+                                              // (0,1° em 2 s) é recusada. Em repouso: 0,003–0,027°
+                                              // em 8 confirmações (hardware.md, 13/10/2026)
 #define CAL_REST_ACC_MIN_G            0.95f   // repouso: |a| corrigido dentro desta faixa
 #define CAL_REST_ACC_MAX_G            1.05f
 #define CAL_POSE_MIN_G                0.8f    // seis posições: eixo esperado dentro desta faixa

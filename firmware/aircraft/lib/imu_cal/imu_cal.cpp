@@ -145,7 +145,8 @@ GyroBiasResult evaluateGyroWindow(const WindowStats &gyro, const WindowStats &ac
     GyroBiasResult r;
     r.bias = gyro.mean();
     r.gyroMaxStd = gyro.maxStddev();
-    r.accNorm = norm(accCorrected.mean());
+    r.accMean = accCorrected.mean();
+    r.accNorm = norm(r.accMean);
     if (gyro.count() < minSamples || accCorrected.count() < minSamples)
         r.status = RestCheck::TooFewSamples;
     else if (r.gyroMaxStd >= lim.gyroMaxStdDps)
@@ -157,20 +158,23 @@ GyroBiasResult evaluateGyroWindow(const WindowStats &gyro, const WindowStats &ac
     return r;
 }
 
-BiasConfirmer::Result BiasConfirmer::feed(const GyroBiasResult &window, float maxDeltaDps) {
+BiasConfirmer::Result BiasConfirmer::feed(const GyroBiasResult &window, float maxDeltaDps, float maxTiltDeg) {
     if (window.status != RestCheck::Ok) {
         hasCandidate_ = false;
         return Result::Rejected;
     }
     if (!hasCandidate_) {
         candidate_ = window.bias;
+        candidateAcc_ = window.accMean;
         hasCandidate_ = true;
         return Result::Candidate;
     }
     const Vec3 &b = window.bias;
     lastDelta_ = fmaxf(fabsf(b.x - candidate_.x), fmaxf(fabsf(b.y - candidate_.y), fabsf(b.z - candidate_.z)));
-    if (lastDelta_ > maxDeltaDps) {
+    lastTiltDeg_ = angleBetweenDeg(window.accMean, candidateAcc_);
+    if (!(lastDelta_ <= maxDeltaDps && lastTiltDeg_ <= maxTiltDeg)) {   // NaN também cai aqui
         candidate_ = b;
+        candidateAcc_ = window.accMean;
         return Result::Inconsistent;
     }
     accepted_ = {(b.x + candidate_.x) / 2, (b.y + candidate_.y) / 2, (b.z + candidate_.z) / 2};
@@ -180,6 +184,12 @@ BiasConfirmer::Result BiasConfirmer::feed(const GyroBiasResult &window, float ma
 
 Vec3 applyGyroBias(const Vec3 &raw, const Vec3 &bias) {
     return {raw.x - bias.x, raw.y - bias.y, raw.z - bias.z};
+}
+
+float angleBetweenDeg(const Vec3 &a, const Vec3 &b) {
+    const Vec3 c = {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+    const float dot = a.x * b.x + a.y * b.y + a.z * b.z;
+    return atan2f(norm(c), dot) * 180.0f / (float)M_PI;
 }
 
 bool gyroBiasPlausible(const Vec3 &bias, float maxDps) {

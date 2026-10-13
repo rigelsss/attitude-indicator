@@ -471,7 +471,7 @@ static void finishGyroWindow() {
                                : RestLimits{CAL_REST_GYRO_MAX_STD_DPS, 0.0f, 1e9f};
     const GyroBiasResult r = evaluateGyroWindow(g_cw.gyro, g_cw.accCorr, CAL_MIN_SAMPLES, lim);
     const float tempC = g_cw.tempSum / fmaxf(1, g_cw.gyro.count());
-    const BiasConfirmer::Result res = g_biasConfirm.feed(r, CAL_BIAS_MAX_DELTA_DPS);
+    const BiasConfirmer::Result res = g_biasConfirm.feed(r, CAL_BIAS_MAX_DELTA_DPS, CAL_BIAS_MAX_TILT_DEG);
 
     if (res == BiasConfirmer::Result::Accepted) {
         const Vec3 b = g_biasConfirm.bias();
@@ -487,16 +487,18 @@ static void finishGyroWindow() {
             g_cal.gyroValid = true;
         }
         Serial.printf("[cal] giroscópio calibrado: bias %+.3f %+.3f %+.3f °/s a %.1f °C (diferença entre "
-                      "janelas %.3f °/s, desvio máx. %.3f °/s)%s\n",
-                      b.x, b.y, b.z, t, g_biasConfirm.lastDelta(), r.gyroMaxStd,
+                      "janelas %.3f °/s e %.3f° na gravidade, desvio máx. %.3f °/s)%s\n",
+                      b.x, b.y, b.z, t, g_biasConfirm.lastDelta(), g_biasConfirm.lastTilt(), r.gyroMaxStd,
                       saved ? "" : " | FALHA ao gravar na NVS");
         g_mode = CalMode::None;
         return;
     }
     if (res == BiasConfirmer::Result::Candidate || res == BiasConfirmer::Result::Inconsistent) {
         if (res == BiasConfirmer::Result::Inconsistent)
-            Serial.printf("[cal] giroscópio: bias mudou %.3f °/s entre janelas (placa se acomodando); confirmando "
-                          "de novo\n", g_biasConfirm.lastDelta());
+            Serial.printf("[cal] giroscópio: entre janelas, bias mudou %.3f °/s (limite %.3f) e gravidade %.3f° "
+                          "(limite %.2f): caixa se acomodando ou girando; confirmando de novo\n",
+                          g_biasConfirm.lastDelta(), CAL_BIAS_MAX_DELTA_DPS, g_biasConfirm.lastTilt(),
+                          CAL_BIAS_MAX_TILT_DEG);
         g_candTempC = tempC;
         startCalWindow();   // a janela que acabou é a candidata; a próxima confirma ou não
         return;

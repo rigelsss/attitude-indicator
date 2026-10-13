@@ -57,6 +57,7 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 11/10/2026 | A | Idem, diagnóstico com soft reset do BME280 no scan | 100 kHz | Reset aceito no boot e num segundo scan com o chip em uso; pressão média idêntica antes e depois do reset (1009,816 hPa); desvio de 2,9 e 3,6 Pa | Comportamento igual ao das sessões anteriores: o filtro já estava desligado nelas |
 | 12/10/2026 | A | Protótipo: GY-273 na protoboard junto com o BME280 e o MPU (três módulos no barramento), em 3V3 | 100 e 400 kHz | 3 dispositivos no scan; autoteste do HMC5883L OK nos três eixos; `b` sem falhas; `t`: 3 043 leituras do MPU a 100 kHz e 10 769 a 400 kHz, 0 falhas | Fecha o teste dos módulos juntos no barramento. Ver "HMC5883L no diagnóstico" |
 | 12/10/2026 | A | Protótipo, firmware `aircraft` com o BME280 (driver próprio, "indoor navigation") | 400 kHz | Ruído de 1,6 cm; subida de 1 m medida como 0,95–1,0 m; zero rejeita a caixa mexida; MPU sem perdas nem descartes com o BME280 presente; recuperação após queda de alimentação; BME280 ausente no boot sem afetar a atitude | Na queda de alimentação, provável latch-up do BME280 (chip a 40,5 °C). Ver "BME280 no firmware de voo" |
+| 13/10/2026 | A | Protótipo religado: GY-273 e BME280 numa protoboard dentro da caixa do MPU (MPU no mesmo lugar); todas as ligações com dois jumpers emendados, sem solda; 3V3 | 100 e 400 kHz | 3 dispositivos no scan; `t`: 3 043 leituras a 100 kHz e 10 756 a 400 kHz, 0 falhas; autoteste do HMC5883L OK; `h` com ruído de ±0,1 µT; `b` com desvio de ~3 Pa; INT a 202,0 Hz | Diagnóstico igual ao de antes da religação. Firmware de voo: 0 falhas parado; 1 `Error -1` isolado mexendo nos fios; teste dos 180°: montagem desviada ~+1° em roll; `z` refeito (módulo em +4,58° / +1,08°), com resíduo de −0,18° na conferência. Um jumper emendado soltou ao manusear a caixa. Ver "Religação dos três módulos" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -498,6 +499,74 @@ Conclusão: temperatura, ruído, tempo de resposta e comportamento térmico norm
 - **Falhas:** 5 seguidas a 25 Hz e depois exatamente 1 por segundo, com um `Error -1` por segundo. Total de 22.
 - **MPU:** perdidas, descartadas e falhas em 0 durante todos os 34 s do resumo, inclusive com o BME280 fora.
 - **Ao recolocar o SDA:** `baro: ok` sem reconfiguração (recuperações 0), com a pressão contínua (1007,74 hPa antes e depois).
+
+### Religação dos três módulos (13/10/2026)
+
+Toda a fiação do ESP A foi refeita com o MPU6050, o BME280 e o GY-273. O GY-273 e o BME280 ficam numa protoboard dentro da caixa do MPU. O MPU não saiu do lugar. A hipótese inicial era que a calibração de montagem (`z`) continuaria valendo, mas os testes dos 180° mostraram um desvio de ~1° em roll, e o `z` foi refeito (ver abaixo). Cada ligação é feita com dois jumpers emendados, sem placa nem solda. Isso dá mais um ponto de contato em série em cada fio, por isso o teste de contato é o mais importante. Pinagem: SDA no GPIO 21, SCL no GPIO 22, INT do MPU no GPIO 19, todos em 3V3.
+
+Diagnóstico `i2cscan`, logs `device-monitor-261013-132044.log`, `-132643.log` e `-132737.log`:
+
+| Teste | 13/10 | Antes da religação | Situação |
+|---|---|---|---|
+| Scan (três boots) | 0x1E "H43", 0x68 WHO_AM_I 0x68, 0x76 chip_id 0x60 | igual (12/10) | ✔ |
+| `t` a 100 kHz, mexendo nos fios | 3 043 leituras, 0 falhas, 0 suspeitas | 3 043 | ✔ |
+| `t` a 400 kHz, mexendo nos fios | 10 756 leituras, 0 falhas, 0 suspeitas | 10 749–10 769 | ✔ |
+| `x` (duas vezes) | Campo interno X 122,9–123,2, Y 115,5–115,7, Z 117,5–117,8 µT; todas as polarizações OK | X 123,9, Y 116,4, Z 118,4 µT | ✔ |
+| `h` parado, 27 leituras | X +23,7, Y +12,5, Z +0,7 µT; \|B\| = 26,8–27,0 µT; ângulo XY 27,5–28,0° | ruído de ±0,1 µT | ✔ |
+| `b` parado (duas sessões) | 1007,71–1007,82 hPa e depois 1007,61–1007,74 hPa; desvio de 2,7 e 3,0 Pa | 2,9–3,6 Pa | ✔ |
+| `i` (quatro vezes) | 404 pulsos em 2 s = 202,0 Hz | 201,5 Hz (403 pulsos) | ✔ |
+
+- **Sem falhas no diagnóstico.** O `t` repetiu a contagem de antes nas duas frequências, mexendo nos fios. Uma falha teria consumido o tempo de timeout e baixado a contagem. A conclusão vale só para esse teste: depois, o firmware de voo teve um `Error -1` com a caixa sacudindo, e uma emenda soltou ao manusear a caixa (ver abaixo).
+- **Os jumpers emendados não causaram falhas** no teste de contato. Mesmo assim, eles são o ponto mais provável de mau contato futuro. Se aparecer `Error -1`, comece por eles.
+- **INT: 202,0 Hz contra 201,5 Hz.** É 1 pulso de diferença na janela de 2 s, o que está dentro da margem da contagem. O diagnóstico usa o oscilador interno.
+- **Autoteste do HMC5883L até 1 µT abaixo de 12/10**, a 24,5 °C. Diferença normal entre sessões: a medição do chip continua íntegra.
+- **Magnetômetro na caixa:** \|B\| de ~26,9 µT, contra 23,7 µT solto na protoboard em 12/10. Sem calibração, o módulo agora fica perto do MPU, dos jumpers e em outra orientação, então a diferença é esperada. A calibração de hard/soft iron deve ser feita com o módulo já na posição final (ver [magnetometro.md](magnetometro.md)).
+- **Pressão:** na primeira sessão o Δp desceu ~5 Pa em 18 s; na segunda não houve deriva. É a mesma variação lenta da pressão ambiente já registrada, e o ruído ficou normal.
+
+**Firmware de voo com a fiação nova** (log `device-monitor-261013-133411.log`):
+
+| Teste | Resultado | Situação |
+|---|---|---|
+| Boot | NVS com as três calibrações; bias do giroscópio aceito (−5,003, +2,680, +1,033 °/s; diferença entre janelas de 0,008 °/s); zero da altitude com desvio de 0,28 Pa | ✔ |
+| `r` parado, ~67 s | 199–200 Hz; perdidas, descartadas e falhas em 0; ruído de 2,1–2,9 mg e 0,04–0,05 °/s; `baro: ok` | ✔ |
+| `r` mexendo nos fios, ~30 s | 1 `Error -1` (1 falha isolada do MPU, sem falhas seguidas nem recuperação); perdidas e descartadas em 0; BME280 sem falhas | ⚠ |
+| `a` parado, 8 s | dt médio de 5,01 ms; atraso máximo de 104–113 µs após o pulso; ambíguos, descartados e reinícios em 0; roll +2,34°, pitch −0,77° | ✔ / ver abaixo |
+
+- **A falha isolada ao mexer nos fios** aconteceu com a caixa sacudindo (pico de 40 °/s, ruído de 132 mg naquele segundo). Foi uma leitura perdida em ~6 000, e o driver a descartou, como previsto. No diagnóstico, o `t` a 400 kHz não mostrou falhas mexendo nos fios, mas lá o INT fica desligado. Não dá para dizer se a causa foi uma emenda de jumper abrindo por um instante ou o INT. Com a caixa parada, não houve falhas.
+- **O fluxo `a` confirma a temporização:** o atraso de ~108 µs vai do pulso do INT até o início da leitura e corresponde à espera de `MPU_INT_READ_DELAY_US` (100 µs).
+- **Roll de +2,3–2,5° com a caixa na mesa**, contra −0,1 a −1,4° nas sessões de 11/10 (mesa com ~1,2° de roll). Como o MPU não saiu do lugar, a diferença de ~3,5° pode vir de outro apoio da caixa (mesa, fios ou a protoboard por baixo) ou de o módulo ter se mexido ao montar a protoboard dentro da caixa. A conferir com a caixa girada 180° na mesa: (r₁ − r₂)/2 é a inclinação do apoio, e (r₁ + r₂)/2 é o quanto o módulo saiu da calibração de montagem.
+
+**Teste dos 180° (log `device-monitor-261013-134229.log`).** Mesmo lugar da mesa, nariz na mesma referência, fluxo `a` de ~15 s em cada posição (valores do filtro, estáveis em ±0,02°):
+
+| Posição | Roll | Pitch |
+|---|---|---|
+| 1, normal | −0,10° | +0,04° |
+| 2, girada 180° | +2,19° | +0,30° |
+| 1 de novo | −0,16° | +0,02° |
+
+- **Inclinação da mesa** = (r₁ − r₂)/2: roll **−1,15°**, pitch −0,13°. O roll bate com os −1,16° medidos pelo `z` em 11/10 e com o ~1° do celular: a mesa é a mesma.
+- **Desvio em relação à calibração de montagem** = (r₁ + r₂)/2: roll **+1,05°**, pitch +0,17°. A posição 1 repetiu dentro de 0,06°, então esse resultado não é ruído de apoio desta sessão.
+- **Os +2,4° da sessão anterior eram do apoio.** Na mesma "posição 1", a leitura agora é −0,1°. Naquela sessão a caixa estava apoiada de outro jeito ou em outro ponto da mesa.
+- O ~1° de desvio em roll mostra que o módulo, ou o plano de apoio da caixa, mudou em relação à calibração de montagem de 11/10. A causa provável é a montagem da protoboard dentro da caixa, embora o MPU não tenha sido mexido de propósito. O valor está perto da variação já vista entre reposições da caixa (−0,1 a −1,4° em 11/10), então o `z` refeito deve ser conferido com um novo par de 180°.
+
+**Primeira tentativa de refazer o `z`.**
+- **Fio solto (log `device-monitor-261013-134634.log`).** Logo depois do prompt da posição 1/2 (63,9 s), um dos jumpers emendados se soltou ao manusear a caixa. Daí até o fim do log (79,5 s), todas as leituras falharam: 574 `Error -1`, alguns `Error 263` (timeout) e 94 reinícios do barramento, sem nenhuma recuperação, porque o contato ficou aberto. No boot seguinte, o BME280 fez o zero a 26,1 °C, igual ao de antes, sem sinal de aquecimento por latch-up. Conclusão: as emendas soltam quando a caixa é pegada e girada. Elas precisam ser presas (fita ou termo-retrátil, e os fios fixados na caixa) antes de qualquer teste que mexa na caixa. Recolocar fios só com o USB desligado.
+- **`z` recusado (log `device-monitor-261013-134926.log`).** As medidas deram roll de −175,5° e −174,5° (sem correção de montagem): a caixa estava de cabeça para baixo. O prompt dizia "caixa apoiada na face de baixo", o que foi lido como "virar a caixa". O limite de 10° descartou a calibração, como previsto. O texto do prompt, a mensagem de descarte e o roteiro do [fusao.md](fusao.md) foram corrigidos para "caixa em pé, sem virar". Sete medidas foram recusadas por movimento (toque no Enter, mão saindo da caixa), também o comportamento previsto.
+- **Segundo teste dos 180°, com a montagem antiga (log `device-monitor-261013-135401.log`).** Posição 1: −0,05° de roll, +0,58° de pitch. Girada: +1,90°, +0,60°. Posição 1 de novo: −0,23°, +0,34°. Mesa a −1,0° de roll e módulo desviado **+0,9° em roll**: o desvio em roll se confirma. Em pitch, o desvio do módulo passou de +0,17° para +0,5°, e a posição 1 repetiu só dentro de ~0,2°. Depois da religação do fio, a caixa está assentando de forma menos repetível.
+
+**`z` refeito e conferido.**
+- **Calibração (log `device-monitor-261013-140303.log`, caixa em pé).** Medidas sem correção: +3,39° / +0,86° e, girada, +5,77° / +1,30°. Resultado: módulo em roll **+4,58°**, pitch **+1,08°**; mesa em roll −1,19°, pitch −0,22°. A mesa ficou igual à de 11/10 (−1,16°, −0,22°). A diferença para a montagem antiga (+1,01° em roll e +0,42° em pitch) bate com os testes dos 180° (+1,05° e +0,9° em roll; +0,17° e +0,5° em pitch). Gravada na NVS. Logo depois, ainda na posição girada, o filtro leu +1,37° / +0,23°, contra +1,19° / +0,22° esperados.
+- **Conferência dos 180° (log `device-monitor-261013-140704.log`, médias de ~8–10 s do filtro, estáveis em ±0,03°):**
+
+  | Posição | Roll | Pitch |
+  |---|---|---|
+  | 1 | −1,63° | −0,10° |
+  | 2 (180°) | +1,27° | +0,13° |
+  | 1 de novo | −1,37° | −0,17° |
+
+  Desvio residual da montagem = (r₁ + r₂)/2: roll **−0,18°** (−0,05° com a repetição da posição 1), pitch +0,02°. Fica abaixo do critério de 0,3° e da repetibilidade do assento da caixa, que foi de 0,26° em roll entre as duas posições 1. A mesa saiu com −1,3° a −1,45° de roll, contra −1,19° no `z`: diferença do ponto de apoio na mesa, dentro dessa mesma repetibilidade. **Calibração de montagem validada.**
+- **Reinício do filtro ao apertar `c` com o `r` e o `a` ligados** (log `140303`): os comandos seguidos encheram a serial, e o laço ficou bloqueado por mais de `FUSION_MAX_DT_MS`. O filtro reiniciou (1 reinício, 12 descartados, 1 ambíguo) e voltou à mesma atitude após as amostras de inicialização. É comportamento previsto do main provisório. Não houve falhas de I2C nesta sessão.
+- O fluxo `b` não foi feito nesta sessão. A altitude no `r` andou entre −0,57 e +0,06 m em ~100 s, de forma lenta e contínua. Isso é compatível com a variação da pressão ambiente já registrada.
 
 ## Orientação de montagem do MPU6050
 

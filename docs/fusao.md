@@ -68,8 +68,8 @@ São duas operações distintas:
 
 **Procedimento:**
 1. Pré-requisitos: acelerômetro calibrado (`6`) e bias do giroscópio definitivo.
-2. Medida 1: caixa apoiada na face de baixo, nariz encostado numa referência (borda da mesa ou esquadro).
-3. Medida 2: a mesma face apoiada, girada 180° no plano da mesa e encostada na mesma referência.
+2. Medida 1: caixa em pé, na posição normal (fundo apoiado na mesa, sem virar), nariz encostado numa referência (borda da mesa ou esquadro).
+3. Medida 2: caixa ainda em pé, girada 180° no plano da mesa (sem virar), com a cauda encostada na mesma referência. Com a caixa de cabeça para baixo, as medidas dão roll de ~180° e o limite de 10° descarta a calibração. Em 13/10/2026, o texto anterior ("apoiada na face de baixo") foi lido como "caixa virada".
 4. Cada medida dura 2 s, com o critério de repouso da calibração do giroscópio **mais** a média do giroscópio corrigido abaixo de 0,2 °/s em cada eixo (`LEVEL_REST_GYRO_MAX_MEAN_DPS`). Só o desvio baixo e médias estáveis aceitariam uma rotação lenta e constante.
 5. O resultado mostra o desalinhamento do módulo e a inclinação da mesa: `s` grava, `x` descarta.
 

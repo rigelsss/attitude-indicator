@@ -569,8 +569,9 @@ static void finishSixWindow() {
 
 static void promptLevel() {
     static const char *const STEP[2] = {
-        "caixa apoiada na face de baixo, nariz encostado numa referência (borda da mesa ou esquadro)",
-        "mesma face apoiada, girada 180° no plano da mesa e encostada na mesma referência",
+        "caixa em pé, na posição normal (fundo apoiado na mesa, sem virar), nariz encostado numa referência "
+        "(borda da mesa ou esquadro)",
+        "caixa ainda em pé, girada 180° no plano da mesa (sem virar), com a cauda encostada na mesma referência",
     };
     Serial.printf("[mont] posição %d/2: %s. Solte a caixa e aperte Enter (x cancela)\n", g_levelIdx + 1,
                   STEP[g_levelIdx]);
@@ -620,7 +621,8 @@ static void finishLevelWindow() {
                   "pitch %+.2f°\n",
                   m.mountRollDeg, m.mountPitchDeg, m.tableRollDeg, m.tablePitchDeg);
     if (mc == MountCheck::TooTilted) {
-        Serial.printf("[mont] acima de %.0f°: calibração descartada. Confira a mesa e a fixação do módulo\n",
+        Serial.printf("[mont] acima de %.0f°: calibração descartada. Confira se a caixa estava em pé (sem virar), a mesa e "
+                      "a fixação do módulo\n",
                       LEVEL_MAX_TILT_DEG);
         g_mode = CalMode::None;
         return;

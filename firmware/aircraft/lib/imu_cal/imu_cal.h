@@ -92,6 +92,7 @@ enum class RestCheck : uint8_t {
     TooFewSamples,   // janela incompleta (falhas de leitura ou descarte)
     Moving,          // desvio do giroscópio acima do limite
     AccOutOfRange,   // |a| fora da faixa: placa acelerando ou acelerômetro sem calibração
+    Invalid,         // média ou desvio não finitos em algum eixo (fmaxf esconderia o NaN no desvio máximo)
 };
 
 struct GyroBiasResult {
@@ -142,7 +143,8 @@ private:
 Vec3 applyGyroBias(const Vec3 &raw, const Vec3 &bias);
 
 // Ângulo entre dois vetores, em graus (atan2 do produto vetorial e escalar: preciso também para
-// ângulos pequenos, onde acos perde resolução em float). 0 se algum for nulo.
+// ângulos pequenos, onde acos perde resolução em float). NaN se algum for nulo ou não finito: um
+// vetor nulo não define direção e não pode servir de referência (atan2(0, 0) daria 0, "sem mudança").
 float angleBetweenDeg(const Vec3 &a, const Vec3 &b);
 
 // Bias utilizável: finito e com |bias| ≤ maxDps em cada eixo (conferido ao carregar da NVS)

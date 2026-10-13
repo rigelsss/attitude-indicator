@@ -149,6 +149,8 @@ GyroBiasResult evaluateGyroWindow(const WindowStats &gyro, const WindowStats &ac
     r.accNorm = norm(r.accMean);
     if (gyro.count() < minSamples || accCorrected.count() < minSamples)
         r.status = RestCheck::TooFewSamples;
+    else if (!finite3(r.bias) || !finite3(gyro.stddev()) || !finite3(r.accMean) || !finite3(accCorrected.stddev()))
+        r.status = RestCheck::Invalid;
     else if (r.gyroMaxStd >= lim.gyroMaxStdDps)
         r.status = RestCheck::Moving;
     else if (r.accNorm < lim.accMinG || r.accNorm > lim.accMaxG)
@@ -159,7 +161,7 @@ GyroBiasResult evaluateGyroWindow(const WindowStats &gyro, const WindowStats &ac
 }
 
 BiasConfirmer::Result BiasConfirmer::feed(const GyroBiasResult &window, float maxDeltaDps, float maxTiltDeg) {
-    if (window.status != RestCheck::Ok) {
+    if (window.status != RestCheck::Ok || !finite3(window.bias) || !finite3(window.accMean)) {
         hasCandidate_ = false;
         return Result::Rejected;
     }
@@ -187,6 +189,7 @@ Vec3 applyGyroBias(const Vec3 &raw, const Vec3 &bias) {
 }
 
 float angleBetweenDeg(const Vec3 &a, const Vec3 &b) {
+    if (!(norm(a) > 0 && norm(b) > 0)) return NAN;   // também falso para NaN
     const Vec3 c = {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
     const float dot = a.x * b.x + a.y * b.y + a.z * b.z;
     return atan2f(norm(c), dot) * 180.0f / (float)M_PI;

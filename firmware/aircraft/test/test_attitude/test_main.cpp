@@ -556,6 +556,9 @@ static void test_level_window_rejects_slow_rotation() {
     for (int i = 0; i < 400; i++) gr.add({bias.x + 0.5f + gauss(0.035f), bias.y + gauss(0.035f), bias.z + gauss(0.035f)});
     TEST_ASSERT_TRUE(gr.maxStddev() < 0.15f);
     TEST_ASSERT_EQUAL_INT((int)LevelRest::Rotating, (int)checkLevelWindow(gr, bias, a, 360, lim, 0.2f));
+    WindowStats gn = g;
+    gn.add({NAN, bias.y, bias.z});
+    TEST_ASSERT_EQUAL_INT((int)LevelRest::Invalid, (int)checkLevelWindow(gn, bias, a, 360, lim, 0.2f));
     WindowStats few;
     few.add(bias);
     TEST_ASSERT_EQUAL_INT((int)LevelRest::TooFewSamples, (int)checkLevelWindow(few, bias, a, 360, lim, 0.2f));

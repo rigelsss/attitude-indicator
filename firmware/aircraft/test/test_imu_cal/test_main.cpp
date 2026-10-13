@@ -307,12 +307,57 @@ static void test_bias_vertical_rotation_not_detectable() {
     TEST_ASSERT_FLOAT_WITHIN(0.02f, 11.0f, bc.bias().z);
 }
 
+// Revisão de 13/10/2026: um NaN em gx some no desvio máximo (fmaxf descarta o NaN) e na diferença
+// entre janelas; a janela era aceita e o bias confirmado como NaN
+static void test_gyro_bias_rejects_non_finite() {
+    WindowStats g, a;
+    fillGyroWindow(g, a, 0, 1.0f, 400);
+    g.add({NAN, 2.67f, 1.00f});
+    TEST_ASSERT_TRUE(g.maxStddev() < 0.15f);   // o desvio máximo sozinho não denuncia
+    const GyroBiasResult w = evaluateGyroWindow(g, a, 360, REST_LIM);
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::Invalid, (int)w.status);
+    BiasConfirmer bc;
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Rejected, (int)bc.feed(w, MAX_DELTA, MAX_TILT));
+    // Acelerômetro com NaN também
+    fillGyroWindow(g, a, 0, 1.0f, 400);
+    a.add({0, NAN, 1.0f});
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::Invalid, (int)evaluateGyroWindow(g, a, 360, REST_LIM).status);
+    // Defesa no confirmador: uma janela marcada Ok com bias NaN não vira candidata
+    GyroBiasResult forged = evaluateGyroWindow(g, a, 360, REST_LIM);
+    forged.status = RestCheck::Ok;
+    forged.bias.x = NAN;
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Rejected, (int)bc.feed(forged, MAX_DELTA, MAX_TILT));
+}
+
+// Revisão de 13/10/2026: sem a calibração do acelerômetro, a faixa de |a| era 0..1e9 e um
+// acelerômetro zerado passava; o ângulo entre dois vetores nulos dava 0 e o bias era confirmado
+static void test_gyro_bias_rejects_null_gravity() {
+    const RestLimits RAW_LIM = {0.15f, 0.7f, 1.5f};   // mesmos valores do config.h (antes das seis posições)
+    WindowStats g, a;
+    fillGyroWindow(g, a, 0, 1.10f, 400);   // repouso típico sem calibração: |a| ≈ 1,10 g
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::Ok, (int)evaluateGyroWindow(g, a, 360, RAW_LIM).status);
+    fillGyroWindow(g, a, 0, 0.0f, 400);
+    a.reset();
+    for (int i = 0; i < 400; i++) a.add({0, 0, 0});
+    TEST_ASSERT_EQUAL_INT((int)RestCheck::AccOutOfRange, (int)evaluateGyroWindow(g, a, 360, RAW_LIM).status);
+    // Mesmo com uma faixa que deixasse passar, o vetor nulo não serve de referência de direção
+    const RestLimits OPEN = {0.15f, 0.0f, 1e9f};
+    BiasConfirmer bc;
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Candidate,
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, OPEN), MAX_DELTA, MAX_TILT));
+    TEST_ASSERT_EQUAL_INT((int)BiasConfirmer::Result::Inconsistent,
+                          (int)bc.feed(evaluateGyroWindow(g, a, 360, OPEN), MAX_DELTA, MAX_TILT));
+}
+
 static void test_angle_between() {
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.0f, angleBetweenDeg({0, 0, 1}, {0, 0, 2}));
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 90.0f, angleBetweenDeg({1, 0, 0}, {0, 0, 1}));
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 180.0f, angleBetweenDeg({0, 0, 1}, {0, 0, -1}));
     const float r = 0.01f * (float)M_PI / 180.0f;   // 0,01°: acos em float não resolveria
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.01f, angleBetweenDeg({0, 0, 1}, {0, sinf(r), cosf(r)}));
+    TEST_ASSERT_TRUE(isnan(angleBetweenDeg({0, 0, 0}, {0, 0, 1})));   // vetor nulo: sem direção
+    TEST_ASSERT_TRUE(isnan(angleBetweenDeg({0, 0, 1}, {0, 0, 0})));
+    TEST_ASSERT_TRUE(isnan(angleBetweenDeg({NAN, 0, 1}, {0, 0, 1})));
 }
 
 static void test_gyro_bias_rejected_when_accelerating() {
@@ -394,6 +439,8 @@ int main() {
     RUN_TEST(test_bias_rejects_constant_horizontal_rotation);
     RUN_TEST(test_bias_tilt_threshold);
     RUN_TEST(test_bias_vertical_rotation_not_detectable);
+    RUN_TEST(test_gyro_bias_rejects_non_finite);
+    RUN_TEST(test_gyro_bias_rejects_null_gravity);
     RUN_TEST(test_angle_between);
     RUN_TEST(test_gyro_bias_rejected_when_accelerating);
     RUN_TEST(test_gyro_bias_rejected_when_window_incomplete);

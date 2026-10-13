@@ -65,6 +65,8 @@
                                               // em 8 confirmações (hardware.md, 13/10/2026)
 #define CAL_REST_ACC_MIN_G            0.95f   // repouso: |a| corrigido dentro desta faixa
 #define CAL_REST_ACC_MAX_G            1.05f
+#define CAL_REST_ACC_RAW_MIN_G        0.7f    // idem, antes das seis posições: |a| bruto ≈ 1,10 g na bancada;
+#define CAL_REST_ACC_RAW_MAX_G        1.5f    // faixa larga, mas recusa vetor nulo e leitura absurda
 #define CAL_POSE_MIN_G                0.8f    // seis posições: eixo esperado dentro desta faixa
 #define CAL_POSE_MAX_G                1.2f
 #define CAL_VALID_MIN_G               0.98f   // validação: |a| corrigido em cada posição

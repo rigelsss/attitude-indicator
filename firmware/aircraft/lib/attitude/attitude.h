@@ -144,6 +144,7 @@ enum class LevelRest : uint8_t {
     Moving,          // desvio do giroscópio acima do limite
     Rotating,        // desvio baixo, mas média do giroscópio corrigido longe de zero (rotação lenta)
     AccOutOfRange,   // |a| corrigido fora da faixa de repouso
+    Invalid,         // média ou desvio não finitos
 };
 
 // Repouso para a calibração de montagem: o critério da calibração do giroscópio mais a média do

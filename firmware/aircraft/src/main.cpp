@@ -119,7 +119,7 @@ struct AttStream {
     uint32_t lagMaxUs = 0;     // maior atraso pulso → início da leitura
     uint32_t costSumUs = 0;    // custo de update() (só o filtro, não o ciclo inteiro): soma e máximo
     uint32_t costMaxUs = 0;
-    uint32_t ambiguous = 0;    // quadros fora da fusão: pulso mais novo durante a leitura (ou atraso excessivo)
+    uint32_t ambiguous = 0;    // quadros fora da calibração e da fusão: pulso mais novo durante a leitura (ou atraso excessivo)
     uint32_t dropped = 0;      // pulsos sem leitura (amostra sobrescrita)
     uint32_t resets = 0;       // reinícios por intervalo acima de FUSION_MAX_DT_MS
 };
@@ -435,6 +435,7 @@ static const char *restText(RestCheck r) {
     case RestCheck::TooFewSamples: return "janela incompleta";
     case RestCheck::Moving:        return "placa em movimento";
     case RestCheck::AccOutOfRange: return "|a| fora da faixa de repouso";
+    case RestCheck::Invalid:       return "leitura inválida (não finita) na janela";
     }
     return "?";
 }
@@ -465,10 +466,11 @@ static void endSix() {
 }
 
 static void finishGyroWindow() {
-    // Sem calibração do acelerômetro, |a| ≈ 1,10 g em repouso: o critério de |a| não se aplica
+    // Sem calibração do acelerômetro, |a| ≈ 1,10 g em repouso: vale uma faixa larga, que ainda recusa
+    // um vetor nulo (sem direção da gravidade para comparar entre as janelas)
     const RestLimits lim = g_cal.accelValid
                                ? RestLimits{CAL_REST_GYRO_MAX_STD_DPS, CAL_REST_ACC_MIN_G, CAL_REST_ACC_MAX_G}
-                               : RestLimits{CAL_REST_GYRO_MAX_STD_DPS, 0.0f, 1e9f};
+                               : RestLimits{CAL_REST_GYRO_MAX_STD_DPS, CAL_REST_ACC_RAW_MIN_G, CAL_REST_ACC_RAW_MAX_G};
     const GyroBiasResult r = evaluateGyroWindow(g_cw.gyro, g_cw.accCorr, CAL_MIN_SAMPLES, lim);
     const float tempC = g_cw.tempSum / fmaxf(1, g_cw.gyro.count());
     const BiasConfirmer::Result res = g_biasConfirm.feed(r, CAL_BIAS_MAX_DELTA_DPS, CAL_BIAS_MAX_TILT_DEG);
@@ -591,6 +593,7 @@ static const char *levelRestText(LevelRest r) {
     case LevelRest::Moving:        return "caixa em movimento";
     case LevelRest::Rotating:      return "giroscópio corrigido longe de zero (rotação lenta)";
     case LevelRest::AccOutOfRange: return "|a| fora da faixa de repouso";
+    case LevelRest::Invalid:       return "leitura inválida (não finita) na janela";
     }
     return "?";
 }
@@ -696,20 +699,9 @@ static void printAttitudeLine(const Vec3 &acc, float tempC) {
 }
 
 // Uma amostra válida, fora do descarte: calibração nos eixos do chip → eixos do modelo →
-// rotação de montagem → filtro. intUs: instante do pulso de "data ready" desta amostra;
-// newerPulse: chegou um pulso mais novo antes do fim da leitura.
-static void fusionSample(const ImuSample &s, uint32_t intUs, bool newerPulse) {
-    // Sem FIFO, o quadro lido é o mais recente no instante da leitura. Se um pulso mais novo chegou
-    // antes do fim da leitura, o quadro pode ser dele: o ciclo fica fora da fusão, e o dt seguinte
-    // cobre a lacuna (a referência de tempo não avança). O teto de atraso é só uma rede de segurança
-    // (latência da ISR): um atraso de alguns ms, depois de uma impressão, é normal e o quadro é válido.
-    const uint32_t lag = elapsedUs(intUs, s.tUs);
-    if (newerPulse || lag > FUSION_MAX_INT_LAG_US) {
-        g_as.ambiguous++;
-        return;
-    }
-    if (lag > g_as.lagMaxUs) g_as.lagMaxUs = lag;
-
+// rotação de montagem → filtro. intUs: instante do pulso de "data ready" desta amostra, que já
+// passou pela validade temporal no loop().
+static void fusionSample(const ImuSample &s, uint32_t intUs) {
     const Vec3 aRaw = {s.ax, s.ay, s.az};
     const Vec3 aChip = g_cal.accelValid ? applyAccelCal(g_cal.accel, aRaw) : aRaw;
     const Vec3 gChip = applyGyroBias({s.gx, s.gy, s.gz}, g_gyroBias);
@@ -1068,6 +1060,20 @@ void loop() {
         }
         g_settling = false;
     }
+
+    // Validade temporal, comum à calibração e à fusão. Sem FIFO, o quadro lido é o mais recente no
+    // instante da leitura. Se um pulso mais novo chegou antes do fim da leitura, o quadro pode ser
+    // dele, e o próximo ciclo (que atende esse pulso) leria o mesmo quadro de novo: ele ficaria
+    // duplicado na janela de calibração e com o instante errado na fusão. O ciclo fica fora das duas;
+    // na fusão, o dt seguinte cobre a lacuna (a referência de tempo não avança). O teto de atraso é
+    // só uma rede de segurança (latência da ISR): um atraso de alguns ms, depois de uma impressão, é
+    // normal e o quadro é válido.
+    const uint32_t lag = elapsedUs(latest, s.tUs);
+    if (newerPulse || lag > FUSION_MAX_INT_LAG_US) {
+        g_as.ambiguous++;
+        return;
+    }
+    if (lag > g_as.lagMaxUs) g_as.lagMaxUs = lag;
     calSample(s);
-    fusionSample(s, latest, newerPulse);
+    fusionSample(s, latest);
 }

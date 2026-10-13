@@ -261,6 +261,7 @@ LevelRest checkLevelWindow(const WindowStats &gyroRaw, const Vec3 &gyroBias, con
     case RestCheck::TooFewSamples: return LevelRest::TooFewSamples;
     case RestCheck::Moving:        return LevelRest::Moving;
     case RestCheck::AccOutOfRange: return LevelRest::AccOutOfRange;
+    case RestCheck::Invalid:       return LevelRest::Invalid;
     case RestCheck::Ok:            break;
     }
     const Vec3 m = applyGyroBias(gyroRaw.mean(), gyroBias);

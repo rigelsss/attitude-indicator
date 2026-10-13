@@ -158,7 +158,9 @@ AttitudeFilter::Step AttitudeFilter::update(const Vec3 &acc, const Vec3 &gyro, f
         degraded_ = true;
         corrSinceSatS_ = 0;
     } else if (degraded_) {
-        corrSinceSatS_ += w * dtS;
+        // Só conta a correção que alcança os dois eixos: perto da vertical o pitch é corrigido, mas
+        // o roll não, e o erro dele continuaria lá
+        if (rollObservable) corrSinceSatS_ += w * dtS;
         if (corrSinceSatS_ >= 3 * p_.tauS) degraded_ = false;
     }
     return Step::Updated;

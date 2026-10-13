@@ -336,6 +336,24 @@ static void test_gyro_saturation_degraded() {
     TEST_ASSERT_FALSE(f.degraded());
 }
 
+// Perto da vertical o peso é pleno, mas o roll não tem referência: essa correção não tira o filtro
+// do estado degradado (revisão de 13/10/2026: saía em ~3 s com o roll ainda sem correção)
+static void test_degraded_needs_roll_observable() {
+    AttitudeFilter f(P);
+    f.update(restForce(0, 0), {0, 0, 0}, 0, NO_SAT);
+    f.update(restForce(0, 0), {500, 0, 0}, DT, {false, true});
+    TEST_ASSERT_TRUE(f.degraded());
+    // Pitch 80°: √(ay² + az²) = cos 80° ≈ 0,17 g < 0,3 g, |a| = 1 g. 5 s, bem acima de 3τ
+    for (int i = 0; i < 1000; i++) f.update(restForce(0, 80), {0, 0, 0}, DT, NO_SAT);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, f.lastAccWeight());
+    TEST_ASSERT_TRUE(f.degraded());
+    // De volta ao nível, os 3τ contam a partir daqui
+    for (int i = 0; i < 590; i++) f.update(restForce(0, 0), {0, 0, 0}, DT, NO_SAT);
+    TEST_ASSERT_TRUE(f.degraded());
+    for (int i = 0; i < 20; i++) f.update(restForce(0, 0), {0, 0, 0}, DT, NO_SAT);
+    TEST_ASSERT_FALSE(f.degraded());
+}
+
 // ---------- Aceleração linear ----------
 
 // Placa nivelada acelerando para a frente por 0,5 s: f = (a, 0, −1) nos eixos do modelo
@@ -585,6 +603,7 @@ int main() {
     RUN_TEST(test_acc_weight_limits);
     RUN_TEST(test_accel_saturation_suspends_correction);
     RUN_TEST(test_gyro_saturation_degraded);
+    RUN_TEST(test_degraded_needs_roll_observable);
     RUN_TEST(test_horizontal_acceleration);
     RUN_TEST(test_variable_dt_and_gaps);
     RUN_TEST(test_dt_limits);

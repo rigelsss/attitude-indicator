@@ -3,6 +3,7 @@
 // reinício no meio da gravação deixa o registro antigo ou o novo, nunca uma mistura dos dois.
 #include "imu_store.h"
 #include <Preferences.h>
+#include <math.h>
 
 static const char *NAMESPACE = "imu_cal";
 static const uint8_t FORMAT_VERSION = 2;   // 1: chaves separadas (descontinuado)
@@ -30,24 +31,32 @@ static bool readRecord(Preferences &p, const char *key, T &rec) {
            rec.version == FORMAT_VERSION;
 }
 
-void imuStoreLoad(ImuCalData &out, uint8_t currentAccelRangeG) {
+void imuStoreLoad(ImuCalData &out, uint8_t currentAccelRangeG, float accOffsetMaxG, float gyroBiasMaxDps) {
     out = ImuCalData();
     Preferences p;
     if (!p.begin(NAMESPACE, true)) return;   // namespace ainda não existe
     AccelRecord a;
     if (readRecord(p, "accRec", a)) {
-        out.accelRangeG = a.rangeG;
-        out.accelTempC = a.tempC;
-        if (a.rangeG == currentAccelRangeG) {
-            out.accel = a.cal;
-            out.accelValid = true;
+        if (!accelCalPlausible(a.cal, accOffsetMaxG) || !isfinite(a.tempC)) {
+            out.accelRejected = true;
+        } else {
+            out.accelRangeG = a.rangeG;
+            out.accelTempC = a.tempC;
+            if (a.rangeG == currentAccelRangeG) {
+                out.accel = a.cal;
+                out.accelValid = true;
+            }
         }
     }
     GyroRecord g;
     if (readRecord(p, "gyrRec", g)) {
-        out.gyroBias = g.bias;
-        out.gyroTempC = g.tempC;
-        out.gyroValid = true;
+        if (!gyroBiasPlausible(g.bias, gyroBiasMaxDps) || !isfinite(g.tempC)) {
+            out.gyroRejected = true;
+        } else {
+            out.gyroBias = g.bias;
+            out.gyroTempC = g.tempC;
+            out.gyroValid = true;
+        }
     }
     p.end();
 }

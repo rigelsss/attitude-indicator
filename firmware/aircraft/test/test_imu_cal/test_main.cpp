@@ -258,6 +258,49 @@ static void test_temp_drift() {
     TEST_ASSERT_TRUE(tempDrifted(26.0f, 15.5f, 10.0f));
 }
 
+// Registro carregado da NVS: só valores finitos e numa faixa possível
+static void test_accel_cal_plausible() {
+    const AccelCal ok = {{0.03f, -0.02f, 0.07f}, {1.001f, 0.998f, 0.985f}};
+    TEST_ASSERT_TRUE(accelCalPlausible(ok, 0.5f));
+    AccelCal c = ok;
+    c.scale.y = 0;   // escala zero: dividiria por zero
+    TEST_ASSERT_FALSE(accelCalPlausible(c, 0.5f));
+    c = ok;
+    c.scale.z = -1.0f;
+    TEST_ASSERT_FALSE(accelCalPlausible(c, 0.5f));
+    c = ok;
+    c.offset.x = NAN;
+    TEST_ASSERT_FALSE(accelCalPlausible(c, 0.5f));
+    c = ok;
+    c.scale.x = INFINITY;
+    TEST_ASSERT_FALSE(accelCalPlausible(c, 0.5f));
+    c = ok;
+    c.offset.z = -0.6f;
+    TEST_ASSERT_FALSE(accelCalPlausible(c, 0.5f));
+}
+
+static void test_gyro_bias_plausible() {
+    TEST_ASSERT_TRUE(gyroBiasPlausible({-4.88f, 1.2f, 0.4f}, 20.0f));   // bancada: gx ≈ −4,9 °/s
+    TEST_ASSERT_FALSE(gyroBiasPlausible({0, NAN, 0}, 20.0f));
+    TEST_ASSERT_FALSE(gyroBiasPlausible({0, 0, -INFINITY}, 20.0f));
+    TEST_ASSERT_FALSE(gyroBiasPlausible({25.0f, 0, 0}, 20.0f));
+}
+
+// A montagem só vale com a calibração do acelerômetro com que foi medida
+static void test_same_accel_cal() {
+    const AccelCal a = {{0.03f, -0.02f, 0.07f}, {1.001f, 0.998f, 0.985f}};
+    AccelCal b = a;
+    TEST_ASSERT_TRUE(sameAccelCal(true, a, true, b));
+    TEST_ASSERT_TRUE(sameAccelCal(false, a, false, AccelCal()));   // duas ausências
+    TEST_ASSERT_FALSE(sameAccelCal(true, a, false, a));            // calibração apagada ou de outra faixa
+    TEST_ASSERT_FALSE(sameAccelCal(false, a, true, a));            // calibração feita depois da montagem
+    b.offset.y += 0.001f;
+    TEST_ASSERT_FALSE(sameAccelCal(true, a, true, b));
+    b = a;
+    b.scale.z = 0.986f;
+    TEST_ASSERT_FALSE(sameAccelCal(true, a, true, b));
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_window_stats_known_sequence);
@@ -276,5 +319,8 @@ int main() {
     RUN_TEST(test_gyro_bias_rejected_when_accelerating);
     RUN_TEST(test_gyro_bias_rejected_when_window_incomplete);
     RUN_TEST(test_temp_drift);
+    RUN_TEST(test_accel_cal_plausible);
+    RUN_TEST(test_gyro_bias_plausible);
+    RUN_TEST(test_same_accel_cal);
     return UNITY_END();
 }

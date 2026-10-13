@@ -97,7 +97,7 @@ bool sixPositionCal(const Vec3 means[POSE_COUNT], AccelCal &out) {
         const float aDown = axis(means[(int)down[i]], i);
         off[i] = (aUp + aDown) / 2;
         sc[i] = (aUp - aDown) / 2;
-        if (!(sc[i] > 0.5f && sc[i] < 1.5f)) return false;
+        if (!(sc[i] > ACCEL_SCALE_MIN && sc[i] < ACCEL_SCALE_MAX)) return false;
     }
     out.offset = {off[0], off[1], off[2]};
     out.scale = {sc[0], sc[1], sc[2]};
@@ -112,6 +112,30 @@ bool validateAccelCal(const AccelCal &cal, const Vec3 means[POSE_COUNT], float m
         if (!(normsOut[i] >= minG && normsOut[i] <= maxG)) ok = false;
     }
     return ok;
+}
+
+static bool finite3(const Vec3 &v) {
+    return isfinite(v.x) && isfinite(v.y) && isfinite(v.z);
+}
+
+// |v| ≤ max em cada eixo (falso para NaN)
+static bool within3(const Vec3 &v, float max) {
+    return fabsf(v.x) <= max && fabsf(v.y) <= max && fabsf(v.z) <= max;
+}
+
+bool accelCalPlausible(const AccelCal &cal, float offsetMaxG) {
+    if (!finite3(cal.offset) || !finite3(cal.scale) || !within3(cal.offset, offsetMaxG)) return false;
+    const float sc[3] = {cal.scale.x, cal.scale.y, cal.scale.z};
+    for (float v : sc)
+        if (!(v > ACCEL_SCALE_MIN && v < ACCEL_SCALE_MAX)) return false;
+    return true;
+}
+
+bool sameAccelCal(bool aValid, const AccelCal &a, bool bValid, const AccelCal &b) {
+    if (aValid != bValid) return false;
+    if (!aValid) return true;
+    return a.offset.x == b.offset.x && a.offset.y == b.offset.y && a.offset.z == b.offset.z &&
+           a.scale.x == b.scale.x && a.scale.y == b.scale.y && a.scale.z == b.scale.z;
 }
 
 // ---------- Giroscópio ----------
@@ -156,6 +180,10 @@ BiasConfirmer::Result BiasConfirmer::feed(const GyroBiasResult &window, float ma
 
 Vec3 applyGyroBias(const Vec3 &raw, const Vec3 &bias) {
     return {raw.x - bias.x, raw.y - bias.y, raw.z - bias.z};
+}
+
+bool gyroBiasPlausible(const Vec3 &bias, float maxDps) {
+    return finite3(bias) && within3(bias, maxDps);
 }
 
 bool tempDrifted(float calTempC, float nowTempC, float maxDeltaC) {

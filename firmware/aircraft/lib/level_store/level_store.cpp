@@ -5,16 +5,19 @@
 
 static const char *NAMESPACE = "att_level";
 static const char *KEY = "mntRec";
-static const uint8_t FORMAT_VERSION = 1;
+static const uint8_t FORMAT_VERSION = 2;   // 1: sem a calibração do acelerômetro (descontinuado)
 static const float ROTATION_TOL = 1e-3f;
 
 struct MountRecord {
-    uint8_t version;
-    uint8_t reserved[3];
-    Mat3    r;
-    float   mountRollDeg;
-    float   mountPitchDeg;
-    float   tempC;
+    uint8_t  version;
+    uint8_t  reserved[3];
+    Mat3     r;
+    float    mountRollDeg;
+    float    mountPitchDeg;
+    float    tempC;
+    uint8_t  accelCalValid;
+    uint8_t  reserved2[3];
+    AccelCal accelCal;
 };
 
 void levelStoreLoad(LevelData &out) {
@@ -33,13 +36,16 @@ void levelStoreLoad(LevelData &out) {
     out.mountRollDeg = rec.mountRollDeg;
     out.mountPitchDeg = rec.mountPitchDeg;
     out.tempC = rec.tempC;
+    out.accelCalValid = rec.accelCalValid != 0;
+    out.accelCal = rec.accelCal;
 }
 
 bool levelStoreSave(const LevelData &data) {
     if (!mat3IsRotation(data.r, ROTATION_TOL)) return false;
     Preferences p;
     if (!p.begin(NAMESPACE, false)) return false;
-    const MountRecord rec = {FORMAT_VERSION, {0, 0, 0}, data.r, data.mountRollDeg, data.mountPitchDeg, data.tempC};
+    const MountRecord rec = {FORMAT_VERSION, {0, 0, 0}, data.r, data.mountRollDeg, data.mountPitchDeg,
+                             data.tempC, (uint8_t)data.accelCalValid, {0, 0, 0}, data.accelCal};
     const bool ok = p.putBytes(KEY, &rec, sizeof(rec)) == sizeof(rec);
     p.end();
     return ok;

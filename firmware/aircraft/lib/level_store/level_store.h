@@ -9,9 +9,14 @@ struct LevelData {
     float mountRollDeg = 0;       // desalinhamento do módulo, para exibição
     float mountPitchDeg = 0;
     float tempC = 0;
+    // Calibração do acelerômetro com que a montagem foi medida: a rotação vem do acelerômetro já
+    // corrigido, então só vale com a mesma calibração (sameAccelCal)
+    bool     accelCalValid = false;
+    AccelCal accelCal;
 };
 
-// Carrega o que houver. Registro ausente, de outra versão ou com matriz inválida volta como
-// valid = false, com a identidade. A gravação substitui o registro inteiro de uma vez (atômica).
+// Carrega o que houver. Registro ausente, de outra versão (o formato 1 não guardava a calibração do
+// acelerômetro) ou com matriz inválida volta como valid = false, com a identidade. A gravação
+// substitui o registro inteiro de uma vez (atômica).
 void levelStoreLoad(LevelData &out);
 bool levelStoreSave(const LevelData &data);

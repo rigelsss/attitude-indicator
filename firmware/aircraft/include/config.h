@@ -45,6 +45,9 @@
 #define MPU_INT_QUEUE_LEN       16     // pulsos de "data ready" na fila (80 ms a 200 Hz)
 #define MPU_INT_READ_DELAY_US   100    // espera após o pulso do INT (50 µs) para a borda não cair na leitura
 #define MPU_INT_TIMEOUT_MS      50     // sem pulsos do INT por esse tempo (10 amostras): conferir o MPU
+#define MPU_INT_WAIT_SLICE_MS   10     // espera do pulso em fatias: com o INT parado, o barômetro é
+                                       // atendido entre elas (abaixo do período do BME280, 40 ms)
+#define MPU_RETRY_MS            2000   // MPU6050 ausente: nova tentativa de configuração
 #define MAIN_PRINT_MS           1000   // main provisório: intervalo do resumo na serial
 #define SERIAL_TX_BUFFER_BYTES  1024   // buffer de transmissão da serial: as impressões não bloqueiam o laço
                                        // (resumo + fluxo a 10 Hz ≈ 4 kB/s, abaixo dos ~11,5 kB/s de 115200)
@@ -64,6 +67,9 @@
 #define CAL_VALID_MAX_G               1.02f
 #define CAL_TEMP_WARN_C               1.0f    // aviso: chip a mais disto da temperatura da calibração
                                               // (bias de gx varia ~−0,1 °/s por °C, hardware.md)
+#define CAL_STORE_ACC_OFFSET_MAX_G    0.5f    // NVS: offset do acelerômetro acima disto é registro corrompido
+                                              // (datasheet: zero-g de ±50 mg em X/Y e ±80 mg em Z)
+#define CAL_STORE_GYRO_BIAS_MAX_DPS   20.0f   // NVS: bias acima disto é registro corrompido (datasheet: ±20 °/s)
 #define CAL_MPU_SETTLE_MS             200     // descarte após configurar o MPU (boot e recuperações):
                                               // transitório de partida do giroscópio (pico ~60 °/s)
 

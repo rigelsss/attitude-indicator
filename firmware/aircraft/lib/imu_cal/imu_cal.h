@@ -36,6 +36,18 @@ struct AccelCal {
 
 Vec3 applyAccelCal(const AccelCal &cal, const Vec3 &raw);
 
+// Faixa de escala aceita: fora dela, posições trocadas, dados inválidos ou registro corrompido
+static const float ACCEL_SCALE_MIN = 0.5f;
+static const float ACCEL_SCALE_MAX = 1.5f;
+
+// Coeficientes utilizáveis: todos finitos, escala em ACCEL_SCALE_MIN..MAX e |offset| ≤ offsetMaxG
+// em cada eixo. Conferido ao carregar da NVS: uma escala zero ou um NaN inutilizaria a fusão.
+bool accelCalPlausible(const AccelCal &cal, float offsetMaxG);
+
+// Mesma calibração do acelerômetro (comparação exata: os valores vêm do mesmo registro da NVS).
+// Duas ausências também são a mesma; uma presente e outra ausente, não.
+bool sameAccelCal(bool aValid, const AccelCal &a, bool bValid, const AccelCal &b);
+
 // Posições na ordem em que o firmware as pede; cada uma aponta um eixo do chip para cima (+1 g)
 enum class Pose : uint8_t { ZUp, ZDown, XUp, XDown, YUp, YDown, Count };
 static const int POSE_COUNT = (int)Pose::Count;
@@ -58,7 +70,7 @@ PoseCheck checkPose(Pose p, const Vec3 &mean, const PoseLimits &lim);
 
 // Calcula offset e escala a partir das médias das seis posições (índice = Pose).
 // Para cada eixo: offset = (a₊ + a₋) / 2, escala = (a₊ − a₋) / 2. Devolve false se alguma
-// escala sair de 0,5..1,5 (posições trocadas ou dados inválidos).
+// escala sair de ACCEL_SCALE_MIN..MAX (posições trocadas ou dados inválidos).
 bool sixPositionCal(const Vec3 means[POSE_COUNT], AccelCal &out);
 
 // Validação antes de gravar: |a| corrigido de cada posição dentro de minG..maxG.
@@ -118,6 +130,9 @@ private:
 };
 
 Vec3 applyGyroBias(const Vec3 &raw, const Vec3 &bias);
+
+// Bias utilizável: finito e com |bias| ≤ maxDps em cada eixo (conferido ao carregar da NVS)
+bool gyroBiasPlausible(const Vec3 &bias, float maxDps);
 
 // Temperatura atual longe da temperatura da calibração?
 bool tempDrifted(float calTempC, float nowTempC, float maxDeltaC);

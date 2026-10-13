@@ -28,6 +28,7 @@
 static Mpu6050 g_mpu;
 static QueueHandle_t g_intQueue = nullptr;   // instantes (micros) dos pulsos de "data ready"
 static bool g_mpuReady = false;
+static uint32_t g_mpuRetryMs = 0;            // MPU ausente: próxima tentativa de configuração
 
 // ---------- Resumo por segundo (validação do driver) ----------
 
@@ -195,6 +196,8 @@ static void baroZeroSample(const BaroSample &b) {
     if (r.status == BaroZeroCheck::Unstable)
         Serial.printf("[baro] zero recusado: desvio %.2f Pa acima de %.1f Pa (caixa mexida ou ar agitado); "
                       "medindo de novo\n", r.stdPa, BARO_ZERO_MAX_STD_PA);
+    else if (r.status == BaroZeroCheck::Invalid)
+        Serial.println("[baro] zero recusado: leitura inválida (não finita) na janela; medindo de novo");
     else
         Serial.printf("[baro] zero recusado: %lu leituras, mínimo %lu; medindo de novo\n",
                       (unsigned long)g_bzPress.count(), (unsigned long)BARO_ZERO_MIN_SAMPLES);
@@ -313,8 +316,9 @@ static void startMpu() {
     };
     Mpu6050Status st = g_mpu.begin(cfg);
     if (st != Mpu6050Status::Ok) {
-        Serial.printf("[A] MPU6050: %s (WHO_AM_I=0x%02X); nova tentativa em 2 s\n", mpu6050StatusText(st),
-                      g_mpu.whoAmI());
+        Serial.printf("[A] MPU6050: %s (WHO_AM_I=0x%02X); nova tentativa em %d s\n", mpu6050StatusText(st),
+                      g_mpu.whoAmI(), MPU_RETRY_MS / 1000);
+        g_mpuRetryMs = millis() + MPU_RETRY_MS;
         return;
     }
     Serial.printf("[A] MPU6050 configurado: ±%d g, ±%d °/s, DLPF %d Hz, %.1f Hz, I2C %lu Hz\n",
@@ -833,6 +837,13 @@ static void handleSerial() {
                     g_cal.accelValid = true;
                     fusionReset();   // a referência do acelerômetro mudou
                     Serial.println("[cal] calibração do acelerômetro gravada na NVS");
+                    // A montagem foi medida com o acelerômetro corrigido pela calibração anterior. O registro
+                    // fica na NVS, mas não bate mais com a calibração e é ignorado também nos próximos boots.
+                    if (g_level.valid) {
+                        g_level = LevelData();
+                        Serial.println("[mont] montagem descartada: foi medida com a calibração anterior do "
+                                       "acelerômetro. Refaça com z");
+                    }
                 } else {
                     Serial.println("[cal] FALHA ao gravar na NVS; calibração anterior mantida");
                 }
@@ -867,6 +878,8 @@ static void handleSerial() {
                 d.mountRollDeg = g_levelResult.mountRollDeg;
                 d.mountPitchDeg = g_levelResult.mountPitchDeg;
                 d.tempC = g_levelTempSum / 2;
+                d.accelCalValid = g_cal.accelValid;   // as medidas usaram o acelerômetro com esta calibração
+                d.accelCal = g_cal.accel;
                 if (levelStoreSave(d)) {
                     g_level = d;
                     fusionReset();   // a rotação de montagem mudou
@@ -951,13 +964,26 @@ void setup() {
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_FREQ_HZ);
     Wire.setTimeOut(I2C_TIMEOUT_MS);   // vale para o barramento inteiro e sobrevive a Wire.end()/begin()
     g_intQueue = xQueueCreate(MPU_INT_QUEUE_LEN, sizeof(uint32_t));
+    if (g_intQueue == nullptr) {   // a ISR do INT usa a fila: sem ela não há como seguir
+        Serial.println("[A] ERRO: sem memória para a fila do INT; reiniciando em 1 s");
+        Serial.flush();
+        delay(1000);
+        ESP.restart();
+    }
 
-    imuStoreLoad(g_cal, MPU_ACCEL_RANGE_G);
+    imuStoreLoad(g_cal, MPU_ACCEL_RANGE_G, CAL_STORE_ACC_OFFSET_MAX_G, CAL_STORE_GYRO_BIAS_MAX_DPS);
+    if (g_cal.accelRejected)
+        Serial.println("[A] NVS: calibração do acelerômetro com valores impossíveis, ignorada. Refaça com 6");
+    if (g_cal.gyroRejected) Serial.println("[A] NVS: bias do giroscópio com valores impossíveis, ignorado");
     if (g_cal.gyroValid) {
         g_gyroBias = g_cal.gyroBias;   // provisório até a janela deste boot ser aceita
         g_gyroBiasTempC = g_cal.gyroTempC;
     }
     levelStoreLoad(g_level);
+    if (g_level.valid && !sameAccelCal(g_level.accelCalValid, g_level.accelCal, g_cal.accelValid, g_cal.accel)) {
+        g_level = LevelData();
+        Serial.println("[A] NVS: montagem medida com outra calibração do acelerômetro, ignorada. Refaça com z");
+    }
     Serial.printf("[A] NVS: acelerômetro %s | giroscópio %s | montagem %s\n",
                   g_cal.accelValid ? "calibrado" : "sem calibração", g_cal.gyroValid ? "com bias salvo" : "sem bias salvo",
                   g_level.valid ? "calibrada" : "sem calibração");
@@ -968,16 +994,30 @@ void setup() {
     startGyroCal(CalMode::GyroBoot);
 }
 
+// Espera o próximo pulso do INT por até MPU_INT_TIMEOUT_MS, em fatias de MPU_INT_WAIT_SLICE_MS.
+// Com o MPU funcionando, o pulso chega (a cada 5 ms) dentro da primeira fatia, e o barômetro segue
+// atendido logo depois da leitura do MPU. Se os pulsos pararem, ele é atendido entre as fatias.
+static bool waitPulse(uint32_t &tInt) {
+    const uint32_t t0 = millis();
+    for (;;) {
+        if (xQueueReceive(g_intQueue, &tInt, pdMS_TO_TICKS(MPU_INT_WAIT_SLICE_MS)) == pdTRUE) return true;
+        if (millis() - t0 >= MPU_INT_TIMEOUT_MS) return false;
+        baroService(micros());
+    }
+}
+
 void loop() {
     handleSerial();
     if (!g_mpuReady) {
-        delay(2000);
-        startMpu();
+        // Sem MPU, o barômetro continua sendo atendido; a configuração é tentada a cada MPU_RETRY_MS
+        if ((int32_t)(millis() - g_mpuRetryMs) >= 0) startMpu();
+        baroService(micros());
+        delay(1);
         return;
     }
 
     uint32_t tInt;
-    if (xQueueReceive(g_intQueue, &tInt, pdMS_TO_TICKS(MPU_INT_TIMEOUT_MS)) != pdTRUE) {
+    if (!waitPulse(tInt)) {
         // Pulsos pararam (chip sem alimentação, reiniciado em sleep ou fio do INT solto)
         g_mpu.checkAlive();
         checkRecovery();   // checkAlive() pode ter reconfigurado o chip

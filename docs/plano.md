@@ -35,6 +35,7 @@ Cada etapa termina com algo **demonstrável**. Tópico da disciplina entre colch
 - Indicador de curva (gz) e variômetro (derivada da altitude) no PFD
 - Gravação de "caixa-preta" na flash do A
 - Replay de um log CSV na página web
+- CI no GitHub Actions rodando `pio test -e native` (semana 7, folga)
 
 ## Riscos conhecidos
 - Mesmo canal para o AP e o ESP-NOW (fixo em 1) — validar já na semana 3

@@ -144,6 +144,17 @@ static void test_zero_window_unstable() {
     TEST_ASSERT_EQUAL(BaroZeroCheck::Unstable, evaluateZeroWindow(p, t, 45, 1.5f).status);
 }
 
+// Uma leitura não finita contamina média e desvio; antes, a janela era aceita com p0 = NaN
+static void test_zero_window_rejects_non_finite() {
+    ScalarStats p, t;
+    fillWindow(p, t, 50, 0.3);
+    p.add(NAN);
+    TEST_ASSERT_EQUAL(BaroZeroCheck::Invalid, evaluateZeroWindow(p, t, 45, 1.5f).status);
+    fillWindow(p, t, 50, 0.3);
+    t.add(NAN);
+    TEST_ASSERT_EQUAL(BaroZeroCheck::Invalid, evaluateZeroWindow(p, t, 45, 1.5f).status);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parse_calib_little_endian_and_sign);
@@ -159,5 +170,6 @@ int main() {
     RUN_TEST(test_zero_window_ok);
     RUN_TEST(test_zero_window_too_few_samples);
     RUN_TEST(test_zero_window_unstable);
+    RUN_TEST(test_zero_window_rejects_non_finite);
     return UNITY_END();
 }

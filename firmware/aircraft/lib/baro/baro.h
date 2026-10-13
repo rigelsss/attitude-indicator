@@ -56,6 +56,7 @@ enum class BaroZeroCheck : uint8_t {
     Ok,
     TooFewSamples,   // janela incompleta (falhas de leitura ou chip reconfigurado)
     Unstable,        // desvio da pressão acima do limite: placa mexida ou ar agitado
+    Invalid,         // média ou desvio não finitos (leitura inválida na janela)
 };
 
 struct BaroZeroResult {

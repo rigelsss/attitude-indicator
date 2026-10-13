@@ -84,6 +84,7 @@ BaroZeroResult evaluateZeroWindow(const ScalarStats &pressPa, const ScalarStats 
     r.stdPa = (float)pressPa.stddev();
     r.tempC = (float)tempC.mean();
     if (pressPa.count() < minSamples) r.status = BaroZeroCheck::TooFewSamples;
+    else if (!isfinite(r.refHpa) || !isfinite(r.stdPa) || !isfinite(r.tempC)) r.status = BaroZeroCheck::Invalid;
     else if (r.stdPa > maxStdPa) r.status = BaroZeroCheck::Unstable;
     else r.status = BaroZeroCheck::Ok;
     return r;

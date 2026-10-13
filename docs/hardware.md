@@ -568,7 +568,7 @@ Diagnóstico `i2cscan`, logs `device-monitor-261013-132044.log`, `-132643.log` e
 - **Reinício do filtro ao apertar `c` com o `r` e o `a` ligados** (log `140303`): os comandos seguidos encheram a serial, e o laço ficou bloqueado por mais de `FUSION_MAX_DT_MS`. O filtro reiniciou (1 reinício, 12 descartados, 1 ambíguo) e voltou à mesma atitude após as amostras de inicialização. É comportamento previsto do main provisório. Não houve falhas de I2C nesta sessão.
 - O fluxo `b` não foi feito nesta sessão. A altitude no `r` andou entre −0,57 e +0,06 m em ~100 s, de forma lenta e contínua. Isso é compatível com a variação da pressão ambiente já registrada.
 
-### Correções da revisão: montagem versão 2 e barômetro sem o INT (13/10/2026)
+### Correções da revisão: montagem versão 2, barômetro sem o INT e gravidade no bias (13/10/2026)
 
 Firmware com o lote 1 da revisão de 13/10: barômetro independente dos pulsos do MPU, montagem atrelada à calibração do acelerômetro (registro versão 2), validação dos coeficientes lidos da NVS, recuperação do estado degradado só com roll observável, zero barométrico recusando valores não finitos e conferência da criação da fila do INT.
 
@@ -586,6 +586,18 @@ Firmware com o lote 1 da revisão de 13/10: barômetro independente dos pulsos d
   - **O barômetro manteve a mesma taxa com o INT solto.** Antes da correção, ele parava junto com os pulsos. O resumo mostrou `baro: ok` e falhas 0 em todos os segundos.
   - As 1611 perdidas correspondem a ~8 s sem pulsos a 200 Hz. Com o fio de volta, o MPU seguiu sem reconfiguração (recuperações 0), porque só o INT tinha saído. A fusão reiniciou pela lacuna e voltou à mesma atitude. O segundo depois da reconexão teve pico de 16,5 °/s: foi a mão na caixa ao encaixar o fio.
   - Nesta repetição não houve erro de I2C. Na primeira tentativa (log `144145`, só com o `b`), encaixar o fio deu um `Error 263` (timeout do I2C) e uma linha corrompida na serial, sem efeito nos chips.
+- **Direção da gravidade na confirmação do bias** (log `device-monitor-261013-150353.log`, item 2A da revisão, `CAL_BIAS_MAX_TILT_DEG` = 0,1°):
+
+  | Situação | Resultado | Ângulo entre janelas |
+  |---|---|---|
+  | 5 boots seguidos, caixa parada | aceito em todos, na primeira confirmação | 0,027°, 0,017°, 0,007°, 0,011°, 0,003° |
+  | `g` batucando na mesa | 4 janelas recusadas por movimento (desvio 0,20–0,36 °/s); aceito ao parar | 0,003° e 0,015° |
+  | `g` inclinando a caixa à mão | 4 janelas recusadas por movimento (desvio 3,2–11,9 °/s); aceito ao soltar | 0,016° |
+
+  - **O ruído da direção ficou em 0,003–0,027°** (média ~0,012°). Isso é coerente com a estimativa de ~0,01° por janela, com algum aumento pela correlação do DLPF. O limite de 0,1° tem uma margem de ~4 vezes, e nenhuma confirmação em repouso foi recusada por ele. **Limite mantido.**
+  - **A recusa pelo ângulo não foi exercitada na bancada.** A mão não consegue girar a caixa de forma suave o bastante para ficar abaixo de 0,15 °/s de desvio, então o filtro de movimento recusou antes. Uma rotação constante e suave, que é o caso que o critério cobre, exige um prato giratório ou uma acomodação lenta do apoio. Esse caso está coberto pelos testes `native` (`test_bias_rejects_constant_horizontal_rotation` e `test_bias_tilt_threshold`).
+  - O batuque desta sessão foi mais forte que a digitação de 11/10 (0,08–0,09 °/s), por isso foi recusado como movimento.
+  - O bias de gx ficou entre −4,826 e −4,843 °/s, a 25,8–26,1 °C, contra −4,92 °/s a 27,1 °C às 14:43. Isso dá ~−0,08 °/s por °C, coerente com os ~−0,1 °/s por °C já registrados.
 - **O fluxo `b` imprime 8–9 linhas por segundo, não 10.** A próxima linha é agendada a partir da leitura que imprimiu, e as leituras ficam numa grade de 40 ms (25 Hz), então o intervalo efetivo é de 120 ms. Isso já acontecia antes da correção e não afeta a medida.
 
 ## Orientação de montagem do MPU6050

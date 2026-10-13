@@ -43,7 +43,7 @@ pulso INT (instante em micros) → leitura do MPU (eixos do chip, g e °/s)
 
 - **Saturação (o driver separa os dois sensores):**
   - Acelerômetro saturado: peso zero nessa amostra.
-  - Giroscópio saturado: a predição continua com a taxa limitada, que é a melhor disponível, mas o filtro fica *degradado* até a correção acumulada desde a última saturação (∑ w·dt) chegar a 3τ. Zerar o peso do acelerômetro não resolveria isso: a correção é justamente o que recupera o erro.
+  - Giroscópio saturado: a predição continua com a taxa limitada, que é a melhor disponível, mas o filtro fica *degradado* até a correção acumulada desde a última saturação (∑ w·dt) chegar a 3τ. Só contam as amostras com roll observável: perto da vertical o peso pode ser pleno, mas só o pitch é corrigido (revisão de 13/10/2026: o filtro saía do estado degradado em ~3 s com o roll ainda sem referência). Zerar o peso do acelerômetro não resolveria isso: a correção é justamente o que recupera o erro.
 - **Limitação: aceleração horizontal.** O peso baseado em |a| não rejeita aceleração perpendicular à gravidade. Por exemplo, 0,1 g para a frente dá uma inclinação aparente de 5,7°, mas |a| = 1,005 g, e o peso continua pleno. Em 0,5 s, com τ = 1 s, entram ~2,2° desse erro (teste `test_horizontal_acceleration`). Nesta etapa, a solução simples fica assim. O erro ao deslizar a caixa na bancada é um resultado experimental, que depende da intensidade e da duração do movimento.
 - **Erro por bias residual b:** em regime, perto do nível e com peso pleno, o erro é b·τ. Com 0,03 °/s (bias limpo), dá 0,03°. Com a deriva térmica de ~0,1 °/s por °C, dá ~0,1° por °C. Com peso baixo, o erro cresce; com peso zero, volta a acumular como no giroscópio puro.
 - **Faixa validada: |pitch| ≤ 70°.** tanθ é limitado ao valor de 85° para evitar a explosão numérica, mas a singularidade de Euler em 90° continua existindo. Acima de ~72,5°, a correção de roll é suspensa. Fora da faixa, o comportamento é limitado (valores finitos e pitch em ±90°), mas não validado.
@@ -80,7 +80,9 @@ São duas operações distintas:
 - A rotação é aplicada ao acelerômetro e ao giroscópio. Um giro diferente de 180° por δψ erra cerca de inclinação da mesa × δψ/2 (0,7° e 5° dão ~0,03°).
 - Medidas a mais de 120° entre si são recusadas. Montagem ou mesa acima de 10° (`LEVEL_MAX_TILT_DEG`) também.
 
-**Persistência:** `lib/level_store`, namespace `att_level`, chave `mntRec`. É um registro versionado e atômico (matriz, ângulos de montagem e temperatura). Uma matriz que não seja rotação é ignorada ao carregar. Sem calibração, vale a identidade (eixos nominais).
+**Persistência:** `lib/level_store`, namespace `att_level`, chave `mntRec`. É um registro versionado e atômico (matriz, ângulos de montagem, temperatura e a calibração do acelerômetro com que foi medida). Uma matriz que não seja rotação é ignorada ao carregar. Sem calibração, vale a identidade (eixos nominais).
+
+**Dependência da calibração do acelerômetro (13/10/2026):** a montagem é medida com o acelerômetro já corrigido, então só vale com a mesma calibração. Gravar uma nova calibração de seis posições descarta a montagem em uso, e no boot uma montagem medida com outra calibração (ou sem calibração, ou com a calibração ausente agora) é ignorada. Nos dois casos o firmware pede um novo `z`. A ordem é sempre `6` e depois `z`. O formato 1 do registro não guardava essa calibração e é ignorado: depois desta mudança, a montagem precisa ser refeita uma vez.
 
 ## Deriva térmica do bias (pendência do calibracao.md)
 

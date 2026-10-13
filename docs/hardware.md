@@ -568,6 +568,26 @@ Diagnóstico `i2cscan`, logs `device-monitor-261013-132044.log`, `-132643.log` e
 - **Reinício do filtro ao apertar `c` com o `r` e o `a` ligados** (log `140303`): os comandos seguidos encheram a serial, e o laço ficou bloqueado por mais de `FUSION_MAX_DT_MS`. O filtro reiniciou (1 reinício, 12 descartados, 1 ambíguo) e voltou à mesma atitude após as amostras de inicialização. É comportamento previsto do main provisório. Não houve falhas de I2C nesta sessão.
 - O fluxo `b` não foi feito nesta sessão. A altitude no `r` andou entre −0,57 e +0,06 m em ~100 s, de forma lenta e contínua. Isso é compatível com a variação da pressão ambiente já registrada.
 
+### Correções da revisão: montagem versão 2 e barômetro sem o INT (13/10/2026)
+
+Firmware com o lote 1 da revisão de 13/10: barômetro independente dos pulsos do MPU, montagem atrelada à calibração do acelerômetro (registro versão 2), validação dos coeficientes lidos da NVS, recuperação do estado degradado só com roll observável, zero barométrico recusando valores não finitos e conferência da criação da fila do INT.
+
+- **`z` refeito no formato novo.** O registro da versão 1 foi ignorado no boot, como previsto. Medidas sem correção: +3,28° / +0,87° e, girada, +5,82° / +1,11°. Resultado: módulo em roll **+4,55°**, pitch **+0,99°**; mesa em roll −1,27°, pitch −0,12°. A diferença para o `z` das 14:03 (+4,58° / +1,08°) é de −0,03° em roll e −0,09° em pitch, abaixo da repetibilidade do assento (0,26°). Gravado na NVS.
+- **Boot depois do `z`** (logs `144145` e `144337`): `acelerômetro calibrado | giroscópio com bias salvo | montagem calibrada`. O registro novo é lido e a calibração do acelerômetro guardada nele bate com a atual. Nenhum aviso de valores impossíveis.
+- **Fio do INT (GPIO19) solto por ~8 s, com `r` e `b` ligados** (log `device-monitor-261013-144337.log`):
+
+  | Trecho | Resumos | Taxa do MPU | Linhas `[baro]` por resumo |
+  |---|---|---|---|
+  | Antes | 14 | 199–200 Hz | 8–9 (os 2 primeiros antes do `b`) |
+  | Fio solto | 7 (mais 1 de transição a 100 Hz) | 0 Hz, `sem pulsos do INT` | 8–9 |
+  | Reconexão | 1 | 89 Hz, 1611 perdidas | 8 |
+  | Depois | 4 | 199–200 Hz | 8–9 |
+
+  - **O barômetro manteve a mesma taxa com o INT solto.** Antes da correção, ele parava junto com os pulsos. O resumo mostrou `baro: ok` e falhas 0 em todos os segundos.
+  - As 1611 perdidas correspondem a ~8 s sem pulsos a 200 Hz. Com o fio de volta, o MPU seguiu sem reconfiguração (recuperações 0), porque só o INT tinha saído. A fusão reiniciou pela lacuna e voltou à mesma atitude. O segundo depois da reconexão teve pico de 16,5 °/s: foi a mão na caixa ao encaixar o fio.
+  - Nesta repetição não houve erro de I2C. Na primeira tentativa (log `144145`, só com o `b`), encaixar o fio deu um `Error 263` (timeout do I2C) e uma linha corrompida na serial, sem efeito nos chips.
+- **O fluxo `b` imprime 8–9 linhas por segundo, não 10.** A próxima linha é agendada a partir da leitura que imprimiu, e as leituras ficam numa grade de 40 ms (25 Hz), então o intervalo efetivo é de 120 ms. Isso já acontecia antes da correção e não afeta a medida.
+
 ## Orientação de montagem do MPU6050
 
 Preenchido em 10/10/2026 com a montagem 5, que é a montagem definitiva do modelo de bancada. O mesmo mapeamento se repetiu em todas as montagens testadas.

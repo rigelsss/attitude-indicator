@@ -44,6 +44,9 @@ Desempenho segundo o datasheet:
 - **Taxa:** o firmware lê a `BARO_READ_HZ` (25 Hz). A leitura acontece **logo depois de uma leitura do MPU**:
   - a transação do BME280 (~0,25 ms a 400 kHz) cai longe do próximo pulso do INT, que vem ~4,5 ms depois;
   - as bordas desse pulso já causaram `Error -1` no I2C (ver [hardware.md](hardware.md)).
+- **Sem pulsos do MPU (13/10/2026):** o barômetro não depende do MPU para ser atendido.
+  - A espera pelo pulso do INT é feita em fatias de `MPU_INT_WAIT_SLICE_MS` (10 ms). Com o MPU funcionando, o pulso chega dentro da primeira fatia e nada muda. Se os pulsos pararem (fio do INT solto, MPU sem alimentação), o barômetro é atendido entre as fatias.
+  - Com o MPU ausente, a configuração dele é tentada a cada `MPU_RETRY_MS` (2 s) sem bloquear o laço, e o barômetro segue a 25 Hz.
 - **Leituras repetidas:** como a taxa de leitura (25 Hz) e a de saída do chip (~26 Hz) são próximas, às vezes a mesma medição é lida duas vezes ou uma é pulada. O efeito é desprezível para a média do zero e para a exibição.
 - **Configuração conferida em toda leitura:**
   - se o BME280 perder a alimentação, ele volta em sleep com a configuração padrão, e sem a conferência os dados ficariam congelados sem ninguém perceber;
@@ -68,7 +71,7 @@ h = 44330 · (1 − (p/p₀)^0,1903), a fórmula barométrica padrão, com p₀ 
 ## Zero
 
 1. **No boot e depois de uma reconfiguração com o zero em andamento:** espera `BARO_SETTLE_MS` (2 s) pelo filtro IIR, que começa da primeira medição.
-2. **Janela de `BARO_ZERO_WINDOW_MS` (2 s, ~50 leituras):** p₀ é a **média** da janela. No diagnóstico, zerar com uma leitura só errou até 0,33 m.
+2. **Janela de `BARO_ZERO_WINDOW_MS` (2 s, ~50 leituras):** p₀ é a **média** da janela. No diagnóstico, zerar com uma leitura só errou até 0,33 m. Uma janela com média ou desvio não finitos é recusada (defesa; o driver não produziu esse valor na bancada).
 3. **Aceite:** a janela só vale com pelo menos 90 % das leituras e com desvio da pressão até `BARO_ZERO_MAX_STD_PA` (1,5 Pa ≈ 12 cm). Se não passar, a janela é medida de novo.
 4. **Comando `0`:** zera de novo, sem a espera do passo 1.
 

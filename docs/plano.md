@@ -12,6 +12,15 @@ Cada etapa termina com algo **demonstrável**. Tópico da disciplina entre colch
 | 6 | 12–18/11 | Cliente Python (log CSV, gráficos, comandos); métricas: jitter do loop, perda de pacotes, latência; montagem no modelo | IoT, RTOS |
 | 7 | 19–30/11 | **Folga** para atrasos; testes de duração; relatório, slides, diagrama e ensaio da apresentação | — |
 
+## Pendências para a semana 3 (rádio)
+- **Flags de validade no `TelemetryPacket`** (revisão de 13/10/2026). Hoje o `status` só informa a saúde dos sensores (`ST_MPU_OK`, `ST_BARO_OK`…) e o estado da calibração. Faltam estados explícitos para o B saber quando um dado não pode ser exibido:
+  - **atitude inicializada:** o filtro ainda espera a média inicial, ou reiniciou por uma lacuna;
+  - **atitude degradada:** giroscópio saturado, recuperando a correção;
+  - **altitude com zero válido:** sem p₀, a altitude não tem referência;
+  - **dados antigos:** a última amostra válida tem mais de N ms, como na perda de pulsos do INT ou numa falha do BME280.
+
+  O B usa essas flags para mostrar o dado como indisponível (horizonte riscado, altitude "---"), em vez de congelar o último valor. Isso muda o contrato: atualizar os dois firmwares, incrementar `TELEMETRY_VERSION` e espelhar no `docs/protocolo-websocket.md`.
+
 ## Opcionais (só se sobrar tempo)
 - Indicador de curva (gz) e variômetro (derivada da altitude) no PFD
 - Gravação de "caixa-preta" na flash do A

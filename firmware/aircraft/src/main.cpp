@@ -1,12 +1,13 @@
 // ESP A — avião. *** main.cpp PROVISÓRIO (etapa de bancada, antes do RTOS) ***
 // Lê o MPU6050 a cada pulso de "data ready", cuida da calibração (docs/calibracao.md) e roda o
 // filtro complementar de roll e pitch (docs/fusao.md). Lê também o BME280 e calcula a altitude
-// relativa (docs/barometro.md):
-//   boot: carrega da NVS os coeficientes do acelerômetro e a montagem, mede o bias do giroscópio
-//         e zera a altitude;
+// relativa (docs/barometro.md), e o HMC5883L para a proa compensada (docs/magnetometro.md):
+//   boot: carrega da NVS os coeficientes do acelerômetro, a montagem e a calibração do magnetômetro,
+//         mede o bias do giroscópio e zera a altitude;
 //   serial: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem |
-//           a = fluxo de atitude | b = fluxo de altitude | 0 = zerar altitude | r = resumo por segundo.
-// A lógica está em lib/imu_cal, lib/attitude e lib/baro (puras, testadas com pio test -e native).
+//           m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa |
+//           0 = zerar altitude | r = resumo por segundo.
+// A lógica está em lib/imu_cal, lib/attitude, lib/baro e lib/mag (puras, testadas com pio test -e native).
 // Na semana 3 este arquivo passa a só inicializar o hardware e criar as tasks (src/tasks/):
 //   sensor_task  (prio 4, core 1) — acordada pela INT do MPU, lê IMU a SAMPLE_RATE_HZ
 //   fusion_task  (prio 3, core 1) — filtro complementar → roll/pitch/heading
@@ -24,6 +25,9 @@
 #include "level_store.h"
 #include "bme280.h"
 #include "baro.h"
+#include "hmc5883l.h"
+#include "mag.h"
+#include "mag_store.h"
 
 static Mpu6050 g_mpu;
 static QueueHandle_t g_intQueue = nullptr;   // instantes (micros) dos pulsos de "data ready"
@@ -155,6 +159,50 @@ static const uint32_t BARO_ZERO_MIN_SAMPLES =
 static bool g_bsOn = false;
 static uint32_t g_bsNextUs = 0;
 static const uint32_t BARO_PRINT_US = 1000000UL / BARO_PRINT_HZ;
+
+// ---------- Magnetômetro (lib/hmc5883l, lib/mag, lib/mag_store, docs/magnetometro.md) ----------
+
+static Hmc5883l g_mag;
+static bool g_magReady = false;           // begin() aceito; depois disso o driver se recupera sozinho
+static Hmc5883lStatus g_magLastStatus = Hmc5883lStatus::Ok;
+static uint32_t g_magRetryMs = 0;
+static uint32_t g_magNextUs = 0;          // próxima leitura
+static uint32_t g_magLastRecoveries = 0;
+static MagCalData g_magCal;               // calibração em uso (offset zero e W identidade sem calibração)
+static bool g_magHave = false;            // há uma leitura válida
+static Vec3 g_magRaw{0, 0, 0};            // última leitura, eixos do modelo, sem calibração (µT)
+static Vec3 g_magCorr{0, 0, 0};           // idem, calibrada
+static bool g_magPrevValid = false;       // há uma leitura anterior (referência do dt da correção)
+static uint32_t g_magPrevMs = 0;
+static bool g_magHaveTilt = false;        // proa compensada calculada (atitude disponível)
+static MagTilt g_magTilt = {0, 0};
+static HeadingFilter::Mag g_magStep = HeadingFilter::Mag::Corrected;   // resultado da última correção
+static bool g_magDisturbWarned = false;
+static uint32_t g_magWinReads = 0;        // leituras válidas na janela do resumo
+static uint32_t g_magLastWinReads = 0;
+static const uint32_t MAG_PERIOD_US = 1000000UL / MAG_READ_HZ;
+static const HeadingParams HEADING_PARAMS = {MAG_HEADING_TAU_S, MAG_MAX_PITCH_DEG, MAG_DISTURB_PCT,
+                                             MAG_MAX_DT_MS / 1000.0f};
+static HeadingFilter g_hdg(HEADING_PARAMS);
+
+// Calibração (comando m): coleta girando a caixa, ajuste e revisão
+enum class MagMode : uint8_t { Off, Collect, Review };
+static MagMode g_magMode = MagMode::Off;
+static const size_t MAG_CAL_MAX_POINTS = (size_t)MAG_CAL_MS / 1000 * MAG_READ_HZ;
+static Vec3 *g_magPts = nullptr;          // alocado só durante a calibração (~27 kB)
+static size_t g_magN = 0;
+static uint32_t g_magCalStartMs = 0;
+static uint32_t g_magCalNextProgMs = 0;
+static MagMinMax g_magMM;                 // centro provisório para a cobertura durante a coleta
+static MagFitResult g_magFit;
+static const MagFitLimits MAG_FIT_LIMITS = {MAG_CAL_MIN_RADIUS_UT, MAG_CAL_MAX_RADIUS_UT, MAG_CAL_MAX_RESID_PCT,
+                                            MAG_CAL_MIN_SCALE,     MAG_CAL_MAX_SCALE,     MAG_CAL_MIN_SECTORS,
+                                            MAG_CAL_MIN_PTS_SECTOR};
+
+// Fluxo de proa (comando p)
+static bool g_psOn = false;
+static uint32_t g_psNextUs = 0;
+static const uint32_t MAG_PRINT_US = 1000000UL / MAG_PRINT_HZ;
 
 static void baroZeroStart(bool settle) {
     g_bzState = settle ? BaroZeroState::Settling : BaroZeroState::Measuring;
@@ -293,7 +341,268 @@ static void baroService(uint32_t nowUs) {
 static void fusionReset() {
     g_att.reset();
     g_gyroOnly.reset();
+    g_hdg.reset();   // a proa depende da atitude
     g_fusPrevValid = false;
+}
+
+// ---------- Magnetômetro ----------
+
+static void startMag() {
+    const Hmc5883lConfig cfg = {&Wire, ADDR_HMC5883L, MAG_AVG_SAMPLES, MAG_OUTPUT_HZ, MAG_RANGE_MGA,
+                                MAG_MAX_FAIL_STREAK};
+    const Hmc5883lStatus st = g_mag.begin(cfg);
+    if (st != Hmc5883lStatus::Ok) {
+        if (st != g_magLastStatus)
+            Serial.printf("[mag] HMC5883L: %s; sem proa, nova tentativa a cada %d s\n", hmc5883lStatusText(st),
+                          MAG_RETRY_MS / 1000);
+        g_magLastStatus = st;
+        g_magRetryMs = millis() + MAG_RETRY_MS;
+        return;
+    }
+    g_magLastStatus = st;
+    g_magReady = true;
+    g_magLastRecoveries = g_mag.recoveries();
+    g_magNextUs = micros();
+    g_magPrevValid = false;
+    Serial.printf("[mag] HMC5883L configurado: ±%.1f Ga (%.0f LSB/Ga), %.0f Hz, média de %d, modo contínuo\n",
+                  MAG_RANGE_MGA / 1000.0f, g_mag.lsbPerGa(), MAG_OUTPUT_HZ, MAG_AVG_SAMPLES);
+}
+
+static const char *magStateText() {
+    if (g_magMode == MagMode::Collect) return "CALIBRANDO";
+    if (!g_magHaveTilt) return "SEM_ATITUDE";
+    switch (g_magStep) {
+    case HeadingFilter::Mag::Disturbed: return "DISTURBIO";
+    case HeadingFilter::Mag::Tilted:    return "INCL_ALTA";
+    case HeadingFilter::Mag::BadData:   return "DADO_INVALIDO";
+    default:                            return "ok";
+    }
+}
+
+// Fluxo de proa (p): filtrada | magnetômetro compensada | deitada (sem compensação) | |m| corrigido |
+// inclinação magnética medida | roll e pitch | estado
+static void printMagLine() {
+    char hdg[12] = "  --  ";
+    if (g_hdg.initialized()) snprintf(hdg, sizeof(hdg), "%6.1f", g_hdg.headingDeg());
+    char mag[12] = "  --  ", dip[12] = "  --  ";
+    if (g_magHaveTilt) {
+        snprintf(mag, sizeof(mag), "%6.1f", g_magTilt.headingDeg);
+        snprintf(dip, sizeof(dip), "%+6.1f", g_magTilt.dipDeg);
+    }
+    Serial.printf("[mag] proa %s | mag %s | deitada %6.1f | |m| %5.1f µT | incl %s° | roll %+6.1f pitch %+6.1f | %s%s\n",
+                  hdg, mag, magFlatHeadingDeg(g_magCorr), norm(g_magCorr), dip,
+                  g_att.initialized() ? g_att.rollDeg() : 0.0f, g_att.initialized() ? g_att.pitchDeg() : 0.0f,
+                  magStateText(), g_magCal.valid ? "" : " SEM_CAL");
+}
+
+// Uma linha no resumo por segundo (r) e no estado (c)
+static void printMagSummary() {
+    if (!g_magReady) {
+        Serial.printf("    mag: HMC5883L indisponível (%s)\n", hmc5883lStatusText(g_magLastStatus));
+        return;
+    }
+    Serial.printf("    mag: %s | %lu leituras no último 1 s | ", g_mag.ok() ? "ok" : "FALHANDO",
+                  (unsigned long)g_magLastWinReads);
+    if (!g_magHave) Serial.print("sem leitura");
+    else {
+        Serial.printf("|m| %.1f µT", norm(g_magCorr));
+        if (g_hdg.initialized()) Serial.printf(" | proa %.1f°", g_hdg.headingDeg());
+        Serial.printf(" | %s%s", magStateText(), g_magCal.valid ? "" : " SEM_CAL");
+    }
+    Serial.printf(" | falhas %lu (seguidas %lu, recuperações %lu) | saturadas %lu\n", (unsigned long)g_mag.failTotal(),
+                  (unsigned long)g_mag.failStreak(), (unsigned long)g_mag.recoveries(),
+                  (unsigned long)g_mag.saturations());
+}
+
+static void magCalFree() {
+    free(g_magPts);
+    g_magPts = nullptr;
+    g_magN = 0;
+    g_magMode = MagMode::Off;
+    g_magPrevValid = false;   // a correção recomeça sem passo acumulado
+}
+
+static void magCalStart() {
+    if (g_mode != CalMode::None) {
+        Serial.println("[mag] espere a calibração em andamento terminar");
+        return;
+    }
+    if (!g_magReady || !g_mag.ok()) {
+        Serial.println("[mag] HMC5883L indisponível ou falhando: calibração não iniciada");
+        return;
+    }
+    g_magPts = (Vec3 *)malloc(MAG_CAL_MAX_POINTS * sizeof(Vec3));
+    if (g_magPts == nullptr) {
+        Serial.println("[mag] ERRO: sem memória para os pontos da calibração");
+        return;
+    }
+    g_magN = 0;
+    g_magMM.reset();
+    g_magCalStartMs = millis();
+    g_magCalNextProgMs = g_magCalStartMs + MAG_CAL_PROGRESS_MS;
+    g_magMode = MagMode::Collect;
+    g_hdg.reset();
+    Serial.printf("[mag] calibração: gire a caixa devagar em TODAS as orientações por até %d s (x cancela).\n",
+                  MAG_CAL_MS / 1000);
+    Serial.println("[mag] para cada face voltada para cima (topo, fundo, asas, nariz, cauda), um giro em torno da "
+                   "vertical. Termina sozinha com os 24 setores cobertos");
+}
+
+static void magCalFinish() {
+    const MagFitStatus st = magFitEllipsoid(g_magPts, g_magN, MAG_FIT_LIMITS, g_magFit);
+    const MagFitResult &r = g_magFit;
+    const MagCal &c = r.cal;
+    Serial.printf("[mag] coleta encerrada: %lu pontos em %.0f s\n", (unsigned long)g_magN,
+                  (millis() - g_magCalStartMs) / 1000.0f);
+    if (st != MagFitStatus::TooFewPoints && st != MagFitStatus::Singular && st != MagFitStatus::NotEllipsoid) {
+        Serial.printf("  offset %+.2f %+.2f %+.2f µT | escalas %.3f %.3f %.3f | W %.4f %.4f %.4f\n", c.offset.x,
+                      c.offset.y, c.offset.z, r.scale.x, r.scale.y, r.scale.z, c.w.m[0][0], c.w.m[1][1], c.w.m[2][2]);
+        Serial.printf("  raio %.2f µT (WMM na bancada: %.1f µT) | resíduo %.2f %% | cobertura %d/%d setores\n",
+                      c.radiusUt, MAG_REF_FIELD_UT, r.residPct, r.sectors, MAG_SECTORS);
+    }
+    g_magMode = MagMode::Review;
+    if (st == MagFitStatus::Ok) {
+        Serial.println("[mag] calibração ok. s = gravar na NVS | x = descartar | d = pontos em CSV");
+    } else {
+        Serial.printf("[mag] calibração RECUSADA: %s (limites: raio %.0f–%.0f µT, resíduo ≤ %.1f %%, escalas "
+                      "%.2f–%.2f, ≥ %d setores). x = sair | d = pontos em CSV\n",
+                      magFitStatusText(st), MAG_CAL_MIN_RADIUS_UT, MAG_CAL_MAX_RADIUS_UT, MAG_CAL_MAX_RESID_PCT,
+                      MAG_CAL_MIN_SCALE, MAG_CAL_MAX_SCALE, MAG_CAL_MIN_SECTORS);
+    }
+}
+
+// Ponto da coleta (eixos do modelo, sem calibração), com o progresso da cobertura a cada MAG_CAL_PROGRESS_MS
+static void magCalSample(const Vec3 &raw, uint32_t tMs) {
+    if (g_magN < MAG_CAL_MAX_POINTS) {
+        g_magPts[g_magN++] = raw;
+        g_magMM.add(raw);
+    }
+    const bool timeUp = tMs - g_magCalStartMs >= MAG_CAL_MS || g_magN >= MAG_CAL_MAX_POINTS;
+    if ((int32_t)(tMs - g_magCalNextProgMs) < 0 && !timeUp) return;
+    g_magCalNextProgMs += MAG_CAL_PROGRESS_MS;
+    uint16_t counts[MAG_SECTORS];
+    magCountSectors(g_magPts, g_magN, g_magMM.center(), counts);
+    const int covered = magSectorsCovered(counts, MAG_CAL_MIN_PTS_SECTOR);
+    uint8_t miss[MAG_FACES];
+    magMissingByFace(counts, MAG_CAL_MIN_PTS_SECTOR, miss);
+    Serial.printf("[mag] %2lu s | %4lu pontos | cobertura %2d/%d", (unsigned long)((tMs - g_magCalStartMs) / 1000),
+                  (unsigned long)g_magN, covered, MAG_SECTORS);
+    if (covered < MAG_SECTORS) {
+        Serial.print(" | faltam:");
+        for (int f = 0; f < MAG_FACES; f++)
+            if (miss[f]) Serial.printf(" %s(%d)", magFaceName(f), miss[f]);
+    }
+    Serial.println();
+    if (covered == MAG_SECTORS || timeUp) magCalFinish();
+}
+
+// Pontos da última coleta em CSV, para tools/mag_fit.py. Bloqueia o laço por alguns segundos
+// (~25 bytes por ponto a 115200): a atitude e a proa recomeçam depois.
+static void magCalDump() {
+    const MagCal &c = g_magFit.cal;
+    Serial.printf("# mag_cal inicio: %lu pontos (µT, eixos do modelo, sem calibração)\n", (unsigned long)g_magN);
+    Serial.printf("# firmware status=%s b=%.4f,%.4f,%.4f w=%.5f,%.5f,%.5f R=%.4f resid=%.3f setores=%d\n",
+                  magFitStatusText(g_magFit.status), c.offset.x, c.offset.y, c.offset.z, c.w.m[0][0], c.w.m[1][1],
+                  c.w.m[2][2], c.radiusUt, g_magFit.residPct, g_magFit.sectors);
+    Serial.println("x,y,z");
+    for (size_t i = 0; i < g_magN; i++)
+        Serial.printf("%.3f,%.3f,%.3f\n", g_magPts[i].x, g_magPts[i].y, g_magPts[i].z);
+    Serial.println("# mag_cal fim");
+    Serial.flush();
+    fusionReset();   // o laço ficou parado: a referência de tempo da fusão não vale mais
+}
+
+// Chamada logo depois de cada leitura do MPU, como o barômetro: a rajada de 9 bytes (~0,25 ms a 400 kHz)
+// fica longe do próximo pulso do INT
+static void magService(uint32_t nowUs) {
+    if (!g_magReady) {
+        if ((int32_t)(millis() - g_magRetryMs) >= 0) startMag();
+        return;
+    }
+    if ((int32_t)(nowUs - g_magNextUs) < 0) return;
+
+    MagSample ms;
+    const bool ok = g_mag.read(ms);
+    // Com o HMC5883L falhando, tenta só a cada MAG_FAIL_RETRY_MS (cada transação sem resposta atrasa o laço)
+    const uint32_t period = g_mag.ok() ? MAG_PERIOD_US : MAG_FAIL_RETRY_MS * 1000UL;
+    g_magNextUs += period;
+    if ((int32_t)(nowUs - g_magNextUs) >= 0) g_magNextUs = nowUs + period;   // atrasou: ressincroniza
+    if (g_mag.recoveries() != g_magLastRecoveries) {
+        g_magLastRecoveries = g_mag.recoveries();
+        Serial.printf("[mag] HMC5883L perdeu a configuração (queda de alimentação?): %s\n",
+                      g_mag.configured() ? "reconfigurado" : "reconfiguração falhou, nova tentativa a cada leitura");
+    }
+    if (!ok) return;
+    g_magWinReads++;
+    const Vec3 raw = magChipToBody(ms.chipUt);
+    g_magRaw = raw;
+    g_magHave = true;
+    const float dt = g_magPrevValid ? (ms.tMs - g_magPrevMs) / 1000.0f : 0.0f;
+    g_magPrevMs = ms.tMs;
+    g_magPrevValid = true;
+
+    if (g_magMode == MagMode::Collect) {
+        magCalSample(raw, ms.tMs);
+        return;
+    }
+    if (g_magMode == MagMode::Review) return;   // proa suspensa até gravar ou descartar
+
+    g_magCorr = magApplyCal(g_magCal.cal, raw);
+    if (g_att.initialized()) {
+        g_magTilt = magTiltCompensate(g_magCorr, g_att.rollDeg(), g_att.pitchDeg());
+        g_magHaveTilt = true;
+        g_magStep = g_hdg.correct(g_magTilt.headingDeg, norm(g_magCorr), g_magCal.cal.radiusUt, g_att.pitchDeg(), dt);
+        const bool disturbed = g_magStep == HeadingFilter::Mag::Disturbed;
+        if (disturbed != g_magDisturbWarned) {
+            g_magDisturbWarned = disturbed;
+            if (disturbed)
+                Serial.printf("[mag] DISTÚRBIO: |m| %.1f µT, raio da calibração %.1f µT (limite %.0f %%): correção "
+                              "pelo magnetômetro suspensa\n", norm(g_magCorr), g_magCal.cal.radiusUt, MAG_DISTURB_PCT);
+            else
+                Serial.println("[mag] distúrbio terminou: correção retomada");
+        }
+    } else {
+        g_magHaveTilt = false;
+    }
+    if (g_psOn && (int32_t)(nowUs - g_psNextUs) >= 0) {
+        g_psNextUs += MAG_PRINT_US;
+        if ((int32_t)(nowUs - g_psNextUs) >= 0) g_psNextUs = nowUs + MAG_PRINT_US;
+        printMagLine();
+    }
+}
+
+// Teclas durante a calibração do magnetômetro; true se a tecla foi consumida
+static bool handleMagCalKey(char ch) {
+    if (g_magMode == MagMode::Collect) {
+        if (ch == 'x') {
+            Serial.println("[mag] calibração cancelada; calibração anterior mantida");
+            magCalFree();
+        }
+        return true;   // outras teclas são ignoradas durante a coleta
+    }
+    if (g_magMode != MagMode::Review) return false;
+    if (ch == 'd') {
+        magCalDump();
+    } else if (ch == 'x') {
+        Serial.println("[mag] resultado descartado; calibração anterior mantida");
+        magCalFree();
+    } else if (ch == 's') {
+        if (g_magFit.status != MagFitStatus::Ok) {
+            Serial.println("[mag] calibração recusada não pode ser gravada (x = sair | d = pontos em CSV)");
+        } else if (magStoreSave(g_magFit.cal, g_magFit.residPct, (uint8_t)g_magFit.sectors, g_mag.crb())) {
+            g_magCal.valid = true;
+            g_magCal.cal = g_magFit.cal;
+            g_magCal.residPct = g_magFit.residPct;
+            g_magCal.sectors = (uint8_t)g_magFit.sectors;
+            g_hdg.reset();
+            Serial.println("[mag] calibração do magnetômetro gravada na NVS");
+            magCalFree();
+        } else {
+            Serial.println("[mag] FALHA ao gravar na NVS; calibração anterior mantida");
+            magCalFree();
+        }
+    }
+    return true;
 }
 
 // Após configurar o MPU, calibração e fusão descartam amostras por CAL_MPU_SETTLE_MS
@@ -400,9 +709,12 @@ static void checkTempDrift(float nowC) {
 // enorme), e a virada do micros() a cada ~71 min continua tratada.
 static void closeWindowsUntil(uint32_t nowUs) {
     while ((int32_t)(nowUs - g_win.startUs) >= (int32_t)WINDOW_US) {
+        g_magLastWinReads = g_magWinReads;
+        g_magWinReads = 0;
         if (g_summaryOn) {
             printWindow();
             printBaroSummary();
+            printMagSummary();
         }
         if (g_win.samples > 0) checkTempDrift(g_win.tempSum / g_win.samples);
         digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS));
@@ -719,6 +1031,9 @@ static void fusionSample(const ImuSample &s, uint32_t intUs) {
     // Diagnóstico só de giroscópio: parte da atitude do filtro e depois só integra
     if (g_gyroOnly.initialized()) g_gyroOnly.update(acc, gyro, dt, flags);
     else if (g_att.initialized()) g_gyroOnly.initFrom(g_att.rollDeg(), g_att.pitchDeg());
+    // Proa: predição pelo giroscópio a cada amostra; sem atitude (ou na coleta da calibração), recomeça
+    if (g_att.initialized() && g_magMode == MagMode::Off) g_hdg.predict(gyro, g_att.rollDeg(), g_att.pitchDeg(), dt);
+    else g_hdg.reset();
 
     if (st == AttitudeFilter::Step::Updated) {
         g_as.n++;
@@ -775,6 +1090,19 @@ static void printStatus() {
         Serial.printf("  altitude: %s\n", g_bzState != BaroZeroState::Off ? "zero em andamento" : "sem zero");
     printBaroSummary();
 
+    if (g_magCal.valid) {
+        const MagCal &mc = g_magCal.cal;
+        Serial.printf("  magnetômetro: calibrado | offset %+.1f %+.1f %+.1f µT | W %.3f %.3f %.3f | raio %.1f µT | "
+                      "resíduo %.1f %% | %d setores\n",
+                      mc.offset.x, mc.offset.y, mc.offset.z, mc.w.m[0][0], mc.w.m[1][1], mc.w.m[2][2], mc.radiusUt,
+                      g_magCal.residPct, g_magCal.sectors);
+    } else {
+        Serial.println("  magnetômetro: NÃO calibrado (offset zero, escala 1, sem detecção de distúrbio): use m");
+    }
+    Serial.printf("  magnetômetro: ±%.1f Ga, %.0f Hz, média de %d, leitura a %d Hz\n", MAG_RANGE_MGA / 1000.0f,
+                  MAG_OUTPUT_HZ, MAG_AVG_SAMPLES, MAG_READ_HZ);
+    printMagSummary();
+
     const uint32_t n = g_lastWin.samples;
     if (n == 0) {
         Serial.println("  último 1 s: nenhuma leitura válida");
@@ -797,12 +1125,14 @@ static void printStatus() {
 
 static void printHelp() {
     Serial.println("[A] comandos: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem | "
-                   "a = fluxo de atitude | b = fluxo de altitude | 0 = zerar altitude | r = resumo por segundo");
+                   "m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa | "
+                   "0 = zerar altitude | r = resumo por segundo");
 }
 
 static void handleSerial() {
     while (Serial.available()) {
         const char ch = (char)Serial.read();
+        if (handleMagCalKey(ch)) continue;
         switch (g_mode) {
         case CalMode::SixWait:
             if (ch == '\r' || ch == '\n') {
@@ -927,6 +1257,13 @@ static void handleSerial() {
             g_bsNextUs = micros();
             Serial.printf("[baro] fluxo de altitude %s (%d Hz)\n", g_bsOn ? "ligado" : "desligado", BARO_PRINT_HZ);
             break;
+        case 'm': magCalStart(); break;
+        case 'p':
+            g_psOn = !g_psOn;
+            g_psNextUs = micros();
+            Serial.printf("[mag] fluxo de proa %s (%d Hz): filtrada | magnetômetro compensada | deitada | |m| | "
+                          "inclinação | roll pitch | estado\n", g_psOn ? "ligado" : "desligado", MAG_PRINT_HZ);
+            break;
         case '0':
             if (!g_baroReady) Serial.println("[baro] BME280 indisponível: sem altitude");
             else if (g_bzState == BaroZeroState::Settling) Serial.println("[baro] zero já em andamento");
@@ -978,12 +1315,18 @@ void setup() {
         g_level = LevelData();
         Serial.println("[A] NVS: montagem medida com outra calibração do acelerômetro, ignorada. Refaça com z");
     }
-    Serial.printf("[A] NVS: acelerômetro %s | giroscópio %s | montagem %s\n",
+    uint8_t magCrb;
+    float magLsb;
+    if (hmcCrbCode(MAG_RANGE_MGA, magCrb, magLsb)) magStoreLoad(g_magCal, magCrb);
+    if (g_magCal.rejected) Serial.println("[A] NVS: calibração do magnetômetro com valores impossíveis, ignorada");
+    Serial.printf("[A] NVS: acelerômetro %s | giroscópio %s | montagem %s | magnetômetro %s\n",
                   g_cal.accelValid ? "calibrado" : "sem calibração", g_cal.gyroValid ? "com bias salvo" : "sem bias salvo",
-                  g_level.valid ? "calibrada" : "sem calibração");
+                  g_level.valid ? "calibrada" : "sem calibração",
+                  g_magCal.valid ? "calibrado" : "sem calibração (proa com offset zero; use m)");
 
     startMpu();
     startBaro();
+    startMag();
     printHelp();
     startGyroCal(CalMode::GyroBoot);
 }
@@ -997,6 +1340,7 @@ static bool waitPulse(uint32_t &tInt) {
         if (xQueueReceive(g_intQueue, &tInt, pdMS_TO_TICKS(MPU_INT_WAIT_SLICE_MS)) == pdTRUE) return true;
         if (millis() - t0 >= MPU_INT_TIMEOUT_MS) return false;
         baroService(micros());
+        magService(micros());
     }
 }
 
@@ -1006,6 +1350,7 @@ void loop() {
         // Sem MPU, o barômetro continua sendo atendido; a configuração é tentada a cada MPU_RETRY_MS
         if ((int32_t)(millis() - g_mpuRetryMs) >= 0) startMpu();
         baroService(micros());
+        magService(micros());
         delay(1);
         return;
     }
@@ -1040,6 +1385,7 @@ void loop() {
     uint32_t nextInt;
     const bool newerPulse = xQueuePeek(g_intQueue, &nextInt, 0) == pdTRUE && (int32_t)(nextInt - readEndUs) <= 0;
     baroService(readEndUs);
+    magService(micros());
 
     // Todos os pulsos contam para a taxa e as perdas; os anteriores ao último ficam sem leitura
     notePulse(pulses[0]);

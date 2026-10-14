@@ -119,6 +119,30 @@
                                           // (TCOP do datasheet: ±1,5 Pa/K ≈ ±13 cm/K)
 #define BARO_PRINT_HZ            10       // main provisório: taxa do fluxo de altitude (comando b)
 
+// ---------- HMC5883L: proa magnética (docs/magnetometro.md) ----------
+#define MAG_RANGE_MGA            1300     // ±1,3 Ga (1090 LSB/Ga): ~130 µT por eixo, margem para o hard iron
+#define MAG_OUTPUT_HZ            30.0f    // taxa de saída do chip
+#define MAG_AVG_SAMPLES          8        // média no chip (reduz o ruído sem custo de CPU nem I2C)
+#define MAG_READ_HZ              25       // leitura pelo firmware, logo depois de uma leitura do MPU
+#define MAG_MAX_FAIL_STREAK      5        // falhas seguidas até ST_MAG_OK cair
+#define MAG_RETRY_MS             5000     // HMC5883L ausente no boot: nova tentativa
+#define MAG_FAIL_RETRY_MS        1000     // HMC5883L falhando: uma tentativa por intervalo (não atrasa o MPU)
+#define MAG_CAL_MS               90000    // duração máxima da coleta da calibração (m)
+#define MAG_CAL_PROGRESS_MS      2000     // intervalo das linhas de progresso da coleta
+#define MAG_CAL_MIN_SECTORS      20       // setores cobertos (de 24) para aceitar a coleta
+#define MAG_CAL_MIN_PTS_SECTOR   5        // pontos para um setor contar
+#define MAG_CAL_MIN_RADIUS_UT    10.0f    // raio ajustado aceito (faixa larga: modelo final)
+#define MAG_CAL_MAX_RADIUS_UT    60.0f
+#define MAG_CAL_MAX_RESID_PCT    3.0f     // resíduo RMS de |m| corrigido, % do raio
+#define MAG_CAL_MIN_SCALE        0.7f     // escalas normalizadas para média 1
+#define MAG_CAL_MAX_SCALE        1.3f
+#define MAG_REF_FIELD_UT         26.2f    // |B| do WMM2025 na bancada (João Pessoa): só informativo
+#define MAG_DISTURB_PCT          15.0f    // |m| corrigido afastado do raio mais que isto: correção suspensa
+#define MAG_HEADING_TAU_S        1.0f     // filtro da proa: constante de tempo da correção pelo magnetômetro
+#define MAG_MAX_PITCH_DEG        70.0f    // acima disto, sem correção pelo magnetômetro (faixa validada da fusão)
+#define MAG_MAX_DT_MS            200      // correção: maior passo considerado no ganho
+#define MAG_PRINT_HZ             10       // main provisório: taxa do fluxo de proa (comando p)
+
 // ---------- Rádio ----------
 #define ESPNOW_CHANNEL   1        // deve ser IGUAL ao canal do AP no ESP B
 // MAC da Placa B (estação de solo)

@@ -114,15 +114,22 @@ O mapeamento é medido, e não deduzido. Um eixo trocado ou com o sinal invertid
 
 **O que se espera:** o MPU tem X para o nariz, Y para a asa esquerda e Z para cima (`chipToBody`: x = X, y = −Y, z = −Z, ver [hardware.md](hardware.md)). Como o GY-273 está paralelo ao MPU e com o chip para cima, espera-se o mesmo mapeamento.
 
-**Procedimento:** com o `i2cscan`, comando `h` (X, Y e Z do chip em µT), a caixa nivelada e longe de metal, e o norte magnético dado pela bússola do celular. Só importam os sinais e o eixo dominante, então um erro de 10 a 20° na bússola não atrapalha.
+**Procedimento:** com o `i2cscan`, comando `h` (X, Y e Z do chip em µT e ângulo atan2(Y, X)), a caixa nivelada e longe de metal. Em vez de apontar para o norte, a caixa parte da borda da mesa, com o nariz em **85° verdadeiros** (bússola do celular ajustada para o norte verdadeiro), o que dá **~106° magnéticos** (85° + 20,7° de declinação). A caixa gira 90° por vez no sentido horário (nariz para a direita), alinhada com as bordas. Só importam os sinais e o eixo dominante, então um erro de 10 a 20° na proa não atrapalha.
 
-| Passo | Posição | Esperado nos eixos do modelo | Esperado no chip (previsão) |
-|---|---|---|---|
-| 1 | Nariz para o norte | x ≈ +22, y ≈ 0, z ≈ −14 µT | X ≈ +22, Z ≈ +14 |
-| 2 | Asa direita para o norte | y ≈ +22, x ≈ 0, z ≈ −14 µT | Y ≈ −22, Z ≈ +14 |
-| 3 | z = x × y (para baixo) | z negativo nas duas posições, porque o campo aponta para cima | Z do chip positivo |
+Com a proa magnética ψ, o campo nos eixos do modelo é x = H·cosψ, y = −H·sinψ, z = V (H = 22,2 µT e V = −13,8 µT):
 
-Antes da calibração, os valores podem se desviar alguns µT por causa do hard iron, mas os sinais e o eixo dominante não mudam.
+| Posição | Proa do nariz (verdadeira / magnética) | Esperado no modelo (x, y, z) | Esperado no chip (X, Y, Z), previsão | Ângulo do `h` |
+|---|---|---|---|---|
+| P1 | 85° / 106° | −6, −21, −14 | −6, +21, +14 | ~106° |
+| P2 | 175° / 196° | −21, +6, −14 | −21, −6, +14 | ~196° |
+| P3 | 265° / 286° | +6, +21, −14 | +6, −21, +14 | ~286° |
+| P4 | 355° / 16° | +21, −6, −14 | +21, +6, +14 | ~16° |
+| P5 | 85° / 106°, de cabeça para baixo (roll de 180°, virando o conjunto todo) | −6, +21, +14 | −6, −21, −14 | — |
+
+- **Com o mapeamento previsto, o ângulo atan2(Y, X) do diagnóstico coincide com a proa magnética** e cresce no giro horário. Ângulos decrescentes indicariam um eixo invertido.
+- As quatro proas dão os dois sinais de X e de Y. O meio entre posições opostas (P1 e P3, P2 e P4) é uma primeira estimativa do hard iron no plano.
+- **O z:** sai de z = x × y. Nas posições P1 a P4, o Z do chip tem que ficar positivo (~+14 µT) e quase constante, coerente com o campo apontando para cima. **P5 confirma o z diretamente:** só o Y e o Z do chip trocam de sinal, e o X fica igual ao de P1. O meio entre P1 e P5 estima o hard iron em Z, separado do V.
+- Antes da calibração, os valores podem se desviar alguns µT por causa do hard iron, mas os sinais e o eixo dominante não mudam.
 
 **Resultado:** a tabela medida vai para o [hardware.md](hardware.md), e o mapeamento é fixado numa função `chipToBody` do `lib/mag`, como no MPU, e não numa tabela no `config.h`, porque é uma propriedade da montagem física. O teste do `chipToBody` é escrito depois da bancada, com a tabela medida.
 

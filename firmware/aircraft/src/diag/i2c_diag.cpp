@@ -11,7 +11,8 @@
 // 4) Se o BME280 responder, aceita também:
 //      b  liga/desliga o fluxo de temperatura, pressão e umidade a DIAG_PRINT_HZ (começa desligado)
 // 5) Se o HMC5883L responder, aceita também:
-//      h  liga/desliga o fluxo do campo magnético a DIAG_PRINT_HZ (começa desligado)
+//      h  medida do campo magnético: contagem de DIAG_HMC_DELAY_S s, DIAG_HMC_LINES linhas a DIAG_PRINT_HZ
+//         e a média delas; outro h cancela
 //      x  autoteste do HMC5883L com o campo interno de polarização
 // Acesso direto por registrador, sem bibliotecas, para isolar problemas de hardware.
 #include <Arduino.h>
@@ -63,7 +64,7 @@ struct BmeCalib {
     int8_t H6;
 };
 
-enum StreamMode { STREAM_OFF, STREAM_MPU, STREAM_BME, STREAM_HMC };
+enum StreamMode { STREAM_OFF, STREAM_MPU, STREAM_BME };
 
 static bool g_mpuOk = false;
 static bool g_bmeOk = false;
@@ -439,6 +440,66 @@ static void intTest() {
                          : fabsf(hz - SAMPLE_RATE_HZ) <= SAMPLE_RATE_HZ * 0.05f ? "OK" : "TAXA FORA DO ESPERADO");
 }
 
+// Espera ms milissegundos atendendo a serial; devolve false se chegar um h (cancelamento)
+static bool waitOrCancel(uint32_t ms) {
+    uint32_t t0 = millis();
+    while (millis() - t0 < ms) {
+        while (Serial.available())
+            if (Serial.read() == 'h') return false;
+        delay(10);
+    }
+    return true;
+}
+
+// Medida do campo para o mapeamento de eixos: contagem regressiva para afastar a mão da caixa,
+// DIAG_HMC_LINES linhas (X, Y, Z, |B| e ângulo no plano XY, sem calibração nem compensação de
+// inclinação) e a média das amostras válidas. Termina sozinha; um h cancela.
+static void hmcMeasure() {
+    Serial.printf("[diag] medida do HMC5883L em %d s: solte a caixa e afaste-se (h cancela)\n", DIAG_HMC_DELAY_S);
+    for (int s = DIAG_HMC_DELAY_S; s > 0; s--) {
+        Serial.printf("[diag] %d...\n", s);
+        if (!waitOrCancel(1000)) { Serial.println("[diag] medida cancelada"); return; }
+    }
+    Serial.println("[diag] X Y Z (µT) | |B| (µT) | ângulo XY (°, sem calibração nem compensação de inclinação)");
+    float sum[3] = {0.0f, 0.0f, 0.0f};
+    int n = 0;
+    for (int k = 0; k < DIAG_HMC_LINES; k++) {
+        int16_t m[3];
+        if (!hmcRead(m)) {
+            Serial.println("[diag] falha de leitura do HMC5883L");
+        } else if (m[0] == HMC_OVERFLOW || m[1] == HMC_OVERFLOW || m[2] == HMC_OVERFLOW) {
+            Serial.println("SATURADO (campo acima de ±1,3 Ga: ímã ou metal perto do sensor?)");
+        } else {
+            float b[3];
+            for (int i = 0; i < 3; i++) {
+                b[i] = m[i] / HMC_LSB_PER_GA_1090 * 100.0f;   // 1 Ga = 100 µT
+                sum[i] += b[i];
+            }
+            n++;
+            float mod = sqrtf(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+            float ang = atan2f(b[1], b[0]) * 180.0f / PI;
+            if (ang < 0.0f) ang += 360.0f;
+            Serial.printf("%7.2f %7.2f %7.2f | %6.2f | %5.1f\n", b[0], b[1], b[2], mod, ang);
+        }
+        if (k < DIAG_HMC_LINES - 1 && !waitOrCancel(1000 / DIAG_PRINT_HZ)) {
+            Serial.println("[diag] medida cancelada");
+            return;
+        }
+    }
+    if (n == 0) {
+        Serial.println("[diag] fim da medida: nenhuma amostra válida");
+        return;
+    }
+    float b[3];
+    for (int i = 0; i < 3; i++) b[i] = sum[i] / n;
+    float mod = sqrtf(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+    float ang = atan2f(b[1], b[0]) * 180.0f / PI;
+    if (ang < 0.0f) ang += 360.0f;
+    Serial.printf("[diag] média de %d/%d: %7.2f %7.2f %7.2f | %6.2f | %5.1f\n", n, DIAG_HMC_LINES, b[0], b[1], b[2],
+                  mod, ang);
+    Serial.println("[diag] fim da medida");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(500);
@@ -466,14 +527,7 @@ void loop() {
                 Serial.println("[diag] leituras pausadas");
             }
             break;
-        case 'h':
-            if (!g_hmcOk) break;
-            g_stream = (g_stream == STREAM_HMC) ? STREAM_OFF : STREAM_HMC;
-            if (g_stream == STREAM_HMC)
-                Serial.println("[diag] X Y Z (µT) | |B| (µT) | ângulo XY (°, sem calibração nem compensação de inclinação)");
-            else
-                Serial.println("[diag] leituras pausadas");
-            break;
+        case 'h': if (g_hmcOk) { g_stream = STREAM_OFF; hmcMeasure(); } break;
         case 'x': if (g_hmcOk) { g_stream = STREAM_OFF; hmcSelfTest(); } break;
         case 'm': if (g_mpuOk) { g_stream = STREAM_OFF; average(); } break;
         case 'f': toggleFreq(); break;
@@ -492,24 +546,6 @@ void loop() {
             // Δh pela fórmula barométrica padrão; perto do solo, 1 hPa ≈ 8,4 m
             float dh = 44330.0f * (1.0f - powf(p / g_bmeRefHpa, 0.1903f));
             Serial.printf("%6.2f | %8.2f | %5.1f | %+6.1f | %+6.2f\n", t, p, h, (p - g_bmeRefHpa) * 100.0f, dh);
-        }
-        delay(1000 / DIAG_PRINT_HZ);
-        return;
-    }
-
-    if (g_stream == STREAM_HMC) {
-        int16_t m[3];
-        if (!hmcRead(m)) {
-            Serial.println("[diag] falha de leitura do HMC5883L");
-        } else if (m[0] == HMC_OVERFLOW || m[1] == HMC_OVERFLOW || m[2] == HMC_OVERFLOW) {
-            Serial.println("SATURADO (campo acima de ±1,3 Ga: ímã ou metal perto do sensor?)");
-        } else {
-            float b[3];
-            for (int i = 0; i < 3; i++) b[i] = m[i] / HMC_LSB_PER_GA_1090 * 100.0f;   // 1 Ga = 100 µT
-            float mod = sqrtf(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
-            float ang = atan2f(b[1], b[0]) * 180.0f / PI;
-            if (ang < 0.0f) ang += 360.0f;
-            Serial.printf("%7.2f %7.2f %7.2f | %6.2f | %5.1f\n", b[0], b[1], b[2], mod, ang);
         }
         delay(1000 / DIAG_PRINT_HZ);
         return;

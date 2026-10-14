@@ -32,6 +32,8 @@
 #define DIAG_HMC_PERIOD_MS  70    // diagnóstico: intervalo entre saídas do HMC5883L (15 Hz = 66,7 ms)
 #define DIAG_HMC_SETTLE_MS  140   // diagnóstico: duas saídas após mudar a configuração (a 1ª usa a antiga)
 #define DIAG_HMC_ST_SAMPLES 4     // diagnóstico: saídas na média de cada polarização do autoteste
+#define DIAG_HMC_DELAY_S    10    // diagnóstico: contagem regressiva do h antes da medida (tempo de afastar a mão)
+#define DIAG_HMC_LINES      10    // diagnóstico: linhas por medida do h (a DIAG_PRINT_HZ), seguidas da média
 #define DIAG_HMC_ST_MIN_LSB 243     // autoteste: módulo aceito em cada polarização e eixo (datasheet).
 #define DIAG_HMC_ST_MAX_LSB 575     // Exceção à regra de limiares em unidades físicas: o datasheet define a faixa
                                     // em LSB no ganho de 390 LSB/Ga, que o próprio autoteste fixa

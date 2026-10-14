@@ -14,6 +14,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - `docs/calibracao.md`: estratégia de calibração do MPU6050. Siga-a; se precisar divergir, pergunte antes.
 - `docs/fusao.md`: filtro complementar (roll/pitch), calibração de montagem (`z`), limites e roteiro de validação.
 - `docs/barometro.md`: BME280 (perfil "indoor navigation"), altitude relativa, zero (`0`) e roteiro de validação.
+- `docs/magnetometro.md`: HMC5883L, mapeamento de eixos, calibração (`m`), proa compensada e filtro da proa, roteiro de validação.
 - Antes de concluir uma etapa, atualize o doc afetado (procedimento de uso, resultados, decisões).
 
 ## Regras de código
@@ -41,6 +42,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - Monitor: `pio device monitor -b 115200`
 - Página web no B: `pio run -e ground -t uploadfs`
 - Testes de lógica: `pio test -e native`
+- Conferência da calibração do magnetômetro (log com a tecla `d`): `python tools/mag_fit.py` (requer numpy)
 
 ## Placas
 - Placa A (avião): MAC 1C:69:20:A4:E9:44, ESP32-D0WD-V3 rev 3.1, COM7

@@ -1,32 +1,28 @@
 # Magnetômetro: proa com compensação de inclinação
 
-> **Status: estratégia aprovada em 13/10/2026 (decisões D1–D8), implementação não iniciada.** Este documento descreve o que será implementado. Os resultados da bancada entram aqui e no [hardware.md](hardware.md) conforme os testes forem feitos.
+> **Status (14/10/2026): implementado, falta a bancada.** Estratégia aprovada em 13/10 (D1–D8). O código compila (`aircraft` e `i2cscan`) e passa nos testes `native` (22 casos do magnetômetro, 93 no total). O mapeamento de eixos do GY-273 foi confirmado na bancada. Os resultados da bancada entram aqui e no [hardware.md](hardware.md).
 
 Último item da etapa 2 do [plano.md](plano.md): "magnetômetro com compensação de inclinação (proa)". O GY-273 (HMC5883L legítimo, ID "H43") já foi validado no diagnóstico: autoteste OK nos três eixos e ruído de ~1 LSB (ver [hardware.md](hardware.md), "HMC5883L no diagnóstico").
 
 ## Para retomar
 
-1. **Bancada, antes do código:** levantar o mapeamento de eixos com o comando `h` do `i2cscan` (ver "Mapeamento de eixos"). Assim o `chipToBody` já entra certo no código e no teste.
-2. **Implementação:** driver, `lib/mag`, `lib/mag_store`, testes `native`, integração no `main.cpp` provisório e o script `tools/mag_fit.py` (ver "Arquivos").
-3. **Bancada:** seguir o "Roteiro de validação".
-4. **Depois:** refatoração do `main.cpp`, como abertura da semana 3 (ver [plano.md](plano.md)).
-
-**Pendência opcional da etapa anterior (BME280):** conferir na placa o ajuste do driver (`failStreak_` só zera com amostra válida, e a configuração incompleta é refeita).
-- Boot com `zero aceito`.
-- `r` com **só o SDA** do BME280 solto por ~10 s: `FALHANDO`, com as falhas subindo ~1 por segundo e o MPU sem descartes.
-- Ao recolocar o SDA: `ok`, sem reconfiguração.
+1. **Mapeamento de eixos:** feito em 13/10 (x = X, y = −Y, z = −Z), e mantido na montagem final.
+2. **Implementação:** feita em 14/10 (ver "Arquivos").
+3. **Pendente antes da bancada da proa: o `chipToBody` do MPU.** Na montagem final, o MPU foi girado 90° (X asa direita, Y nariz), e o firmware ainda usa o mapeamento da montagem 5. Enquanto isso não mudar, o roll e o pitch saem trocados, e a proa compensada também. Depois da mudança: seis posições e `z` no firmware de voo.
+4. **Bancada:** seguir o "Roteiro de validação". O BME280 foi danificado em 14/10, e o BMP280 chega em 17/10. O firmware funciona sem barômetro, então o roteiro do magnetômetro não depende dele.
+5. **Depois:** refatoração do `main.cpp`, como abertura da semana 3 (ver [plano.md](plano.md)).
 
 ## Montagem física
 
-Registrada em 13/10/2026. Ver também [hardware.md](hardware.md), "Religação dos três módulos".
+**Montagem final (14/10/2026):** caixa de papelão de 28 × 13 × 10 cm, com o nariz ao longo do comprimento. Detalhes, curtos e testes em [hardware.md](hardware.md), "Montagem final na caixa".
 
-- O GY-273 e o BME280 estão numa protoboard **dentro da caixa do MPU**. O magnetômetro inclina junto com o MPU, como a compensação de inclinação exige.
-- **Orientação:** a seta X do GY-273 aponta na mesma direção da seta X do MPU, e os dois chips estão para cima. O mapeamento esperado é, portanto, o mesmo do MPU (ver "Mapeamento de eixos").
-- **Distância** até o ESP32 e o cabo USB: **mais de 10 cm**. É o ideal: a 5 cm, o consumo do ESP (100 a 300 mA, com picos do rádio) daria ~1 µT variável.
-- **Fios:** as ligações são dois jumpers emendados, sem solda. Elas estão presas o máximo possível, mas sem espaguete térmico, porque a bancada é desmontada todo dia. Os sensores estão bem presos. Por isso, **em toda sessão, antes da calibração**, deve-se rodar o `r` girando a caixa por ~30 s, com os mesmos movimentos da calibração. As falhas do mag e os descartes do MPU têm que continuar em zero.
-- Diagnóstico com o módulo na caixa: autoteste OK, ruído de ±0,1 µT e \|B\| de ~26,9 µT sem calibração. Com o módulo solto (12/10), foram 23,7 µT, provavelmente com metal por perto.
+- MPU, GY-273 e BME280 numa mini protoboard no canto da caixa. O magnetômetro inclina junto com o MPU, como a compensação de inclinação exige.
+- **Orientação do GY-273:** seta X para o nariz, chip para cima (mapeamento x = X, y = −Y, z = −Z). O MPU foi girado 90° (X asa direita, Y nariz), o que não afeta o magnetômetro.
+- **Distâncias:** ESP32 a ~15 cm e powerbank a ~13 cm do GY-273, os dois presos. Medido: powerbank ligado ≤ 1,6 µT mesmo encostado; ESP32 girado 1,5 µT; cabo USB 3,2 µT.
+- **Fiação:** jumpers macho-macho sem emendas, presos na caixa. **Nada pode se mover em relação ao sensor**: nos testes do protótipo, mexer na fiação improvisada mudou o campo em até ~23 µT (ver [hardware.md](hardware.md), "Magnetômetro: mapeamento de eixos e fontes de distorção").
+- **Durante as medidas:** controle remoto, celular, multímetro e ferramentas a mais de 30 cm.
 
-**A calibração feita no protótipo é descartável:** ela tem que ser refeita no modelo final, com tudo instalado. O objetivo agora é validar o código e o procedimento.
+A calibração do magnetômetro vale para esta montagem. Se algo mudar de lugar dentro da caixa (powerbank, ESP32, fios), ela tem que ser refeita.
 
 ## Campo de referência (bancada em João Pessoa, PB)
 
@@ -112,7 +108,9 @@ Conferência: nariz para o norte e nivelado dá m = (H, 0, V) e proa 0°; nariz 
 
 O mapeamento é medido, e não deduzido. Um eixo trocado ou com o sinal invertido não aparece com a caixa nivelada, só quando ela inclina.
 
-**O que se espera:** o MPU tem X para o nariz, Y para a asa esquerda e Z para cima (`chipToBody`: x = X, y = −Y, z = −Z, ver [hardware.md](hardware.md)). Como o GY-273 está paralelo ao MPU e com o chip para cima, espera-se o mesmo mapeamento.
+> **Protótipo anterior (13/10/2026).** Este teste foi feito na montagem do protótipo, com o GY-273 paralelo ao MPU. Na montagem final (14/10), o GY-273 manteve a mesma orientação (X nariz, chip para cima), e o mapeamento do magnetômetro continua valendo. O **MPU foi girado 90°** (X asa direita, Y nariz), então o paralelismo descrito abaixo não vale mais. Ver [hardware.md](hardware.md), "Orientação de montagem do MPU6050".
+
+**O que se esperava (protótipo):** o MPU tinha X para o nariz, Y para a asa esquerda e Z para cima (`chipToBody`: x = X, y = −Y, z = −Z, montagem 5). Como o GY-273 estava paralelo ao MPU e com o chip para cima, esperava-se o mesmo mapeamento.
 
 **Procedimento:** com o `i2cscan`, comando `h` (X, Y e Z do chip em µT e ângulo atan2(Y, X)), a caixa nivelada e longe de metal. Em vez de apontar para o norte, a caixa parte da borda da mesa, com o nariz em **85° verdadeiros** (bússola do celular ajustada para o norte verdadeiro), o que dá **~106° magnéticos** (85° + 20,7° de declinação). A caixa gira 90° por vez no sentido horário (nariz para a direita), alinhada com as bordas. Só importam os sinais e o eixo dominante, então um erro de 10 a 20° na proa não atrapalha.
 
@@ -131,7 +129,7 @@ Com a proa magnética ψ, o campo nos eixos do modelo é x = H·cosψ, y = −H�
 - **O z:** sai de z = x × y. Nas posições P1 a P4, o Z do chip tem que ficar positivo (~+14 µT) e quase constante, coerente com o campo apontando para cima. **P5 confirma o z diretamente:** só o Y e o Z do chip trocam de sinal, e o X fica igual ao de P1. O meio entre P1 e P5 estima o hard iron em Z, separado do V.
 - Antes da calibração, os valores podem se desviar alguns µT por causa do hard iron, mas os sinais e o eixo dominante não mudam.
 
-**Resultado:** a tabela medida vai para o [hardware.md](hardware.md), e o mapeamento é fixado numa função `chipToBody` do `lib/mag`, como no MPU, e não numa tabela no `config.h`, porque é uma propriedade da montagem física. O teste do `chipToBody` é escrito depois da bancada, com a tabela medida.
+**Resultado (13/10/2026, log `device-monitor-261013-185902.log`):** sinais e eixo dominante conforme a previsão nas cinco posições, com o Z invertendo em P5. **Mapeamento: x = X, y = −Y, z = −Z**, fixado em `magChipToBody` (`lib/mag`), e não numa tabela no `config.h`, porque é uma propriedade da montagem física. O teste do mapeamento usa os valores de P1 e P2. Tabela e anomalias (giros irregulares) no [hardware.md](hardware.md), "Magnetômetro: mapeamento de eixos e fontes de distorção".
 
 ### D4. Calibração por ajuste de elipsoide alinhado aos eixos
 
@@ -145,8 +143,8 @@ Com a proa magnética ψ, o campo nos eixos do modelo é x = H·cosψ, y = −H�
 
 **Coleta:**
 - `m` inicia a coleta, que termina sozinha ao completar os 24 setores, ou depois de `MAG_CAL_MS` (90 s).
-- Os pontos (até ~2 250, a 25 Hz) ficam guardados como contagem bruta `int16` num buffer de ~13 KB, alocado só durante a coleta. O buffer é necessário porque o resíduo precisa de uma segunda passada sobre os pontos.
-- Durante a coleta, a proa e o fluxo `p` ficam suspensos. O MPU continua normal. `x` cancela.
+- Os pontos (até 2 250, a 25 Hz) ficam guardados em µT, nos eixos do modelo e sem calibração, num buffer de ~27 kB alocado só durante a calibração. O buffer é necessário porque o resíduo e a recontagem da cobertura precisam de uma segunda passada sobre os pontos, e a tecla `d` os imprime.
+- Durante a coleta e a revisão, a proa e o fluxo `p` ficam suspensos. O MPU continua normal. `x` cancela.
 
 **Como girar a caixa:** no ar, passando por todas as orientações, e não apoiada na mesa. Para cada face da caixa voltada para cima, faça um giro em torno da vertical, devagar (~10 s por giro):
 
@@ -157,14 +155,17 @@ Com a proa magnética ψ, o campo nos eixos do modelo é x = H·cosψ, y = −H�
 5. nariz para cima;
 6. nariz para baixo.
 
-Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar cobre os mesmos setores sem torcer os jumpers. Deixe folga no chicote e segure a caixa junto dos fios. O ESP32 e o USB ficam parados na mesa.
+Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar cobre os mesmos setores. Na montagem final, o ESP32 e o powerbank giram junto com a caixa. O cabo USB (só na bancada, para a serial) fica com folga e preso à caixa nos primeiros ~20 cm.
 
 **Cobertura, com 24 setores:**
 - A direção de cada ponto é tomada em relação a um centro provisório, o meio do mín./máx. corrente de cada eixo.
 - O setor é a face do cubo do eixo dominante (±x, ±y, ±z), dividida em 4 quadrantes pelos sinais dos outros dois eixos.
 - Um setor só conta como coberto com pelo menos `MAG_CAL_MIN_PTS_SECTOR` (5) pontos.
 - A coleta é aceita com pelo menos `MAG_CAL_MIN_SECTORS` (20) setores. Ao fim da coleta, a cobertura é recontada com o centro ajustado.
-- **Progresso a cada 2 s:** por exemplo, `cobertura 17/24  faltam: -z(4) +y(2) -x(1)`. As faces são do campo nos eixos do modelo. Faltar −z, por exemplo, significa virar a caixa de cabeça para baixo.
+- **Progresso a cada 2 s:** por exemplo, `[mag] 34 s | 850 pontos | cobertura 17/24 | faltam: +z(4) +y(2) -x(1)`. As faces são a direção do campo nos eixos do modelo:
+  - **±x e ±y:** o campo ao longo do nariz ou das asas. Saem dos giros com a caixa em pé, de lado ou com o nariz para cima ou para baixo;
+  - **−z:** o campo saindo pelo topo da caixa. Aqui o campo aponta para cima (inclinação de −32°), então essa face aparece com a caixa quase nivelada;
+  - **+z:** o campo saindo pelo fundo. Exige a caixa **de cabeça para baixo** ou bem deitada de lado.
 
 **Ajuste e conferência.** O resultado é recusado, com o motivo na serial, se:
 - o raio ficar fora de 10 a 60 µT (faixa larga, para o modelo final). A serial mostra também a comparação com os 26,2 µT do WMM, só como informação;
@@ -177,7 +178,8 @@ Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar c
 - O firmware mostra o offset (µT), as escalas, o raio, o resíduo e a cobertura.
 - `s` grava na NVS: namespace `mag_cal`, com versão, ganho, offset b e matriz W.
 - `x` descarta e mantém a calibração anterior.
-- `d` imprime os pontos brutos em CSV para o `tools/mag_fit.py`. A revisão continua aberta depois disso.
+- `d` imprime os pontos em CSV para o `tools/mag_fit.py`, entre as linhas `# mag_cal inicio` e `# mag_cal fim`, com o ajuste do firmware numa linha `# firmware`. A revisão continua aberta depois disso. A impressão bloqueia o laço por ~5 s (2 250 linhas a 115200), e a atitude recomeça depois.
+- **Calibração recusada:** a revisão também abre, com o motivo e os valores, mas o `s` não grava. Só `d` (para analisar a coleta no `mag_fit.py`) e `x`.
 
 **Sem calibração na NVS:** offset zero e W identidade. `ST_MAG_CAL` fica desligado, e há aviso no boot e no `c`. A proa é calculada assim mesmo.
 
@@ -190,6 +192,7 @@ Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar c
   - |pitch| > `MAG_MAX_PITCH_DEG` (70°, faixa validada da fusão), porque a proa fica mal definida perto de ±90°;
   - \|m\| corrigido afastado do raio da calibração por mais de `MAG_DISTURB_PCT` (15 %), o distúrbio. A serial sinaliza.
 - **Deriva sem correção:** com o bias do giroscópio calibrado no boot (incerteza de ~0,006 °/s), um minuto inteiro deriva menos de 1°.
+- **Reinício:** a proa recomeça da primeira proa válida do magnetômetro quando a atitude reinicia (ou ainda não foi inicializada), numa lacuna de mais de `MAG_MAX_DT_MS` (200 ms) entre amostras do MPU e depois de uma calibração gravada.
 - Se o filtro não se comportar bem na bancada, a abordagem é revista.
 
 ### D7. Comandos no `main.cpp` provisório
@@ -208,11 +211,13 @@ Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar c
 - \|m\| corrigido;
 - inclinação magnética medida (esperado: ~−32°);
 - roll e pitch;
-- estado: `ok`, `DISTURBIO`, `INCL_ALTA` ou `SEM_CAL`.
+- estado: `ok`, `DISTURBIO`, `INCL_ALTA`, `SEM_ATITUDE` (fusão ainda sem referência), mais `SEM_CAL` sem calibração na NVS.
+
+A linha sai a ~10 Hz em média, alinhada às leituras de 25 Hz (intervalos de 80 e 120 ms). Ao entrar e sair de um distúrbio, a serial imprime uma linha `[mag] DISTÚRBIO: ...` e `[mag] distúrbio terminou`.
 
 **Linhas novas no `c` e no `r`:**
-- `c` ganha uma linha `mag`: estado do chip, calibração (offset, escalas, raio e resíduo, ou "sem calibração") e configuração (ganho e taxa);
-- `r` ganha uma linha `mag`: leituras por segundo (~25), falhas, saturações e \|m\|.
+- `c`: calibração (offset, W, raio, resíduo e setores, ou "NÃO calibrado"), configuração (ganho, taxa, média e leitura) e a linha do `r`;
+- `r`: estado do chip, leituras válidas no último 1 s (~25), \|m\| corrigido, proa filtrada, estado, falhas, recuperações e saturações.
 
 O `printHelp()` passa a listar `m` e `p`.
 
@@ -229,7 +234,7 @@ O `printHelp()` passa a listar `m` e `p`.
    - bytes conhecidos → contagens nos eixos certos;
    - −4096 em cada eixo → saturação;
    - configuração alterada → detectada.
-2. **`chipToBody`:** com a tabela do D3, escrito depois da bancada.
+2. **`magChipToBody`:** sinais, mais os valores medidos em P1 e P2 do D3 (proa de ~106° e ~196°, crescendo no giro horário).
 3. **Ajuste:**
    - offset (+15, −8, +30 µT) e escalas (1,1 / 0,9 / 1,05) conhecidos, com ruído de 0,1 µT, são recuperados;
    - funciona com 20 de 24 setores;
@@ -247,15 +252,18 @@ O `printHelp()` passa a listar `m` e `p`.
 - se o ajuste do firmware está certo com dados reais (se as duas contas de 6 parâmetros baterem);
 - se o elipsoide completo reduz muito o resíduo, o que é o critério para a evolução do D4.
 
-## Valores para o `config.h` (seção MAG, a ajustar na bancada)
+## Valores no `config.h` (seção HMC5883L, a ajustar na bancada)
 
 | Constante | Valor inicial | Uso |
 |---|---|---|
-| `MAG_RANGE_GA_X10` (ou equivalente) | 13 (±1,3 Ga) | Ganho (D2) |
+| `MAG_RANGE_MGA` | 1300 (±1,3 Ga) | Ganho (D2) |
 | `MAG_OUTPUT_HZ` / `MAG_AVG_SAMPLES` | 30 / 8 | Configuração do chip (D2) |
 | `MAG_READ_HZ` | 25 | Leitura pelo firmware |
 | `MAG_MAX_FAIL_STREAK` / `MAG_FAIL_RETRY_MS` | 5 / 1000 | Falhas, como no BME280 |
+| `MAG_RETRY_MS` | 5000 | HMC ausente no boot: nova tentativa |
 | `MAG_CAL_MS` | 90000 | Duração máxima da coleta |
+| `MAG_CAL_PROGRESS_MS` | 2000 | Linhas de progresso da coleta |
+| `MAG_REF_FIELD_UT` | 26,2 | \|B\| do WMM na bancada, só para comparação na revisão |
 | `MAG_CAL_MIN_SECTORS` | 20 (de 24) | Cobertura mínima |
 | `MAG_CAL_MIN_PTS_SECTOR` | 5 | Pontos para um setor contar |
 | `MAG_CAL_MIN_RADIUS_UT` / `MAG_CAL_MAX_RADIUS_UT` | 10 / 60 | Faixa do raio ajustado |
@@ -264,6 +272,7 @@ O `printHelp()` passa a listar `m` e `p`.
 | `MAG_DISTURB_PCT` | 15 | Desvio de \|m\| que suspende a correção |
 | `MAG_HEADING_TAU_S` | 1,0 | Filtro da proa (D6) |
 | `MAG_MAX_PITCH_DEG` | 70 | Acima disso, sem correção pelo magnetômetro |
+| `MAG_MAX_DT_MS` | 200 | Lacuna que reinicia a proa; limite do passo na correção |
 | `MAG_PRINT_HZ` | 10 | Fluxo `p` |
 
 ## Limitações conhecidas
@@ -275,9 +284,15 @@ O `printHelp()` passa a listar `m` e `p`.
 
 ## Roteiro de validação na bancada
 
-Pré-requisitos: GY-273 preso na caixa do MPU, boot parado, giroscópio DEFINITIVO e montagem (`z`) calibrada. Antes de começar, o teste das emendas com o `r` (ver "Montagem física").
+Pré-requisitos:
+- montagem final, com tudo preso na caixa;
+- **`chipToBody` do MPU atualizado para a montagem final**, seis posições e `z` refeitos;
+- boot parado e giroscópio DEFINITIVO;
+- celular, controle remoto, multímetro e ferramentas a mais de 30 cm.
 
-1. **Mapeamento de eixos (D3)**, com o `i2cscan`, antes do código: tabela no [hardware.md](hardware.md).
+Gravar: `pio run -e aircraft -t upload`. Monitor, salvando o log: `pio device monitor -b 115200 -p COM7 --echo -f log2file`.
+
+1. **Mapeamento de eixos (D3):** feito (13/10). Na montagem final, refazer o **teste das 4 proas com o `h` do `i2cscan`, girando a caixa inteira no mesmo lugar**: giros de ~90° ± 5° depois de descontar o centro e Z quase constante (± 2 µT). É a confirmação de que a instabilidade do protótipo sumiu com tudo fixo.
 2. **Driver:**
    - taxa real de saída (~30 Hz) e ruído parado (~0,1 µT);
    - `r` por alguns minutos: ~25 leituras do mag por segundo, MPU sem perdas nem descartes;
@@ -296,7 +311,7 @@ Pré-requisitos: GY-273 preso na caixa do MPU, boot parado, giroscópio DEFINITI
    | Conferência independente | `d` → log → `tools/mag_fit.py` | Ajuste de 6 parâmetros igual ao do firmware |
    | NVS | `s` e reinício | Mesma calibração no boot; `ST_MAG_CAL` ligado |
    | Descartar | Nova `m`, depois `x` | A calibração anterior continua valendo, inclusive depois de reiniciar |
-   | Sem calibração | NVS `mag_cal` apagada | Aviso no boot e no `c`; proa calculada |
+   | Sem calibração | Primeiro boot, antes de qualquer `s` (não há comando para apagar a NVS) | Aviso no boot e no `c`; `SEM_CAL` no `p`; proa calculada |
 
 4. **Proa nivelada:**
    - 8 proas a cada 45° (marcas na mesa ou borda da mesa);
@@ -312,11 +327,11 @@ Pré-requisitos: GY-273 preso na caixa do MPU, boot parado, giroscópio DEFINITI
 
 | Arquivo | Conteúdo |
 |---|---|
-| `lib/hmc5883l/` (novo) | Driver |
-| `lib/mag/` (novo) | Lógica pura: decodificação, mapeamento, ajuste, cobertura, proa e filtro |
-| `lib/mag_store/` (novo) | Calibração na NVS (namespace `mag_cal`) |
-| `test/test_mag/` (novo) | Testes `native` |
-| `tools/mag_fit.py` (novo) | Conferência do ajuste com o CSV da tecla `d` |
+| `lib/hmc5883l/` | Driver |
+| `lib/mag/` | Lógica pura: decodificação, mapeamento, ajuste, cobertura, proa e filtro |
+| `lib/mag_store/` | Calibração na NVS (namespace `mag_cal`) |
+| `test/test_mag/` | Testes `native` (22 casos) |
+| `tools/mag_fit.py` | Conferência do ajuste com o CSV da tecla `d`. Uso, a partir de `firmware/aircraft`: `python tools/mag_fit.py` (último log em `logs/`) ou `python tools/mag_fit.py logs/arquivo.log` |
 | `src/main.cpp` | Integração, comandos `m` e `p`, linhas `mag` no `c` e no `r` |
 | `include/config.h` | Seção MAG |
 | `platformio.ini` | Remove a Adafruit HMC5883 e a Adafruit Unified Sensor |

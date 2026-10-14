@@ -33,7 +33,7 @@ Para sair do monitor, use `Ctrl+C`; não é preciso desconectar a placa. Para vo
 | Componente | Módulo | Endereço no `config.h` | Observado | ID lido |
 |---|---|---|---|---|
 | IMU | MPU6050 (GY-521) | 0x68 | 0x68 (09/10) | WHO_AM_I = 0x68 |
-| Barômetro | BME280 | 0x76 | 0x76 (11/10) | chip_id = 0x60 (BME280 legítimo, não BMP280) |
+| Barômetro | BME280 | 0x76 | 0x76 (11/10); **ausente desde 14/10** (danificado num curto, ver "Montagem final na caixa") | chip_id = 0x60 (BME280 legítimo, não BMP280). Substituto: BMP280 (chip_id 0x58), previsto para 17/10 |
 | Magnetômetro | GY-273 com HMC5883L | 0x1E | 0x1E (11/10) | "H43" (HMC5883L legítimo, não o clone QMC5883L) |
 | OLED de status | SSD1306 0,91" 128x32 | 0x3C | ausente (09/10) | não tem ID |
 
@@ -58,6 +58,10 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 12/10/2026 | A | Protótipo: GY-273 na protoboard junto com o BME280 e o MPU (três módulos no barramento), em 3V3 | 100 e 400 kHz | 3 dispositivos no scan; autoteste do HMC5883L OK nos três eixos; `b` sem falhas; `t`: 3 043 leituras do MPU a 100 kHz e 10 769 a 400 kHz, 0 falhas | Fecha o teste dos módulos juntos no barramento. Ver "HMC5883L no diagnóstico" |
 | 12/10/2026 | A | Protótipo, firmware `aircraft` com o BME280 (driver próprio, "indoor navigation") | 400 kHz | Ruído de 1,6 cm; subida de 1 m medida como 0,95–1,0 m; zero rejeita a caixa mexida; MPU sem perdas nem descartes com o BME280 presente; recuperação após queda de alimentação; BME280 ausente no boot sem afetar a atitude | Na queda de alimentação, provável latch-up do BME280 (chip a 40,5 °C). Ver "BME280 no firmware de voo" |
 | 13/10/2026 | A | Protótipo religado: GY-273 e BME280 numa protoboard dentro da caixa do MPU (MPU no mesmo lugar); todas as ligações com dois jumpers emendados, sem solda; 3V3 | 100 e 400 kHz | 3 dispositivos no scan; `t`: 3 043 leituras a 100 kHz e 10 756 a 400 kHz, 0 falhas; autoteste do HMC5883L OK; `h` com ruído de ±0,1 µT; `b` com desvio de ~3 Pa; INT a 202,0 Hz | Diagnóstico igual ao de antes da religação. Firmware de voo: 0 falhas parado; 1 `Error -1` isolado mexendo nos fios; teste dos 180°: montagem desviada ~+1° em roll; `z` refeito (módulo em +4,58° / +1,08°), com resíduo de −0,18° na conferência. Um jumper emendado soltou ao manusear a caixa. Ver "Religação dos três módulos" |
+| 13/10/2026 | A | Protótipo religado (idem), diagnóstico com o `h` de contagem regressiva e média | 100 kHz | Mapeamento de eixos do GY-273 confirmado: x = X, y = −Y, z = −Z. Giros de 90° na mesa deram passos de 120/75/62° e o Z variou com a proa | Giros irregulares atribuídos ao campo variando com os fios e o ambiente, não ao sensor. Ver "Magnetômetro: mapeamento de eixos e fontes de distorção" |
+| 13/10/2026 | A | Idem, testes de controle: fios, ESP32, cabo USB, jumper e emenda avulsos | 100 kHz | Sem nada se mover, o campo repete em 0,2 µT. Fontes isoladas: jumper e emenda a 2 cm < 1 µT; ESP32 girado 1,5 µT; cabo USB 3,2 µT. Autoteste com ganho constante (0,3 %) e 3,32 V estáveis | Variações grandes (até ~23 µT e 79°) mexendo nos fios, sem causa isolada. Decisão: montagem final com tudo fixo |
+| 14/10/2026 | A | Idem, powerbank a 30, 20 e 10 cm do GY-273 | 100 kHz | Desligado: < 0,1 µT mesmo a 10 cm. Ligado, alimentando a placa B: 0,8 µT a 10 cm e 1,6 µT encostado | Powerbank irrelevante a 10 cm ou mais, desde que fixo |
+| 14/10/2026 | A | **Montagem final** na caixa de papelão (28 × 13 × 10 cm): MPU, GY-273 e BME280 numa mini protoboard no canto da caixa, ESP32 e powerbank na outra metade; jumpers macho-macho com no máximo dois conectores, sem emendas; 3V3 | 100 e 400 kHz | Dois curtos na montagem; o BME280 deixou de responder. MPU e HMC5883L intactos: `t` com 3 040 e 10 460 leituras, 0 falhas; autoteste OK; eixos do MPU confirmados (X asa direita, Y nariz, Z para cima) | MPU ~4° inclinado em roll em relação à caixa, aceito. Ver "Montagem final na caixa" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -600,7 +604,95 @@ Firmware com o lote 1 da revisão de 13/10: barômetro independente dos pulsos d
   - O bias de gx ficou entre −4,826 e −4,843 °/s, a 25,8–26,1 °C, contra −4,92 °/s a 27,1 °C às 14:43. Isso dá ~−0,08 °/s por °C, coerente com os ~−0,1 °/s por °C já registrados.
 - **O fluxo `b` imprime 8–9 linhas por segundo, não 10.** A próxima linha é agendada a partir da leitura que imprimiu, e as leituras ficam numa grade de 40 ms (25 Hz), então o intervalo efetivo é de 120 ms. Isso já acontecia antes da correção e não afeta a medida.
 
+### Magnetômetro: mapeamento de eixos e fontes de distorção (13–14/10/2026)
+
+Protótipo religado (GY-273 na protoboard dentro da caixa do MPU, com a seta X paralela à do MPU e o chip para cima, a mais de 10 cm do ESP32 e do USB). Diagnóstico `i2cscan`, comando `h` com contagem regressiva de 10 s e média de 10 leituras. Campo de referência (WMM2025, João Pessoa): \|B\| = 26,2 µT, H = 22,2 µT, inclinação −31,8°, declinação −20,7°.
+
+**Mapeamento de eixos** (log `device-monitor-261013-185902.log`). Caixa nivelada, girada 90° por vez no sentido horário pelas bordas da mesa, partindo do nariz em 85° verdadeiros (~106° magnéticos); P5 com o conjunto de cabeça para baixo, nariz na proa de P1:
+
+| Posição | X, Y, Z do chip (µT) | \|B\| | Ângulo atan2(Y, X) | Esperado (X, Y, Z) |
+|---|---|---|---|---|
+| P1 | +11,4, **+28,6**, +10,0 | 32,3 | 68° | −6, +21, +14 |
+| P2 | **−19,2**, −7,9, +5,5 | 21,5 | 202° | −21, −6, +14 |
+| P3 | +7,2, **−29,7**, +2,4 | 30,6 | 284° | +6, −21, +14 |
+| P4 | **+28,6**, −10,6, −2,4 | 30,6 | 340° | +21, +6, +14 |
+| P5 | +5,3, **−38,3**, **−21,6** | 44,3 | — | −6, −21, −14 |
+
+- Sinais e eixo dominante batem nas cinco posições, e o ângulo cresce no giro horário. O Z inverte de sinal em P5: pelo P1 e o P5, a componente vertical é de +15,8 µT no chip (esperado 13,8) e o hard iron em Z, de ~−5,8 µT.
+- **Mapeamento: x = X, y = −Y, z = −Z**, igual ao do MPU na montagem 5 (`magChipToBody` em `lib/mag`).
+- Anomalias: descontado o centro estimado (5,6, 0,3 µT), os giros de 90° deram **120°, 75° e 62°**; o Z variou com a proa (+10 a −2,4 µT, o equivalente a ~12° de inclinação); e o \|B\| de P5 ficou em ~42 µT depois de descontar os offsets.
+
+**Investigação das anomalias.** Cada teste mudou uma coisa só, com o sensor parado:
+
+| Log | Teste | Resultado |
+|---|---|---|
+| `261013-191105` | Mexer nos jumpers e voltar | Ângulo 72° → 353° → 42°: mudou 79° e não voltou |
+| `261013-192116` | Fios distantes (> 5 cm), depois conectores perto do chip, depois tudo de volta | 18° → 31° → 36° → 44°: deriva num sentido só; os fios distantes mudaram mais (~8 µT) que os conectores perto do chip (~3 µT) |
+| `261013-192632` | Controle: nada (3×), mão na caixa, fios distantes, fios de volta | **Nada mexido: 0,2 µT de repetição**; mão na caixa sem efeito; fios: 2,2 e 3,5 µT, sem voltar |
+| `261013-193708` | Autoteste (`x`) e `h` mexendo nos fios; tensão no GY-273 com multímetro | **Ganho constante** (123,9/116,3/118,5 a 124,0/116,5/118,8 µT, ≤ 0,3 %); 3,32 V estável; o campo foi de \|B\| 39 a 19 µT (~23 µT de variação) |
+| `261013-194255` | Jumper avulso a 2 e 5 cm do GY-273 | 0,7 µT a 2 cm; um salto de 3,6 µT entre duas medidas, sem relação com o jumper |
+| `261013-194758` | ESP32 girado 90°, afastado; cabo USB mexido | ESP32 girado: 1,5 µT; afastado: ~0; cabo USB: 3,2 µT |
+| `261014-114920` | Powerbank desligado a 30, 20 e 10 cm | < 0,1 µT nas três distâncias |
+| `261014-115353` | Powerbank ligado, alimentando a placa B, a 10 cm e encostado | 0,8 µT a 10 cm; 1,6 µT encostado (≈ 2° de proa sem calibração) |
+
+Conclusões:
+
+- **Sem nada se mover, o campo é estável** (0,1–0,2 µT). O sensor está saudável: autoteste e ganho constantes, alimentação estável.
+- **As fontes medidas isoladamente são pequenas:** jumper e emenda a 2 cm < 1 µT; ESP32 1,5 µT; cabo USB 3,2 µT; powerbank ≤ 1,6 µT. Fixas em relação ao sensor, todas viram hard iron constante, que a calibração corrige.
+- **As variações grandes (até ~23 µT e 79°) apareceram só ao mexer na fiação improvisada** e não foram reproduzidas nos testes controlados. A causa não foi isolada. O que elas exigem é o mesmo: nada pode se mover em relação ao sensor. Isso levou à montagem final, com tudo fixo numa caixa (seção seguinte). O teste de rotação das 4 proas deve ser refeito nela.
+- **Regra para a bancada:** controle remoto (pilhas de aço), celular, multímetro e ferramentas a mais de 30 cm do GY-273 durante as medidas.
+
+### Montagem final na caixa (14/10/2026)
+
+O modelo final passa a ser uma caixa de papelão (caixa de sapato, 28 × 13 × 10 cm), com o nariz ao longo dos 28 cm.
+
+- **Sensores:** MPU, GY-273 e BME280 numa mini protoboard colada no canto da caixa, encostada nas duas paredes (que servem de esquadro). Os módulos ficam presos com cola quente; as partes que ficam para fora da protoboard se apoiam em calços.
+- **ESP32** numa protoboard na outra metade, a ~15 cm do GY-273; **powerbank** preso com abraçadeiras de plástico na parede, a ~13 cm do GY-273, com cabo curto até o ESP32.
+- **Fiação:** cinco jumpers macho-macho (3V3, GND, SDA no GPIO 21, SCL no GPIO 22, INT no GPIO 19), com no máximo dois conectores, sem emendas. Na protoboard dos sensores, uma fileira para cada sinal comum. XDA, XCL, DRDY, AD0, CSB e SDO sem ligação.
+- **Orientação:** GY-273 com X para o nariz, Y para a asa esquerda e chip para cima (mesmo mapeamento do protótipo). MPU **girado 90°**: X para a asa direita, Y para o nariz, Z para cima (ver "Orientação de montagem do MPU6050").
+
+**Dois curtos durante a montagem:**
+
+1. **Primeira ligação:** o regulador do ESP32 esquentou e os módulos ficaram com 1,12 V. O caminho do 3V3 tinha < 3 Ω, mas perdia 0,9 V, ou seja, a corrente passava de 300 mA. Refazer as ligações de VCC e GND resolveu (3,3 V nos três módulos, regulador frio, LED do MPU aceso). A causa provável é um fio numa fileira errada.
+2. **CSB e SDO do BME280 ligados (invertidos: CSB em GND e SDO em 3V3):** a alimentação despencou, o regulador esquentou muito e o MPU apagou. Depois de retirar os dois fios, o BME280 **deixou de responder** no I2C.
+
+**Diagnóstico do BME280 depois do curto:** CSB em 3,3 V (modo I2C), SDO em 0 V (endereço 0x76), SDA e SCL em 3,3 V, continuidade até os GPIO 21 e 22 de 1,5 Ω, chip frio, ausente também sozinho no barramento e depois de desligar a alimentação. Conclusão: **chip danificado**. O mecanismo provável é o SDO, que no modo SPI vira saída: ligado a 3V3, ele "briga" com a saída do chip, ou faz um curto direto se o módulo liga o SDO ao GND na placa. Na queda de alimentação, os pinos de I2C ficaram acima do VDD do chip, puxados pelos outros módulos. O substituto é um **BMP280** (mesmo elemento de pressão, sem umidade, chip_id 0x58).
+
+**Regras para a montagem:**
+
+- **CSB e SDO do BME280/BMP280 soltos.** Os resistores do módulo já fixam o modo I2C e o endereço 0x76; ligá-los numa protoboard apertada só trouxe risco.
+- **Cada fileira de 5 furos com um único pino de módulo.**
+- **Antes de ligar a alimentação, medir a resistência entre 3V3 e GND:** centenas de Ω ou mais. A ~2 kΩ foi o valor normal com os três módulos.
+- Os módulos expostos a um curto devem ser reconferidos: scan, autoteste do HMC (`x`) e eixos do MPU (`l`).
+
+**Diagnóstico na montagem final** (log `device-monitor-261014-184539.log`, sem o BME280):
+
+| Teste | Resultado | |
+|---|---|---|
+| Scan | 0x1E (HMC5883L) e 0x68 (MPU6050) | ✔ |
+| `t` a 100 e 400 kHz, mexendo nos fios | 3 040 e 10 460 leituras, 0 falhas | ✔ |
+| Autoteste do HMC5883L | OK: 122,5 / 115,1 / 117,0 µT (~1 % abaixo de 13/10) | ✔ |
+| Bias do giroscópio | −4,9 / +2,7 / +0,9 °/s, igual ao de antes | ✔ |
+| Eixos do MPU (`l`) | Nivelada az = 1,10 g; nariz para cima ay = 1,00 g; asa direita para baixo ax = −0,98 g | ✔ X asa direita, Y nariz, Z para cima |
+
+**Alinhamento do MPU com a caixa** (comando `m`, logs `261014-185617` e `261014-190319`, offsets da calibração anterior descontados: X +17, Y −2, Z +92 mg):
+
+| Posição | ax | ay | az |
+|---|---|---|---|
+| Nivelada | +0,103 g | +0,040 g | +1,092 g |
+| Nariz para cima | +0,008 g | +1,001 g | +0,083 g |
+| Asa direita para baixo | −0,984 g | −0,030 g | +0,146 g |
+| Nivelada de novo | +0,099 g | +0,042 g | +1,093 g |
+
+- **Roll:** o X sobe 4,9° com a caixa sobre o fundo e o Z sobe 3,1° com ela apoiada na parede da direita. As duas faces indicam um **desalinhamento do módulo de ~4° em roll**; a diferença entre elas é a mesa e o esquadro da caixa.
+- **Pitch:** com o nariz para cima, o Z fica a −0,5°: o módulo está alinhado em pitch, e os ~2,5° do ay nivelado são a mesa.
+- Repetição: as duas medidas niveladas diferem 0,2°.
+- **Aquecimento passageiro:** a temperatura do MPU, de 28,2 °C às 18:56, estava em 34,3–34,6 °C às 19:03, e o bias de gx foi de −4,80 para −5,22 °/s (coerente com ~−0,07 °/s por °C). Ela voltou a ~28 °C sem nenhuma mudança na montagem, com o BME280 ainda ligado: não há fonte de calor permanente na protoboard. A causa provável é externa (mãos segurando a caixa nas posições, objeto morno por perto). Por isso, antes da calibração do giroscópio e das seis posições, convém conferir se a temperatura está estável.
+- **Aceito sem reajuste:** o `z` corrige o desalinhamento (limite de 10°, sobram ~5° para a mesa) e, nas seis posições, o efeito na escala é de 0,25 % (cos 4°). A calibração em seis posições e o `z` precisam ser refeitos nesta montagem.
+
 ## Orientação de montagem do MPU6050
+
+> **Montagem final (14/10/2026): o MPU foi girado 90°.** Eixos confirmados com o `l` e o `m` do diagnóstico (seção "Montagem final na caixa"): **X+ para a asa direita, Y+ para o nariz, Z+ para cima**, ainda um sistema destro. O mapeamento passa a ser x = +Y, y = +X, z = −Z. **O `chipToBody` do firmware ainda usa o mapeamento da montagem 5** (tabela abaixo): a mudança no código, nos nomes das poses das seis posições e no teste está pendente. Até lá, a atitude do firmware de voo sai com os eixos trocados nesta montagem.
 
 Preenchido em 10/10/2026 com a montagem 5, que é a montagem definitiva do modelo de bancada. O mesmo mapeamento se repetiu em todas as montagens testadas.
 
@@ -626,4 +718,16 @@ Requisitos de montagem:
 
 - MPU rigidamente fixo e alinhado aos eixos do modelo, idealmente a 1–2°. Uma fixação que cede deixa o módulo inclinar, como na protoboard, ou se soltar, como antes da montagem 4. Fita dupla-face espessa tem o mesmo problema. O offset de Z depende da fixação, então a calibração em seis posições deve ser refeita sempre que o suporte mudar.
 - Fiação presa e com contato firme: na montagem 4, um mau contato causou falhas de leitura I2C.
-- Magnetômetro longe do powerbank e dos fios de alimentação: a corrente gera campo magnético e distorce a proa. Calibrar o magnetômetro já montado.
+- Magnetômetro longe do powerbank e dos fios de alimentação: a corrente gera campo magnético e distorce a proa. Calibrar o magnetômetro já montado. Medido em 13–14/10: powerbank ligado ≤ 1,6 µT mesmo encostado, ESP32 1,5 µT, cabo USB 3,2 µT. Mais importante que a distância é que **nada se mova em relação ao sensor** (ver "Magnetômetro: mapeamento de eixos e fontes de distorção").
+
+## Orientação de montagem do GY-273 (HMC5883L)
+
+Levantada em 13/10/2026 (seção "Magnetômetro: mapeamento de eixos e fontes de distorção") e mantida na montagem final (14/10): chip para cima, seta X para o nariz.
+
+| Modelo | Chip |
+|---|---|
+| x (nariz) | +X |
+| y (asa direita) | −Y |
+| z (para baixo) | −Z |
+
+No firmware: `magChipToBody` em `lib/mag`. Se a montagem mudar, refaça o teste das 4 proas com o `h` e a calibração do magnetômetro. Um desalinhamento do GY-273 em relação à caixa não tem correção (a calibração de montagem `z` é só do MPU): alinhe-o a 1–2°.

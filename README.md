@@ -114,6 +114,8 @@ No estado atual, o ESP A configura o MPU6050, carrega da NVS a calibração do a
 | `r` | Liga ou desliga o resumo por segundo do driver (taxa, ruído, perdas e falhas de I2C) |
 | `b` | Liga ou desliga o fluxo de altitude (10 Hz): temperatura, pressão, altitude relativa e variação de temperatura desde o zero |
 | `0` | Zera a altitude de novo (média de 2 s com a placa parada) |
+| `m` | Calibração do magnetômetro: girar a caixa em todas as orientações até cobrir os 24 setores; revisão com `s` (gravar na NVS), `x` (descartar) e `d` (pontos em CSV para `tools/mag_fit.py`) |
+| `p` | Liga ou desliga o fluxo de proa (~10 Hz): proa filtrada, proa do magnetômetro, proa sem compensação, \|m\|, inclinação magnética, roll, pitch e estado |
 
 O LED da placa pisca uma vez por segundo. O ESP B só inicializa a serial e pisca o LED.
 
@@ -150,7 +152,7 @@ O diagnóstico faz um scan a 100 kHz e depois aceita comandos de uma letra, sem 
 | `t` | Teste de contato: lê sem pausa por 5 s e conta as falhas (mexa nos fios durante o teste) |
 | `i` | Conta os pulsos do pino INT por 2 s (esperado: 200 Hz) |
 | `b` | Liga ou pausa o fluxo do BME280: temperatura (°C), pressão (hPa), umidade (%) e variação de altura desde a primeira leitura |
-| `h` | Liga ou pausa o fluxo do HMC5883L: campo em X, Y e Z (µT), módulo e ângulo no plano XY, sem calibração |
+| `h` | Medida do HMC5883L: contagem regressiva de 10 s, 10 leituras (campo em X, Y e Z em µT, módulo e ângulo no plano XY, sem calibração) e a média delas; outro `h` cancela |
 | `x` | Autoteste do HMC5883L com o campo interno do chip: polarização positiva e negativa de cada eixo entre 243 e 575 LSB em módulo (faixa do datasheet), OK ou FORA DA FAIXA |
 
 Os valores do MPU são brutos, sem calibração; os do BME280 já vêm compensados com os coeficientes de fábrica do chip, e os do HMC5883L vêm em µT, mas sem calibração. O procedimento de cada teste, os resultados e a orientação dos eixos estão em [docs/hardware.md](docs/hardware.md).
@@ -180,6 +182,7 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 | [docs/hardware.md](docs/hardware.md) | Registro de bancada: endereços, medidas, calibração e orientação |
 | [docs/calibracao.md](docs/calibracao.md) | Estratégia de calibração do MPU6050 |
 | [docs/barometro.md](docs/barometro.md) | BME280: configuração, altitude relativa, zero e roteiro de validação |
+| [docs/magnetometro.md](docs/magnetometro.md) | HMC5883L: mapeamento de eixos, calibração hard/soft iron, proa compensada, filtro da proa e roteiro de validação |
 | [docs/protocolo-websocket.md](docs/protocolo-websocket.md) | Contrato JSON entre o ESP B e os clientes |
 | [firmware/shared/include/telemetry.h](firmware/shared/include/telemetry.h) | Contrato binário ESP-NOW entre o ESP A e o ESP B |
 

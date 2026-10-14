@@ -11,6 +11,7 @@ static const uint8_t REG_CTRL_MEAS = 0xF4;   // osrs_t[7:5], osrs_p[4:2], mode[1
 static const uint8_t REG_CONFIG    = 0xF5;   // t_sb[7:5], filter[4:2]; escrita garantida só em sleep
 
 static const uint8_t CHIP_ID_BME280 = 0x60;
+static const uint8_t CHIP_ID_BMP280 = 0x58;   // mesmos registradores de temperatura e pressão, sem umidade
 static const uint8_t RESET_CMD      = 0xB6;
 static const uint8_t MODE_NORMAL    = 0x03;
 static const uint8_t CONFIG_MASK    = 0xFD;   // bit 1 do config é reservado
@@ -24,9 +25,9 @@ static const uint8_t BURST_LEN = 9;
 const char *bme280StatusText(Bme280Status s) {
     switch (s) {
     case Bme280Status::Ok:           return "ok";
-    case Bme280Status::BadParam:     return "parâmetro de configuração não suportado";
+    case Bme280Status::BadParam:     return "parâmetro de configuração não suportado (pelo chip detectado)";
     case Bme280Status::NoAck:        return "sem resposta no endereço I2C";
-    case Bme280Status::WrongId:      return "chip_id inesperado";
+    case Bme280Status::WrongId:      return "chip_id inesperado (aceitos: 0x60 BME280, 0x58 BMP280)";
     case Bme280Status::ResetTimeout: return "reset não terminou";
     case Bme280Status::BadCalib:     return "coeficientes de fábrica inválidos";
     case Bme280Status::ConfigFail:   return "registrador não confirmado na releitura";
@@ -57,7 +58,9 @@ static bool iirCode(uint8_t coef, uint8_t &code) {
     return false;
 }
 
-static bool standbyCode(uint32_t us, uint8_t &code) {
+// t_sb: os códigos 0 a 5 são iguais nos dois chips; 6 e 7 valem 10 e 20 ms no BME280 (datasheet do
+// BME280, tabela 27) e 2 e 4 s no BMP280 (datasheet do BMP280, tabela 11)
+static bool standbyCode(uint32_t us, bool bmp280, uint8_t &code) {
     switch (us) {
     case 500:     code = 0; return true;
     case 62500:   code = 1; return true;
@@ -65,8 +68,10 @@ static bool standbyCode(uint32_t us, uint8_t &code) {
     case 250000:  code = 3; return true;
     case 500000:  code = 4; return true;
     case 1000000: code = 5; return true;
-    case 10000:   code = 6; return true;
-    case 20000:   code = 7; return true;
+    case 10000:   code = 6; return !bmp280;
+    case 20000:   code = 7; return !bmp280;
+    case 2000000: code = 6; return bmp280;
+    case 4000000: code = 7; return bmp280;
     }
     return false;
 }
@@ -74,13 +79,14 @@ static bool standbyCode(uint32_t us, uint8_t &code) {
 Bme280Status Bme280::begin(const Bme280Config &cfg) {
     cfg_ = cfg;
     configured_ = false;
-    uint8_t t, p, f, sb;
+    uint8_t t, p, sb;
     if (cfg_.wire == nullptr || cfg_.maxFailStreak == 0) return Bme280Status::BadParam;
-    if (!osrsCode(cfg_.osrsT, t) || !osrsCode(cfg_.osrsP, p) || !iirCode(cfg_.iirCoef, f) ||
-        !standbyCode(cfg_.standbyUs, sb))
+    // A espera entre medições só é conferida para o modelo em configure(), depois de ler o chip_id;
+    // aqui basta ela existir em algum dos dois chips
+    if (!osrsCode(cfg_.osrsT, t) || !osrsCode(cfg_.osrsP, p) || !iirCode(cfg_.iirCoef, iirCode_) ||
+        !(standbyCode(cfg_.standbyUs, false, sb) || standbyCode(cfg_.standbyUs, true, sb)))
         return Bme280Status::BadParam;
     ctrlMeas_ = (uint8_t)((t << 5) | (p << 2) | MODE_NORMAL);
-    config_ = (uint8_t)((sb << 5) | (f << 2));
     // Tolerância ao "não medido" logo após configurar: duas medições no tempo máximo do datasheet
     // (apêndice B: 1,25 + 2,3·osrs_t + 2,3·osrs_p + 0,575 ms, umidade desligada) mais a espera entre elas
     const float measMaxMs = 1.25f + 2.3f * cfg_.osrsT + 2.3f * cfg_.osrsP + 0.575f;
@@ -99,7 +105,10 @@ Bme280Status Bme280::reconfigure() {
 
 Bme280Status Bme280::configure() {
     if (!readRegs(REG_CHIP_ID, &chipId_, 1)) return Bme280Status::NoAck;
-    if (chipId_ != CHIP_ID_BME280) return Bme280Status::WrongId;
+    if (chipId_ != CHIP_ID_BME280 && chipId_ != CHIP_ID_BMP280) return Bme280Status::WrongId;
+    uint8_t sb;
+    if (!standbyCode(cfg_.standbyUs, chipId_ == CHIP_ID_BMP280, sb)) return Bme280Status::BadParam;
+    config_ = (uint8_t)((sb << 5) | (iirCode_ << 2));
 
     // Reset completo: tudo volta ao padrão (sleep, filtro desligado) e o chip é configurado do zero.
     // Em sleep a escrita do config é garantida; em modo normal ela pode ser ignorada.
@@ -116,8 +125,10 @@ Bme280Status Bme280::configure() {
     if (!readRegs(REG_CALIB_TP, raw, sizeof(raw))) return Bme280Status::NoAck;
     if (!bme280ParseCalib(raw, calib_)) return Bme280Status::BadCalib;
 
-    // ctrl_hum = 0: umidade desligada (só vale depois da escrita do ctrl_meas)
-    if (!writeReg(REG_CTRL_HUM, 0x00) || !writeReg(REG_CONFIG, config_) || !writeReg(REG_CTRL_MEAS, ctrlMeas_))
+    // BME280: ctrl_hum = 0, umidade desligada (só vale depois da escrita do ctrl_meas).
+    // O BMP280 não tem o registrador 0xF2: a escrita é pulada.
+    if ((chipId_ == CHIP_ID_BME280 && !writeReg(REG_CTRL_HUM, 0x00)) || !writeReg(REG_CONFIG, config_) ||
+        !writeReg(REG_CTRL_MEAS, ctrlMeas_))
         return Bme280Status::ConfigFail;
     uint8_t back[2];
     if (!readRegs(REG_CTRL_MEAS, back, 2)) return Bme280Status::NoAck;
@@ -126,6 +137,10 @@ Bme280Status Bme280::configure() {
 }
 
 // failStreak_ só é zerado com uma amostra válida: reconfigurar não basta para ok() voltar
+const char *Bme280::model() const {
+    return chipId_ == CHIP_ID_BME280 ? "BME280" : (chipId_ == CHIP_ID_BMP280 ? "BMP280" : "BME280/BMP280");
+}
+
 bool Bme280::read(BaroSample &out) {
     if (!configured_) {
         // Configuração anterior incompleta (ex.: falha só na releitura final): tenta de novo.

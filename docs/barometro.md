@@ -5,6 +5,8 @@ Estratégia da leitura do BME280 e da altitude relativa no ESP A. Os valores fic
 ## Cadeia de processamento
 
 1. **Driver (`lib/bme280`):** acesso direto aos registradores, sem biblioteca externa.
+   - **Aceita o BME280 (chip_id 0x60) e o BMP280 (0x58)** desde 14/10/2026. Os dois têm os mesmos coeficientes de temperatura e pressão (0x88), reset, status e rajada a partir de 0xF4. O BMP280 não tem umidade nem o registrador `ctrl_hum` (0xF2), cuja escrita é pulada. Os códigos 110 e 111 da espera entre medições (`t_sb`) também mudam: 10 e 20 ms no BME280, 2 e 4 s no BMP280 (tabela 11 do datasheet do BMP280). O driver confere o `BARO_STANDBY_US` contra o modelo detectado e devolve `BadParam` se ele não existir naquele chip. O valor em uso, 0,5 ms, é igual nos dois. A serial mostra o modelo detectado. O BME280 da bancada foi danificado num curto em 14/10, e o substituto é um BMP280 ([hardware.md](hardware.md), "Montagem final na caixa"). O diagnóstico (`b` do `i2cscan`) também aceita o BMP280 e mostra a umidade como `--`.
+   - **Ligação:** CSB e SDO soltos (os resistores do módulo fixam o modo I2C e o endereço 0x76).
    - **No `begin()`:** soft reset, cópia dos coeficientes de fábrica e configuração, conferida na releitura.
    - **A cada leitura:** uma rajada de 9 bytes a partir de `ctrl_meas` (0xF4). Ela traz a configuração e os dados brutos de pressão e temperatura na mesma transação.
    - **Saída:** °C e hPa.

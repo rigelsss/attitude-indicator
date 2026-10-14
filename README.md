@@ -151,7 +151,7 @@ O diagnóstico faz um scan a 100 kHz e depois aceita comandos de uma letra, sem 
 | `f` | Alterna o I2C entre 100 e 400 kHz |
 | `t` | Teste de contato: lê sem pausa por 5 s e conta as falhas (mexa nos fios durante o teste) |
 | `i` | Conta os pulsos do pino INT por 2 s (esperado: 200 Hz) |
-| `b` | Liga ou pausa o fluxo do BME280: temperatura (°C), pressão (hPa), umidade (%) e variação de altura desde a primeira leitura |
+| `b` | Liga ou pausa o fluxo do BME280 ou do BMP280: temperatura (°C), pressão (hPa), umidade (%; `--` no BMP280) e variação de altura desde a primeira leitura |
 | `h` | Medida do HMC5883L: contagem regressiva de 10 s, 10 leituras (campo em X, Y e Z em µT, módulo e ângulo no plano XY, sem calibração) e a média delas; outro `h` cancela |
 | `x` | Autoteste do HMC5883L com o campo interno do chip: polarização positiva e negativa de cada eixo entre 243 e 575 LSB em módulo (faixa do datasheet), OK ou FORA DA FAIXA |
 

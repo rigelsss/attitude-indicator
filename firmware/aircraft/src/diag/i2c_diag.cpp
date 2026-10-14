@@ -9,7 +9,8 @@
 //      t  teste de contato: lê o mais rápido possível por DIAG_STRESS_MS e conta falhas
 //      i  teste do pino INT: conta pulsos de "data ready" por DIAG_INT_TEST_MS
 // 4) Se o BME280 responder, aceita também:
-//      b  liga/desliga o fluxo de temperatura, pressão e umidade a DIAG_PRINT_HZ (começa desligado)
+//      b  liga/desliga o fluxo de temperatura, pressão e umidade a DIAG_PRINT_HZ (começa desligado);
+//         o BMP280 (chip_id 0x58) não tem umidade
 // 5) Se o HMC5883L responder, aceita também:
 //      h  medida do campo magnético: contagem de DIAG_HMC_DELAY_S s, DIAG_HMC_LINES linhas a DIAG_PRINT_HZ
 //         e a média delas; outro h cancela
@@ -68,6 +69,7 @@ enum StreamMode { STREAM_OFF, STREAM_MPU, STREAM_BME };
 
 static bool g_mpuOk = false;
 static bool g_bmeOk = false;
+static bool g_bmeIsBmp = false;                   // BMP280: sem umidade (0xF2, 0xE1.. e 0xFD.. ausentes)
 static bool g_hmcOk = false;
 static BmeCalib g_bmeCal;
 static float g_bmeRefHpa = NAN;                   // pressão da primeira leitura do fluxo: referência do Δh
@@ -138,8 +140,9 @@ static void identify(uint8_t addr) {
 // O soft reset devolve todos os registradores ao padrão (sleep, filtro IIR desligado): reiniciar o ESP
 // não reinicia o BME280, e uma configuração antiga mudaria o ruído e a resposta das medidas.
 static bool bmeInit() {
-    uint8_t id, st, c[26], e[7];
-    if (!readRegs(ADDR_BME280, BME_REG_CHIP_ID, &id, 1) || id != 0x60) return false;
+    uint8_t id, st, c[26], e[7] = {0};
+    if (!readRegs(ADDR_BME280, BME_REG_CHIP_ID, &id, 1) || (id != 0x60 && id != 0x58)) return false;
+    g_bmeIsBmp = (id == 0x58);
     if (!writeReg(ADDR_BME280, BME_REG_RESET, BME_RESET_CMD)) return false;
     delay(DIAG_BME_RESET_WAIT_MS);
     uint32_t t0 = millis();
@@ -148,7 +151,7 @@ static bool bmeInit() {
         if (millis() - t0 > DIAG_BME_TIMEOUT_MS) return false;
     } while (st & 0x01);
     if (!readRegs(ADDR_BME280, BME_REG_CALIB_TP, c, sizeof(c))) return false;
-    if (!readRegs(ADDR_BME280, BME_REG_CALIB_H, e, sizeof(e))) return false;
+    if (!g_bmeIsBmp && !readRegs(ADDR_BME280, BME_REG_CALIB_H, e, sizeof(e))) return false;
     auto u16 = [&](int i) { return (uint16_t)(c[i] | (c[i + 1] << 8)); };
     BmeCalib &k = g_bmeCal;
     k.T1 = u16(0);           k.T2 = (int16_t)u16(2);  k.T3 = (int16_t)u16(4);
@@ -165,9 +168,9 @@ static bool bmeInit() {
 }
 
 // Uma medição forçada, compensada com as fórmulas em ponto flutuante do datasheet (seção 8.1).
-// Saída em unidades físicas: °C, hPa e % de umidade relativa.
+// Saída em unidades físicas: °C, hPa e % de umidade relativa (NAN no BMP280, que não mede umidade).
 static bool bmeRead(float &tempC, float &pressHpa, float &humPct) {
-    if (!writeReg(ADDR_BME280, BME_REG_CTRL_HUM, BME_CTRL_HUM_X1) ||
+    if ((!g_bmeIsBmp && !writeReg(ADDR_BME280, BME_REG_CTRL_HUM, BME_CTRL_HUM_X1)) ||
         !writeReg(ADDR_BME280, BME_REG_CTRL_MEAS, BME_CTRL_MEAS_X1))
         return false;
     delay(DIAG_BME_WAIT_MS);
@@ -179,10 +182,11 @@ static bool bmeRead(float &tempC, float &pressHpa, float &humPct) {
     } while (st & 0x08);
 
     uint8_t d[8];
-    if (!readRegs(ADDR_BME280, BME_REG_DATA, d, sizeof(d))) return false;
+    const uint8_t n = g_bmeIsBmp ? 6 : 8;   // o BMP280 termina em 0xFC, sem os 2 bytes de umidade
+    if (!readRegs(ADDR_BME280, BME_REG_DATA, d, n)) return false;
     int32_t adcP = ((int32_t)d[0] << 12) | (d[1] << 4) | (d[2] >> 4);
     int32_t adcT = ((int32_t)d[3] << 12) | (d[4] << 4) | (d[5] >> 4);
-    int32_t adcH = (d[6] << 8) | d[7];
+    int32_t adcH = g_bmeIsBmp ? 0 : (d[6] << 8) | d[7];
     if (adcT == 0x80000 || adcP == 0x80000 || adcH == 0x8000) return false;   // valores de "não medido"
 
     const BmeCalib &k = g_bmeCal;
@@ -205,6 +209,10 @@ static bool bmeRead(float &tempC, float &pressHpa, float &humPct) {
     p = p + (v1 + v2 + k.P7) / 16.0;                // Pa
     pressHpa = p / 100.0;
 
+    if (g_bmeIsBmp) {
+        humPct = NAN;
+        return true;
+    }
     double h = tFine - 76800.0;
     h = (adcH - (k.H4 * 64.0 + k.H5 / 16384.0 * h)) *
         (k.H2 / 65536.0 * (1.0 + k.H6 / 67108864.0 * h * (1.0 + k.H3 / 67108864.0 * h)));
@@ -328,8 +336,9 @@ static void scan() {
     }
 
     g_bmeOk = bmeInit();
-    if (g_bmeOk) Serial.println("[diag] BME280: b = temperatura, pressão e umidade");
-    else Serial.println("[diag] BME280 indisponível: sem medidas (s = novo scan)");
+    if (g_bmeOk) Serial.println(g_bmeIsBmp ? "[diag] BMP280: b = temperatura e pressão (sem umidade)"
+                                           : "[diag] BME280: b = temperatura, pressão e umidade");
+    else Serial.println("[diag] BME280/BMP280 indisponível: sem medidas (s = novo scan)");
 
     g_hmcOk = hmcInit();
     if (g_hmcOk) Serial.println("[diag] HMC5883L: h = campo magnético | x = autoteste");
@@ -540,12 +549,14 @@ void loop() {
     if (g_stream == STREAM_BME) {
         float t, p, h;
         if (!bmeRead(t, p, h)) {
-            Serial.println("[diag] falha de leitura do BME280");
+            Serial.println("[diag] falha de leitura do barômetro");
         } else {
             if (isnan(g_bmeRefHpa)) g_bmeRefHpa = p;
             // Δh pela fórmula barométrica padrão; perto do solo, 1 hPa ≈ 8,4 m
             float dh = 44330.0f * (1.0f - powf(p / g_bmeRefHpa, 0.1903f));
-            Serial.printf("%6.2f | %8.2f | %5.1f | %+6.1f | %+6.2f\n", t, p, h, (p - g_bmeRefHpa) * 100.0f, dh);
+            char hs[8] = "  -- ";   // BMP280: sem umidade
+            if (!isnan(h)) snprintf(hs, sizeof(hs), "%5.1f", h);
+            Serial.printf("%6.2f | %8.2f | %s | %+6.1f | %+6.2f\n", t, p, hs, (p - g_bmeRefHpa) * 100.0f, dh);
         }
         delay(1000 / DIAG_PRINT_HZ);
         return;

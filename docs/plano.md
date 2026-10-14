@@ -17,7 +17,9 @@ Cada etapa termina com algo **demonstrável**. Tópico da disciplina entre colch
   - **atitude inicializada:** o filtro ainda espera a média inicial, ou reiniciou por uma lacuna;
   - **atitude degradada:** giroscópio saturado, recuperando a correção;
   - **altitude com zero válido:** sem p₀, a altitude não tem referência;
-  - **dados antigos:** a última amostra válida tem mais de N ms, como na perda de pulsos do INT ou numa falha do BME280.
+  - **dados antigos:** a última amostra válida tem mais de N ms, como na perda de pulsos do INT ou numa falha do BME280;
+  - **proa inicializada:** o filtro da proa já partiu de uma proa válida do magnetômetro. Ele recomeça quando a atitude reinicia, numa lacuna de amostras e depois de uma calibração (docs/magnetometro.md, D6);
+  - **correção da proa suspensa:** a proa segue só pelo giroscópio, por distúrbio magnético, inclinação alta ou atitude degradada. O `ST_MAG_CAL` diz só que existe uma calibração, não que a proa vale agora.
 
   O B usa essas flags para mostrar o dado como indisponível (horizonte riscado, altitude "---"), em vez de congelar o último valor. Isso muda o contrato: atualizar os dois firmwares, incrementar `TELEMETRY_VERSION` e espelhar no `docs/protocolo-websocket.md`.
 - **Alinhamento do contrato** (junto com as flags, para a versão subir uma vez só). O `MsgHeader` tem 5 bytes, então `t_ms` e todos os floats ficam em offsets ímpares. Acessar o campo direto pelo struct funciona, mas um ponteiro `float *p = &pkt.roll` causa `LoadStoreAlignment` no Xtensa. Correção: cabeçalho de 8 bytes, com bytes de reserva. No B, o callback do ESP-NOW copia o `data` com `memcpy` para uma struct local antes de enfileirar, e nunca faz cast do ponteiro: o buffer recebido não tem alinhamento garantido.

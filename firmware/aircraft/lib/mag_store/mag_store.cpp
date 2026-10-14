@@ -1,12 +1,12 @@
 // mag_store.cpp — leitura e gravação da calibração do magnetômetro na NVS. Um registro completo
-// (versão, ganho e coeficientes) numa única chave: a NVS grava cada chave de forma atômica.
+// (versão, ganho, mapeamento de eixos e coeficientes) numa única chave: a NVS grava cada chave de forma atômica.
 #include "mag_store.h"
 #include <Preferences.h>
 #include <math.h>
 
 static const char *NAMESPACE = "mag_cal";
 static const char *KEY = "calRec";
-static const uint8_t FORMAT_VERSION = 1;
+static const uint8_t FORMAT_VERSION = 2;   // 1: sem o mapeamento de eixos (descontinuado)
 static const float OFFSET_MAX_UT = 1000.0f;   // acima disto, registro corrompido (faixa máxima do chip: 810 µT)
 static const float RADIUS_MAX_UT = 1000.0f;
 
@@ -14,7 +14,7 @@ struct CalRecord {
     uint8_t version;
     uint8_t crb;        // ganho do chip na calibração
     uint8_t sectors;
-    uint8_t reserved;
+    uint8_t axisMap;    // MAG_AXIS_MAP_ID da calibração
     Vec3    offset;
     Mat3    w;
     float   radiusUt;
@@ -46,7 +46,14 @@ void magStoreLoad(MagCalData &out, uint8_t currentCrb) {
         out.rejected = true;
         return;
     }
-    if (rec.crb != currentCrb) return;   // outro ganho: offset e raio não valem
+    if (rec.axisMap != MAG_AXIS_MAP_ID) {   // eixos do modelo diferentes: offset e W não valem
+        out.otherAxisMap = true;
+        return;
+    }
+    if (rec.crb != currentCrb) {   // outro ganho: offset e raio não valem
+        out.otherGain = true;
+        return;
+    }
     out.valid = true;
     out.cal.offset = rec.offset;
     out.cal.w = rec.w;
@@ -56,7 +63,7 @@ void magStoreLoad(MagCalData &out, uint8_t currentCrb) {
 }
 
 bool magStoreSave(const MagCal &cal, float residPct, uint8_t sectors, uint8_t crb) {
-    const CalRecord rec = {FORMAT_VERSION, crb, sectors, 0, cal.offset, cal.w, cal.radiusUt, residPct};
+    const CalRecord rec = {FORMAT_VERSION, crb, sectors, MAG_AXIS_MAP_ID, cal.offset, cal.w, cal.radiusUt, residPct};
     if (!plausible(rec)) return false;
     Preferences p;
     if (!p.begin(NAMESPACE, false)) return false;

@@ -312,8 +312,9 @@ void HeadingFilter::predict(const Vec3 &gyroBodyDps, float rollDeg, float pitchD
 }
 
 HeadingFilter::Mag HeadingFilter::correct(float magHeadingDeg, float normUt, float refRadiusUt, float pitchDeg,
-                                          float dtS) {
+                                          float dtS, bool attitudeDegraded) {
     if (!isfinite(magHeadingDeg) || !isfinite(normUt) || !isfinite(pitchDeg)) return Mag::BadData;
+    if (attitudeDegraded) return Mag::AttitudeDegraded;
     if (fabsf(pitchDeg) > p_.maxPitchDeg) return Mag::Tilted;
     if (magDisturbed(normUt, refRadiusUt, p_.disturbPct)) return Mag::Disturbed;
     if (!init_) {

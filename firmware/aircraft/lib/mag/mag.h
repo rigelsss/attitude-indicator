@@ -40,6 +40,9 @@ Vec3 hmcCountsToUt(const int16_t counts[3], float lsbPerGa);
 // Eixos do chip do GY-273 (X nariz, Y asa esquerda, Z para cima) → eixos do modelo: x = X, y = −Y, z = −Z.
 // Levantado na bancada (hardware.md, mapeamento de eixos do GY-273).
 Vec3 magChipToBody(const Vec3 &chip);
+// Identificador do mapeamento acima, gravado com a calibração (lib/mag_store): a calibração fica nos
+// eixos do modelo e só vale para o mapeamento com que foi feita. Mude este número junto com magChipToBody.
+static const uint8_t MAG_AXIS_MAP_ID = 1;   // 1: GY-273 com X para o nariz, chip para cima (13/10/2026)
 
 // ---------- Calibração: hard iron e soft iron ----------
 
@@ -151,6 +154,7 @@ public:
         Corrected,
         Tilted,        // |pitch| acima do limite: correção suspensa
         Disturbed,     // |m| fora do raio da calibração: correção suspensa
+        AttitudeDegraded,   // atitude degradada (giroscópio saturou): roll e pitch não confiáveis, correção suspensa
         BadData,       // valor não finito: ignorado
     };
 
@@ -160,8 +164,11 @@ public:
     // Taxa de guinada no referencial da Terra: ψ̇ = (q·sinφ + r·cosφ)/cosθ, com gyroBodyDps nos eixos
     // do modelo. dt acima de maxDtS (ou não finito) reinicia o filtro; dt ≤ 0 é ignorado.
     void predict(const Vec3 &gyroBodyDps, float rollDeg, float pitchDeg, float dtS);
-    // dtS: intervalo desde a leitura anterior do magnetômetro (limitado a maxDtS no ganho)
-    Mag correct(float magHeadingDeg, float normUt, float refRadiusUt, float pitchDeg, float dtS);
+    // dtS: intervalo desde a leitura anterior do magnetômetro (limitado a maxDtS no ganho).
+    // attitudeDegraded: a fusão marcou a atitude como degradada (AttitudeFilter::degraded()); a proa
+    // compensada usa roll e pitch, então a correção fica suspensa, e o giroscópio mantém a proa.
+    Mag correct(float magHeadingDeg, float normUt, float refRadiusUt, float pitchDeg, float dtS,
+                bool attitudeDegraded = false);
 
     bool  initialized() const { return init_; }
     float headingDeg() const { return psi_; }

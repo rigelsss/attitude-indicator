@@ -363,6 +363,21 @@ static void test_heading_suspensions_keep_gyro() {
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 102.0f, f.headingDeg());
 }
 
+static void test_heading_suspended_with_degraded_attitude() {
+    HeadingFilter f(HP);
+    // Sem referência e com a atitude degradada: não inicializa por uma proa compensada com roll/pitch errados
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::AttitudeDegraded, f.correct(40, 26, 26, 0, 0.04f, true));
+    TEST_ASSERT_FALSE(f.initialized());
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Initialized, f.correct(40, 26, 26, 0, 0.04f, false));
+    // Degradada: o magnetômetro diz 90°, a correção fica suspensa e o giroscópio continua valendo
+    for (int i = 0; i < 50; i++) TEST_ASSERT_EQUAL(HeadingFilter::Mag::AttitudeDegraded, f.correct(90, 26, 26, 0, 0.04f, true));
+    f.predict({0, 0, 10}, 0, 0, 0.1f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 41.0f, f.headingDeg());
+    // Atitude recuperada: a correção volta
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Corrected, f.correct(90, 26, 26, 0, 0.04f, false));
+    TEST_ASSERT_TRUE(f.headingDeg() > 41.0f);
+}
+
 static void test_heading_gap_resets() {
     HeadingFilter f(HP);
     f.correct(100, 26, 26, 0, 0.04f);
@@ -398,6 +413,7 @@ int main(int, char **) {
     RUN_TEST(test_heading_gyro_follows_rotation);
     RUN_TEST(test_heading_short_path);
     RUN_TEST(test_heading_suspensions_keep_gyro);
+    RUN_TEST(test_heading_suspended_with_degraded_attitude);
     RUN_TEST(test_heading_gap_resets);
     return UNITY_END();
 }

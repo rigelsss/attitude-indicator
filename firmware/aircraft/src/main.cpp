@@ -260,7 +260,7 @@ static void startBaro() {
     const Bme280Status st = g_baro.begin(cfg);
     if (st != Bme280Status::Ok) {
         if (st != g_baroLastStatus)
-            Serial.printf("[baro] BME280: %s (chip_id=0x%02X); sem altitude, nova tentativa a cada %d s\n",
+            Serial.printf("[baro] BME280/BMP280: %s (chip_id=0x%02X); sem altitude, nova tentativa a cada %d s\n",
                           bme280StatusText(st), g_baro.chipId(), BARO_RETRY_MS / 1000);
         g_baroLastStatus = st;
         g_baroRetryMs = millis() + BARO_RETRY_MS;
@@ -270,8 +270,8 @@ static void startBaro() {
     g_baroReady = true;
     g_baroLastRecoveries = g_baro.recoveries();
     g_baroNextUs = micros();
-    Serial.printf("[baro] BME280 configurado: pressão x%d, temperatura x%d, IIR %d, modo normal\n", BARO_OSRS_P,
-                  BARO_OSRS_T, BARO_IIR_COEF);
+    Serial.printf("[baro] %s configurado (chip_id=0x%02X): pressão x%d, temperatura x%d, IIR %d, modo normal\n",
+                  g_baro.model(), g_baro.chipId(), BARO_OSRS_P, BARO_OSRS_T, BARO_IIR_COEF);
     baroZeroStart(true);
 }
 
@@ -286,7 +286,7 @@ static void printBaroLine(const BaroSample &b) {
 // Uma linha no resumo por segundo (r) e no estado (c)
 static void printBaroSummary() {
     if (!g_baroReady) {
-        Serial.printf("    baro: BME280 indisponível (%s)\n", bme280StatusText(g_baroLastStatus));
+        Serial.printf("    baro: barômetro indisponível (%s)\n", bme280StatusText(g_baroLastStatus));
         return;
     }
     Serial.printf("    baro: %s | ", g_baro.ok() ? "ok" : "FALHANDO");
@@ -318,7 +318,7 @@ static void baroService(uint32_t nowUs) {
     if ((int32_t)(nowUs - g_baroNextUs) >= 0) g_baroNextUs = nowUs + period;   // atrasou: ressincroniza
     if (g_baro.recoveries() != g_baroLastRecoveries) {
         g_baroLastRecoveries = g_baro.recoveries();
-        Serial.printf("[baro] BME280 perdeu a configuração (queda de alimentação?): %s\n",
+        Serial.printf("[baro] %s perdeu a configuração (queda de alimentação?): %s\n", g_baro.model(),
                       g_baro.configured() ? "reconfigurado; o filtro do chip recomeçou"
                                           : "reconfiguração falhou, nova tentativa a cada leitura");
         if (g_bzState != BaroZeroState::Off) baroZeroStart(true);
@@ -374,6 +374,7 @@ static const char *magStateText() {
     switch (g_magStep) {
     case HeadingFilter::Mag::Disturbed: return "DISTURBIO";
     case HeadingFilter::Mag::Tilted:    return "INCL_ALTA";
+    case HeadingFilter::Mag::AttitudeDegraded: return "ATITUDE_DEGRADADA";
     case HeadingFilter::Mag::BadData:   return "DADO_INVALIDO";
     default:                            return "ok";
     }
@@ -551,18 +552,21 @@ static void magService(uint32_t nowUs) {
     if (g_att.initialized()) {
         g_magTilt = magTiltCompensate(g_magCorr, g_att.rollDeg(), g_att.pitchDeg());
         g_magHaveTilt = true;
-        g_magStep = g_hdg.correct(g_magTilt.headingDeg, norm(g_magCorr), g_magCal.cal.radiusUt, g_att.pitchDeg(), dt);
-        const bool disturbed = g_magStep == HeadingFilter::Mag::Disturbed;
-        if (disturbed != g_magDisturbWarned) {
-            g_magDisturbWarned = disturbed;
-            if (disturbed)
-                Serial.printf("[mag] DISTÚRBIO: |m| %.1f µT, raio da calibração %.1f µT (limite %.0f %%): correção "
-                              "pelo magnetômetro suspensa\n", norm(g_magCorr), g_magCal.cal.radiusUt, MAG_DISTURB_PCT);
-            else
-                Serial.println("[mag] distúrbio terminou: correção retomada");
-        }
+        g_magStep = g_hdg.correct(g_magTilt.headingDeg, norm(g_magCorr), g_magCal.cal.radiusUt, g_att.pitchDeg(), dt,
+                                  g_att.degraded());
     } else {
         g_magHaveTilt = false;
+    }
+    // Aviso de distúrbio pelo próprio |m|, e não pelo resultado de correct(): com outra suspensão ativa
+    // (atitude degradada, inclinação alta), correct() devolve outro estado mesmo com o campo fora do limite
+    const bool disturbed = magDisturbed(norm(g_magCorr), g_magCal.cal.radiusUt, MAG_DISTURB_PCT);
+    if (disturbed != g_magDisturbWarned) {
+        g_magDisturbWarned = disturbed;
+        if (disturbed)
+            Serial.printf("[mag] DISTÚRBIO: |m| %.1f µT, raio da calibração %.1f µT (limite %.0f %%): correção "
+                          "pelo magnetômetro suspensa\n", norm(g_magCorr), g_magCal.cal.radiusUt, MAG_DISTURB_PCT);
+        else
+            Serial.printf("[mag] distúrbio terminou: |m| %.1f µT de volta ao raio da calibração\n", norm(g_magCorr));
     }
     if (g_psOn && (int32_t)(nowUs - g_psNextUs) >= 0) {
         g_psNextUs += MAG_PRINT_US;
@@ -1265,7 +1269,7 @@ static void handleSerial() {
                           "inclinação | roll pitch | estado\n", g_psOn ? "ligado" : "desligado", MAG_PRINT_HZ);
             break;
         case '0':
-            if (!g_baroReady) Serial.println("[baro] BME280 indisponível: sem altitude");
+            if (!g_baroReady) Serial.println("[baro] barômetro indisponível: sem altitude");
             else if (g_bzState == BaroZeroState::Settling) Serial.println("[baro] zero já em andamento");
             else baroZeroStart(false);
             break;
@@ -1319,6 +1323,10 @@ void setup() {
     float magLsb;
     if (hmcCrbCode(MAG_RANGE_MGA, magCrb, magLsb)) magStoreLoad(g_magCal, magCrb);
     if (g_magCal.rejected) Serial.println("[A] NVS: calibração do magnetômetro com valores impossíveis, ignorada");
+    if (g_magCal.otherAxisMap)
+        Serial.println("[A] NVS: calibração do magnetômetro feita com outro mapeamento de eixos, ignorada. Refaça com m");
+    if (g_magCal.otherGain)
+        Serial.println("[A] NVS: calibração do magnetômetro feita com outro ganho, ignorada. Refaça com m");
     Serial.printf("[A] NVS: acelerômetro %s | giroscópio %s | montagem %s | magnetômetro %s\n",
                   g_cal.accelValid ? "calibrado" : "sem calibração", g_cal.gyroValid ? "com bias salvo" : "sem bias salvo",
                   g_level.valid ? "calibrada" : "sem calibração",

@@ -1,6 +1,6 @@
 # Magnetômetro: proa com compensação de inclinação
 
-> **Status (14/10/2026): implementado, falta a bancada.** Estratégia aprovada em 13/10 (D1–D8). O código compila (`aircraft` e `i2cscan`) e passa nos testes `native` (22 casos do magnetômetro, 93 no total). O mapeamento de eixos do GY-273 foi confirmado na bancada. Os resultados da bancada entram aqui e no [hardware.md](hardware.md).
+> **Status (14/10/2026): implementado, falta a bancada.** Estratégia aprovada em 13/10 (D1–D8). O código compila (`aircraft` e `i2cscan`) e passa nos testes `native` (23 casos do magnetômetro, 94 no total). O mapeamento de eixos do GY-273 foi confirmado na bancada. Os resultados da bancada entram aqui e no [hardware.md](hardware.md).
 
 Último item da etapa 2 do [plano.md](plano.md): "magnetômetro com compensação de inclinação (proa)". O GY-273 (HMC5883L legítimo, ID "H43") já foi validado no diagnóstico: autoteste OK nos três eixos e ruído de ~1 LSB (ver [hardware.md](hardware.md), "HMC5883L no diagnóstico").
 
@@ -176,7 +176,7 @@ Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar c
 
 **Revisão:**
 - O firmware mostra o offset (µT), as escalas, o raio, o resíduo e a cobertura.
-- `s` grava na NVS: namespace `mag_cal`, com versão, ganho, offset b e matriz W.
+- `s` grava na NVS: namespace `mag_cal`, com versão, ganho, **mapeamento de eixos** (`MAG_AXIS_MAP_ID`, ao lado de `magChipToBody` em `lib/mag`), offset b e matriz W. Uma calibração feita com outro mapeamento ou com outro ganho é ignorada no boot, com aviso. Se a orientação do GY-273 mudar, `magChipToBody` e `MAG_AXIS_MAP_ID` mudam juntos.
 - `x` descarta e mantém a calibração anterior.
 - `d` imprime os pontos em CSV para o `tools/mag_fit.py`, entre as linhas `# mag_cal inicio` e `# mag_cal fim`, com o ajuste do firmware numa linha `# firmware`. A revisão continua aberta depois disso. A impressão bloqueia o laço por ~5 s (2 250 linhas a 115200), e a atitude recomeça depois.
 - **Calibração recusada:** a revisão também abre, com o motivo e os valores, mas o `s` não grava. Só `d` (para analisar a coleta no `mag_fit.py`) e `x`.
@@ -190,7 +190,8 @@ Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar c
 - **Inicialização:** com a primeira proa válida do magnetômetro, sem esperar convergir.
 - **Suspensão da correção,** com o giroscópio mantendo a proa sozinho:
   - |pitch| > `MAG_MAX_PITCH_DEG` (70°, faixa validada da fusão), porque a proa fica mal definida perto de ±90°;
-  - \|m\| corrigido afastado do raio da calibração por mais de `MAG_DISTURB_PCT` (15 %), o distúrbio. A serial sinaliza.
+  - \|m\| corrigido afastado do raio da calibração por mais de `MAG_DISTURB_PCT` (15 %), o distúrbio. A serial sinaliza;
+  - **atitude degradada** (o giroscópio saturou, `AttitudeFilter::degraded()`): roll e pitch podem estar errados por alguns segundos, e a compensação de inclinação passaria o erro para a proa.
 - **Deriva sem correção:** com o bias do giroscópio calibrado no boot (incerteza de ~0,006 °/s), um minuto inteiro deriva menos de 1°.
 - **Reinício:** a proa recomeça da primeira proa válida do magnetômetro quando a atitude reinicia (ou ainda não foi inicializada), numa lacuna de mais de `MAG_MAX_DT_MS` (200 ms) entre amostras do MPU e depois de uma calibração gravada.
 - Se o filtro não se comportar bem na bancada, a abordagem é revista.
@@ -211,9 +212,9 @@ Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar c
 - \|m\| corrigido;
 - inclinação magnética medida (esperado: ~−32°);
 - roll e pitch;
-- estado: `ok`, `DISTURBIO`, `INCL_ALTA`, `SEM_ATITUDE` (fusão ainda sem referência), mais `SEM_CAL` sem calibração na NVS.
+- estado: `ok`, `DISTURBIO`, `INCL_ALTA`, `ATITUDE_DEGRADADA`, `SEM_ATITUDE` (fusão ainda sem referência), mais `SEM_CAL` sem calibração na NVS.
 
-A linha sai a ~10 Hz em média, alinhada às leituras de 25 Hz (intervalos de 80 e 120 ms). Ao entrar e sair de um distúrbio, a serial imprime uma linha `[mag] DISTÚRBIO: ...` e `[mag] distúrbio terminou`.
+A linha sai a ~10 Hz em média, alinhada às leituras de 25 Hz (intervalos de 80 e 120 ms). Ao entrar e sair de um distúrbio, a serial imprime uma linha `[mag] DISTÚRBIO: ...` e `[mag] distúrbio terminou`. O aviso é calculado pelo próprio \|m\| em relação ao raio da calibração, e não pelo estado da correção: com outra suspensão ativa (atitude degradada, inclinação alta), o estado mostra essa outra causa, mas o aviso de distúrbio continua correto.
 
 **Linhas novas no `c` e no `r`:**
 - `c`: calibração (offset, W, raio, resíduo e setores, ou "NÃO calibrado"), configuração (ganho, taxa, média e leitura) e a linha do `r`;
@@ -245,7 +246,7 @@ O `printHelp()` passa a listar `m` e `p`.
    - degrau de proa converge com τ;
    - giro só pelo giroscópio acompanha;
    - caminho curto de 359° para 1°;
-   - distúrbio e pitch > 70° suspendem a correção;
+   - distúrbio, pitch > 70° e atitude degradada suspendem a correção;
    - inicialização com a primeira proa válida.
 
 **Conferência fora do firmware:** `firmware/aircraft/tools/mag_fit.py` (usa só `numpy`) lê o CSV da tecla `d`, salvo em `firmware/aircraft/logs`, e ajusta elipsoides de 6 e de 9 parâmetros. O script mostra duas coisas:
@@ -330,7 +331,7 @@ Gravar: `pio run -e aircraft -t upload`. Monitor, salvando o log: `pio device mo
 | `lib/hmc5883l/` | Driver |
 | `lib/mag/` | Lógica pura: decodificação, mapeamento, ajuste, cobertura, proa e filtro |
 | `lib/mag_store/` | Calibração na NVS (namespace `mag_cal`) |
-| `test/test_mag/` | Testes `native` (22 casos) |
+| `test/test_mag/` | Testes `native` (23 casos) |
 | `tools/mag_fit.py` | Conferência do ajuste com o CSV da tecla `d`. Uso, a partir de `firmware/aircraft`: `python tools/mag_fit.py` (último log em `logs/`) ou `python tools/mag_fit.py logs/arquivo.log` |
 | `src/main.cpp` | Integração, comandos `m` e `p`, linhas `mag` no `c` e no `r` |
 | `include/config.h` | Seção MAG |

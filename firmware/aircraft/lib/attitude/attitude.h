@@ -8,8 +8,9 @@
 #include <stdint.h>
 #include "imu_cal.h"   // Vec3, WindowStats, RestLimits
 
-// Eixos do chip (X nariz, Y asa esquerda, Z para cima) → eixos do modelo: x = X, y = −Y, z = −Z.
-// Vale para o acelerômetro e para o giroscópio.
+// Eixos do chip na montagem final (X asa direita, Y nariz, Z para cima; hardware.md, 14/10/2026) →
+// eixos do modelo: x = Y, y = X, z = −Z. Vale para o acelerômetro e para o giroscópio.
+// (Montagem 5, descontinuada: X nariz, Y asa esquerda, Z para cima → x = X, y = −Y, z = −Z.)
 Vec3 chipToBody(const Vec3 &chip);
 
 // Intervalo entre dois instantes de micros(), atravessando a virada dos 32 bits (~71 min)

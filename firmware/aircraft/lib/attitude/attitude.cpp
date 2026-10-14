@@ -30,7 +30,7 @@ static Vec3 cross(const Vec3 &a, const Vec3 &b) {
 }
 
 Vec3 chipToBody(const Vec3 &chip) {
-    return {chip.x, -chip.y, -chip.z};
+    return {chip.y, chip.x, -chip.z};
 }
 
 uint32_t elapsedUs(uint32_t fromUs, uint32_t toUs) {

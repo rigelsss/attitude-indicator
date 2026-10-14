@@ -61,15 +61,16 @@ static void poseAxis(Pose p, int &ax, float &sign) {
     }
 }
 
-// Mapeamento da montagem (docs/hardware.md): X+ nariz, Y+ asa esquerda, Z+ para cima
+// Mapeamento da montagem final (docs/hardware.md, 14/10/2026): X+ asa direita, Y+ nariz, Z+ para cima.
+// Cada posição aponta um eixo do chip para cima.
 const char *poseName(Pose p) {
     switch (p) {
     case Pose::ZUp:   return "nivelada, face para cima";
     case Pose::ZDown: return "nivelada, face para baixo";
-    case Pose::XUp:   return "nariz para cima";
-    case Pose::XDown: return "nariz para baixo";
-    case Pose::YUp:   return "asa direita para baixo";
-    case Pose::YDown: return "asa esquerda para baixo";
+    case Pose::XUp:   return "asa esquerda para baixo";
+    case Pose::XDown: return "asa direita para baixo";
+    case Pose::YUp:   return "nariz para cima";
+    case Pose::YDown: return "nariz para baixo";
     default:          return "?";
     }
 }

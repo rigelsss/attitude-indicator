@@ -5,7 +5,9 @@
 
 static const char *NAMESPACE = "att_level";
 static const char *KEY = "mntRec";
-static const uint8_t FORMAT_VERSION = 2;   // 1: sem a calibração do acelerômetro (descontinuado)
+// 1: sem a calibração do acelerômetro; 2: rotação medida sobre os eixos nominais da montagem 5
+// (chipToBody anterior). Os dois são descontinuados: a rotação só vale para os eixos nominais atuais.
+static const uint8_t FORMAT_VERSION = 3;
 static const float ROTATION_TOL = 1e-3f;
 
 struct MountRecord {

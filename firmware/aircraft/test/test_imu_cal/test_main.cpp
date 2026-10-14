@@ -150,7 +150,7 @@ static void test_check_pose_rejects_wrong_and_weak() {
 static void test_six_position_rejects_swapped_positions() {
     Vec3 means[POSE_COUNT];
     for (int i = 0; i < POSE_COUNT; i++) means[i] = synth(TRUTH, poseGravity((Pose)i, 0));
-    const Vec3 t = means[(int)Pose::XUp];   // nariz para cima e para baixo trocados: escala negativa
+    const Vec3 t = means[(int)Pose::XUp];   // as duas posições do eixo X trocadas: escala negativa
     means[(int)Pose::XUp] = means[(int)Pose::XDown];
     means[(int)Pose::XDown] = t;
     AccelCal cal;

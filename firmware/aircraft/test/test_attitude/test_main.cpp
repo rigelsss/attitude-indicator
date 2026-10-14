@@ -66,19 +66,26 @@ static Mat3 rotZ(float deg) {
 
 // ---------- Mapeamento e ângulos do acelerômetro ----------
 
-// Sinais confirmados na bancada (hardware.md, montagem 5): asa direita para baixo dá ay do chip
-// ≈ +1 g; nariz para cima, ax ≈ +1 g; e o giroscópio dá gx+, gy− e gz− nos três movimentos.
+// Montagem final (hardware.md, 14/10/2026), sinais do acelerômetro confirmados na bancada: nivelada
+// dá az ≈ +1 g; nariz para cima, ay ≈ +1 g; asa direita para baixo, ax ≈ −1 g. Giroscópio pela mesma
+// rotação: asa direita descendo gy+ e nariz subindo gx+ (roll e pitch confirmados com o calço em
+// 14/10); nariz à direita gz− (yaw ainda a confirmar no teste de giros da proa).
 static void test_chip_to_body_mapping() {
     const Vec3 b = chipToBody({0.1f, 0.2f, 0.3f});
-    TEST_ASSERT_EQUAL_FLOAT(0.1f, b.x);
-    TEST_ASSERT_EQUAL_FLOAT(-0.2f, b.y);
+    TEST_ASSERT_EQUAL_FLOAT(0.2f, b.x);
+    TEST_ASSERT_EQUAL_FLOAT(0.1f, b.y);
     TEST_ASSERT_EQUAL_FLOAT(-0.3f, b.z);
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, norm({0.1f, 0.2f, 0.3f}), norm(b));
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.0f, accelRollPitch(chipToBody({0, 0, 1})).rollDeg);   // face para cima
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 90.0f, accelRollPitch(chipToBody({0, 1, 0})).rollDeg);  // asa direita p/ baixo
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 90.0f, accelRollPitch(chipToBody({1, 0, 0})).pitchDeg); // nariz para cima
-    const Vec3 g = chipToBody({+10, -10, -10});   // asa direita descendo, nariz subindo, nariz à direita
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.0f, accelRollPitch(chipToBody({0, 0, 1})).rollDeg);    // face para cima
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 90.0f, accelRollPitch(chipToBody({-1, 0, 0})).rollDeg);  // asa direita p/ baixo
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 90.0f, accelRollPitch(chipToBody({0, 1, 0})).pitchDeg);  // nariz para cima
+    const Vec3 g = chipToBody({+10, +10, -10});   // nariz subindo, asa direita descendo, nariz à direita
     TEST_ASSERT_TRUE(g.x > 0 && g.y > 0 && g.z > 0);
+    // Rotação própria (determinante +1): os eixos do modelo continuam um sistema destro
+    const Vec3 ex = chipToBody({1, 0, 0}), ey = chipToBody({0, 1, 0}), ez = chipToBody({0, 0, 1});
+    const float det = ex.x * (ey.y * ez.z - ey.z * ez.y) - ex.y * (ey.x * ez.z - ey.z * ez.x) +
+                      ex.z * (ey.x * ez.y - ey.y * ez.x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, det);
 }
 
 static void test_accel_angles_exact() {

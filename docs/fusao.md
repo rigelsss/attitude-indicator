@@ -7,12 +7,12 @@ Estratégia, limites e decisões da fusão do ESP A. A evidência de bancada fic
 ```
 pulso INT (instante em micros) → leitura do MPU (eixos do chip, g e °/s)
   → calibração nos eixos do chip (offset/escala do acelerômetro, bias do giroscópio)
-  → eixos do modelo: x = X, y = −Y, z = −Z
+  → eixos do modelo: x = Y, y = X, z = −Z (montagem final; na montagem 5 era x = X, y = −Y, z = −Z)
   → rotação de montagem (comando z)
   → filtro complementar → roll, pitch
 ```
 
-- **Eixos do modelo (aeronáuticos):** x para o nariz, y para a asa direita, z para baixo. Roll é positivo com a asa direita descendo, e pitch é positivo com o nariz subindo. O mapeamento e os sinais foram confirmados na bancada (hardware.md, montagem 5).
+- **Eixos do modelo (aeronáuticos):** x para o nariz, y para a asa direita, z para baixo. Roll é positivo com a asa direita descendo, e pitch é positivo com o nariz subindo. Na montagem final (14/10/2026), o MPU tem X para a asa direita, Y para o nariz e Z para cima. Os sinais do acelerômetro e do giroscópio (roll e pitch) foram confirmados na bancada em 14/10, e o calço de 2,5 cm deu erro ≤ 0,5° em ±11° de roll e ±5° de pitch (hardware.md, "Montagem final: mapeamento novo, seis posições, `z` e calço"). Ver [hardware.md](hardware.md), "Orientação de montagem do MPU6050". Os sinais da montagem 5 foram confirmados em 10/10.
 - **Código:** a lógica pura fica em `firmware/aircraft/lib/attitude` (sem `Arduino.h`), com testes em `test/test_attitude` (`pio test -e native`). A API usa unidades físicas (g, °/s, graus, segundos); internamente, o filtro trabalha em radianos.
 
 ## Filtro
@@ -63,7 +63,7 @@ pulso INT (instante em micros) → leitura do MPU (eixos do chip, g e °/s)
 
 São duas operações distintas:
 
-- **Calibração de montagem (`z`, agora):** identifica o desalinhamento do MPU em relação à caixa e o grava. Na montagem 5, são ~2,4° em roll.
+- **Calibração de montagem (`z`, agora):** identifica o desalinhamento do MPU em relação à caixa e o grava. Na montagem 5, eram ~2,4° em roll; na montagem final (14/10/2026), são −3,3° em roll e +2,5° em pitch. Uma calibração gravada antes da mudança de mapeamento (14/10/2026) é ignorada no boot (formato 3 do registro).
 - **Zero operacional (`CMD_ZERO_ATTITUDE`, etapa dos comandos):** faz a posição atual virar roll = pitch = 0. Ainda não foi implementado. O procedimento de duas posições do `z` não serve para um comando de rádio de um passo só.
 
 **Procedimento:**
@@ -105,7 +105,7 @@ São duas operações distintas:
 
 Pré-requisito: boot parado e `c` mostrando o giroscópio DEFINITIVO.
 
-1. **Sinais:** asa direita para baixo dá roll positivo; nariz para cima dá pitch positivo.
+1. **Sinais:** asa direita para baixo dá roll positivo; nariz para cima dá pitch positivo. No `a`, a coluna "só giroscópio" tem que acompanhar o filtro nos dois movimentos. Conferido na montagem final em 14/10.
 2. **Montagem (`z`):** fazer a calibração e conferir a inclinação da mesa no resultado.
 3. **Ângulos conhecidos (inclinômetro e calços de altura medida, θ = asin(h/L)):** roll em 0, ±15, ±30 e ±45°; pitch em 0, ±15 e ±30°. Ler a média no `r`. São duas medidas separadas:
    - concordância entre o filtro e o acelerômetro em repouso;

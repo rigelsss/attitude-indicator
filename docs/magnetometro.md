@@ -8,7 +8,7 @@
 
 1. **Mapeamento de eixos:** feito em 13/10 (x = X, y = −Y, z = −Z), e mantido na montagem final.
 2. **Implementação:** feita em 14/10 (ver "Arquivos").
-3. **Pendente antes da bancada da proa: o `chipToBody` do MPU.** Na montagem final, o MPU foi girado 90° (X asa direita, Y nariz), e o firmware ainda usa o mapeamento da montagem 5. Enquanto isso não mudar, o roll e o pitch saem trocados, e a proa compensada também. Depois da mudança: seis posições e `z` no firmware de voo.
+3. **`chipToBody` do MPU atualizado em 14/10** para a montagem final (x = Y, y = X, z = −Z). Sinais conferidos, seis posições e `z` refeitos e calço com erro ≤ 0,5°, também em 14/10 ([hardware.md](hardware.md)). **A bancada do magnetômetro está liberada.**
 4. **Bancada:** seguir o "Roteiro de validação". O BME280 foi danificado em 14/10, e o BMP280 chega em 17/10. O firmware funciona sem barômetro, então o roteiro do magnetômetro não depende dele.
 5. **Depois:** refatoração do `main.cpp`, como abertura da semana 3 (ver [plano.md](plano.md)).
 
@@ -286,7 +286,7 @@ O `printHelp()` passa a listar `m` e `p`.
 
 Pré-requisitos:
 - montagem final, com tudo preso na caixa;
-- **`chipToBody` do MPU atualizado para a montagem final**, seis posições e `z` refeitos;
+- sinais do MPU conferidos na montagem final, e seis posições e `z` refeitos (`chipToBody` atualizado em 14/10);
 - boot parado e giroscópio DEFINITIVO;
 - celular, controle remoto, multímetro e ferramentas a mais de 30 cm.
 

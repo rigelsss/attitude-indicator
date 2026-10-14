@@ -685,14 +685,59 @@ O modelo final passa a ser uma caixa de papelão (caixa de sapato, 28 × 13 × 1
 | Nivelada de novo | +0,099 g | +0,042 g | +1,093 g |
 
 - **Roll:** o X sobe 4,9° com a caixa sobre o fundo e o Z sobe 3,1° com ela apoiada na parede da direita. As duas faces indicam um **desalinhamento do módulo de ~4° em roll**; a diferença entre elas é a mesa e o esquadro da caixa.
-- **Pitch:** com o nariz para cima, o Z fica a −0,5°: o módulo está alinhado em pitch, e os ~2,5° do ay nivelado são a mesa.
+- **Pitch:** com o nariz para cima, o Z fica a −0,5°, o que sugeria o módulo alinhado em pitch e os ~2,5° do ay nivelado vindos da mesa. **O `z` desmentiu essa interpretação** (seção seguinte): a medida com a caixa girada 180° cancela a mesa e mostra **+2,5° do módulo em pitch**, com a mesa a −0,2°. A estimativa por uma só face depende do esquadro da caixa (aqui, da face da cauda) e do offset de Z, que mudou com a fixação nova.
 - Repetição: as duas medidas niveladas diferem 0,2°.
 - **Aquecimento passageiro:** a temperatura do MPU, de 28,2 °C às 18:56, estava em 34,3–34,6 °C às 19:03, e o bias de gx foi de −4,80 para −5,22 °/s (coerente com ~−0,07 °/s por °C). Ela voltou a ~28 °C sem nenhuma mudança na montagem, com o BME280 ainda ligado: não há fonte de calor permanente na protoboard. A causa provável é externa (mãos segurando a caixa nas posições, objeto morno por perto). Por isso, antes da calibração do giroscópio e das seis posições, convém conferir se a temperatura está estável.
 - **Aceito sem reajuste:** o `z` corrige o desalinhamento (limite de 10°, sobram ~5° para a mesa) e, nas seis posições, o efeito na escala é de 0,25 % (cos 4°). A calibração em seis posições e o `z` precisam ser refeitos nesta montagem.
 
+### Montagem final: mapeamento novo, seis posições, `z` e calço (14/10/2026)
+
+Firmware `aircraft` com o `chipToBody` da montagem final (x = Y, y = X, z = −Z). Log `device-monitor-261014-195738.log`, 27,7–27,9 °C, BME280 ausente (as tentativas a cada 5 s geram um `Error -1` da biblioteca, sem efeito no MPU).
+
+- **Boot:** o `z` antigo foi ignorado ("montagem sem calibração", formato 3 do registro). Giroscópio calibrado: bias −4,668 / +2,548 / +1,264 °/s, igual aos dois boots anteriores dentro de 0,01–0,09 °/s.
+- **Sinais (`a`, calço de 2,5 cm, antes do `6`):** calço sob o lado esquerdo, roll de −4,4° para +6,8° (+11°); calço sob o nariz, pitch de +2,6° para +7,6° (+5°). A coluna "só giroscópio" acompanhou o filtro nos dois movimentos (diferença ≤ 0,2°). **Acelerômetro e giroscópio com os sinais certos.**
+- **Seis posições:** offset +18,8 / +3,4 / +102,9 mg, escala +0,36 / +0,11 / +0,65 %, \|a\| corrigido de 1,0000 a 1,0041 g. O offset de Z subiu ~10 mg em relação à montagem 5 (+92,5 mg), outra vez acompanhando a mudança de fixação.
+- **`z`:** módulo em **roll −3,28°, pitch +2,52°**; mesa em roll −0,95°, pitch −0,23°.
+- **Calço** (2,5 cm, rente à borda; fundo da caixa de 28 × 13 cm; `r` ligado). Ângulos em relação à caixa nivelada no mesmo lugar (N ≈ −1,0° de roll e −0,3° de pitch, a inclinação da mesa):
+
+  | Posição | Esperado asin(h/d) | Medido (variação) | Diferença |
+  |---|---|---|---|
+  | R+ (calço sob o lado esquerdo) | +11,09° | +11,21° | +0,12° |
+  | R− (calço sob o lado direito) | −11,09° | −11,2° a −11,6° | −0,1° a −0,5° |
+  | P+ (calço sob o nariz) | +5,12° | +4,95° | −0,17° |
+  | P− (calço sob a cauda) | −5,12° | −5,15° | −0,03° |
+
+  - O R− teve problemas de posicionamento (a caixa escorregou e foi reposicionada) e oscilou entre −12,2° e −12,5° absolutos. Isso explica a faixa.
+  - Repetibilidade: nivelada no início −1,07° / −0,24°, no fim −1,08° / −0,28°. Depois do R− problemático, a caixa voltou a −0,72… −0,96° de roll (o lugar mudou um pouco).
+  - Em repouso, ±0,00–0,01° em cada janela de 1 s.
+  - **Todos dentro da meta de ≤ 1°** do [fusao.md](fusao.md). O celular mostrou os mesmos 11° e 5°.
+- **Magnetômetro no `r`:** 25 leituras/s, 0 falhas, \|m\| 25,6–27,4 µT sem calibração.
+
 ## Orientação de montagem do MPU6050
 
-> **Montagem final (14/10/2026): o MPU foi girado 90°.** Eixos confirmados com o `l` e o `m` do diagnóstico (seção "Montagem final na caixa"): **X+ para a asa direita, Y+ para o nariz, Z+ para cima**, ainda um sistema destro. O mapeamento passa a ser x = +Y, y = +X, z = −Z. **O `chipToBody` do firmware ainda usa o mapeamento da montagem 5** (tabela abaixo): a mudança no código, nos nomes das poses das seis posições e no teste está pendente. Até lá, a atitude do firmware de voo sai com os eixos trocados nesta montagem.
+### Montagem final (14/10/2026, em uso)
+
+O MPU foi girado 90° em relação à montagem 5. Eixos do acelerômetro confirmados com o `l` e o `m` do diagnóstico (seção "Montagem final na caixa"):
+
+| Posição | Eixo em ≈ +1 g (ou −1 g) | Conclusão |
+|---|---|---|
+| Nivelada, face para cima | az = +1,10 g (com o offset de Z) | Z+ do chip aponta para cima |
+| Nariz para cima | ay = +1,00 g | Y+ do chip aponta para o nariz |
+| Asa direita para baixo | ax = −0,98 g | X+ do chip aponta para a asa direita |
+
+Ainda um sistema destro (X × Y = Z). Mapeamento no firmware (`chipToBody` em `lib/attitude`, desde 14/10):
+
+| Modelo | Chip |
+|---|---|
+| x (nariz) | +Y |
+| y (asa direita) | +X |
+| z (para baixo) | −Z |
+
+- O giroscópio usa os mesmos eixos: asa direita descendo dá gy+, nariz subindo gx+, nariz à direita gz−; no modelo, roll, pitch e yaw positivos. Roll e pitch confirmados com o `a` em 14/10 (a coluna "só giroscópio" acompanhou o filtro); o yaw será conferido no teste de giros da proa.
+- Os nomes das posições do `6` seguem o mapeamento novo: face para cima, face para baixo, asa esquerda para baixo (X para cima), asa direita para baixo, nariz para cima (Y para cima), nariz para baixo.
+- **A calibração de montagem (`z`) gravada antes de 14/10 é ignorada** (formato 3 do registro `att_level`): a rotação era relativa aos eixos nominais da montagem 5. As seis posições também precisam ser refeitas, porque o suporte mudou (o offset de Z depende da fixação). Ordem: `6`, depois `z`.
+
+### Montagem 5 (10/10/2026, descontinuada)
 
 Preenchido em 10/10/2026 com a montagem 5, que é a montagem definitiva do modelo de bancada. O mesmo mapeamento se repetiu em todas as montagens testadas.
 

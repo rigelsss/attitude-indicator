@@ -23,12 +23,9 @@ struct CalRecord {
 
 static bool plausible(const CalRecord &r) {
     const float o[3] = {r.offset.x, r.offset.y, r.offset.z};
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++)
         if (!isfinite(o[i]) || fabsf(o[i]) > OFFSET_MAX_UT) return false;
-        for (int j = 0; j < 3; j++)
-            if (!isfinite(r.w.m[i][j])) return false;
-        if (!(r.w.m[i][i] > 0)) return false;
-    }
+    if (!magWPlausible(r.w)) return false;   // simétrica e positiva definida
     return isfinite(r.radiusUt) && r.radiusUt > 0 && r.radiusUt < RADIUS_MAX_UT && isfinite(r.residPct);
 }
 

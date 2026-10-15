@@ -63,6 +63,7 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 14/10/2026 | A | Idem, powerbank a 30, 20 e 10 cm do GY-273 | 100 kHz | Desligado: < 0,1 µT mesmo a 10 cm. Ligado, alimentando a placa B: 0,8 µT a 10 cm e 1,6 µT encostado | Powerbank irrelevante a 10 cm ou mais, desde que fixo |
 | 14/10/2026 | A | **Montagem final** na caixa de papelão (28 × 13 × 10 cm): MPU, GY-273 e BME280 numa mini protoboard no canto da caixa, ESP32 e powerbank na outra metade; jumpers macho-macho com no máximo dois conectores, sem emendas; 3V3 | 100 e 400 kHz | Dois curtos na montagem; o BME280 deixou de responder. MPU e HMC5883L intactos: `t` com 3 040 e 10 460 leituras, 0 falhas; autoteste OK; eixos do MPU confirmados (X asa direita, Y nariz, Z para cima) | MPU ~4° inclinado em roll em relação à caixa, aceito. Ver "Montagem final na caixa" |
 | 14/10/2026 | A | Montagem final, firmware `aircraft` com o magnetômetro; calibração `m` (90, 120 e 180 s) | 400 kHz | 25 leituras/s, 0 falhas. Nenhuma calibração aceita: no ar, saltos de 19 µT; na mesa, 24/24 setores, mas resíduo de 7,1 %; o ajuste do firmware bateu com o `mag_fit.py` (diferença < 0,001 µT) | Bancada perto do notebook com gradiente de ~5 µT em 10 cm; cadeira giratória com apoio de 23 cm uniforme. Falta uma extensão USB. Ver "Calibração do magnetômetro: tentativas de 14/10/2026" |
+| 15/10/2026 | A | Idem, calibração `m` na cadeira giratória a ~1,5 m do notebook, com extensão USB | 400 kHz | 24/24 setores em 100–120 s, raio 25,9 µT, mas resíduo de 4,6 % com o ajuste de 6 parâmetros; com o elipsoide completo (9 parâmetros), 0,63 % | Lugar adequado; o resíduo vinha de um acoplamento y–z não modelado. Firmware passou para o elipsoide completo. Ver "Calibração do magnetômetro: tentativas de 15/10/2026" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -735,6 +736,111 @@ Conclusões:
 - **O ajuste numérico do firmware está confirmado:** duas coletas reais deram o mesmo resultado no firmware e no `mag_fit.py`. Parada, a caixa repete o campo em 0,1 µT. **A proa ainda não foi validada:** isso depende de uma calibração aceita e da parte 2 do roteiro (proa nivelada, compensação de inclinação, distúrbio e filtro).
 - **O problema é o lugar e o jeito de girar.** Transportar a caixa no ar, ou girá-la em torno do centro (o sensor fica num canto e percorre ~15 cm), atravessa as variações do campo perto do notebook. A calibração só corrige o que gira junto com o sensor.
 - **Próxima tentativa:** extensão USB de 2–3 m, cadeira com o apoio a 1 m ou mais do notebook, canto dos sensores perto do eixo, 360° em cada face, `d` sempre. No uso real, sem cabo, a calibração poderá vir pelo rádio (`CMD_CALIBRATE_MAG`).
+
+### Calibração do magnetômetro: tentativas de 15/10/2026
+
+Firmware `aircraft` (ainda com o ajuste de 6 parâmetros), montagem final, BME280 ausente. Cadeira giratória com o apoio de 23 cm, a ~1,5 m do notebook, com extensão USB. Cada face apoiada, com giro de 360° pelo encosto da cadeira e o canto dos sensores perto do eixo.
+
+| Log | Método | Resultado |
+|---|---|---|
+| `261015-151422` | `m` (sem `d`) | 24/24 em 100 s, antes de passar pelas seis faces (a coleta termina sozinha). Offset +8,0 / +5,5 / +11,3 µT, escalas 1,005 / 1,125 / 0,870, raio 25,89 µT, **resíduo 4,62 %**, recusada |
+| `261015-152051` | Fluxo `p`, mapa: centro → 10 cm à frente → centro → 10 cm atrás → centro, movendo a cadeira (esquerda, direita e altura não dava para medir) | \|m\| bruto (sem calibração) de 18,3 / 17,0 / 18,2 / 19,0 / 18,8 µT: **~1 µT em 10 cm**, em parte por a cadeira ter girado 3–5° ao ser empurrada (sem calibração, o offset da caixa faz o \|m\| depender da orientação) |
+| `261015-152613`, `261015-152844` | `m` interrompidas | — |
+| `261015-153132` | `m` com `d` | 24/24 em 120 s. Offset +8,3 / +6,5 / +9,9 µT, escalas 1,012 / 1,121 / 0,868, raio 25,85 µT, **resíduo 4,62 %**, recusada. O `mag_fit.py` bateu com o firmware (diferença 0,0000). **Elipsoide de 9 parâmetros: resíduo 0,63 %**, offset +8,12 / +6,05 / +10,38 µT, raio 25,66 µT, acoplamento y–z de −0,073 na W |
+
+Conclusões:
+
+- **O lugar resolveu o que dependia dele:** o resíduo caiu de 7,1 % (mesa) para 4,6 %, e o raio ficou a 1 % do WMM (26,2 µT). Com o elipsoide completo, o resíduo de 0,63 % (~0,16 µT) mostra que não sobra distorção do lugar nem movimento da fiação.
+- **Os 4,6 % eram do modelo:** a deformação da caixa tem um acoplamento y–z que o ajuste alinhado aos eixos não representa. As escalas repetiram em dois lugares (dentro de 1,2 %), então a deformação é da caixa e do sensor. O firmware passou para o elipsoide completo ([magnetometro.md](magnetometro.md), D4). Com os pontos de `261015-153132`, o ajuste novo em C++ deu o mesmo resultado do `mag_fit.py` e **teria aceitado a calibração**.
+- **Repetibilidade com o ajuste antigo:** offsets diferentes em até 1,4 µT entre as duas coletas. A conferência fica para as coletas com o ajuste novo.
+
+**Com o firmware novo (elipsoide completo):**
+
+| Log | Método | Resultado |
+|---|---|---|
+| `261015-155440` | `m` na cadeira, mesmo lugar; o `d` não chegou à placa | **Aceita e gravada:** 24/24 em 116 s (fundo, tampa e asas bastaram), offset +8,14 / +6,21 / +10,56 µT, semieixos 1,019 / 1,108 / 0,872, y–z da W −0,074, raio 25,70 µT, **resíduo 0,77 %**. Repetibilidade contra o ajuste de 9 parâmetros da coleta `261015-153132`: offsets dentro de 0,18 µT, semieixos dentro de 0,2 %, raio dentro de 0,04 µT. Depois do `s`, a caixa foi levada para outro lugar: `DISTÚRBIO` com \|m\| de 36,3 µT |
+| `261015-160131` | Boot, `c` e fluxo `p` com a caixa no apoio da cadeira: normal, asa direita para baixo, asa esquerda para baixo, nariz para cima, nariz para baixo; no fim, deslocada em direção ao notebook | NVS: "magnetômetro calibrado", W completa no `c`. **\|m\| de 25,2 a 26,2 µT** em todas as posições (−2 a +2 % do raio). **Inclinação de −29,6 a −32,3°** (WMM: −31,8°). Proa compensada de 94 a 102° com a caixa de lado (roll ±85–90°), contra 96,7° nivelada, enquanto a "deitada" ia a 112° e 260°. Nariz para cima ou para baixo além de 70°: `INCL_ALTA`, como previsto. A caminho do notebook, \|m\| caiu para 23,9 µT (−7 %, sem chegar ao limite de distúrbio) |
+
+- **A calibração está validada:** aceita, repetível, gravada na NVS e com o \|m\| corrigido dentro de ±2 % em todas as orientações testadas na cadeira. A inclinação medida bate com o WMM. Falta a parte 2 do roteiro ([magnetometro.md](magnetometro.md), itens 4 a 7).
+
+### Magnetômetro: lugar para os testes de proa (15/10/2026)
+
+Mapas com o fluxo `p` e a caixa já calibrada: caixa nivelada, sem girar, deslocada ~10 cm em cada direção.
+
+| Log | Lugar | Resultado |
+|---|---|---|
+| `261015-161229` | Mesa (notebook e caixa de som afastados), nos alinhamentos de 45/90° | Centro com \|m\| de 27,5 µT e inclinação de −24,5° (cadeira: 25,3 µT e −31°); um ponto a 10 cm com a proa 15° diferente e inclinação de −5,5°. **Não serve:** metal na mesa ou sob ela |
+| `261015-161724` | Cadeira, frente e trás (as laterais não dão) | Centro repetível: 25,2–25,3 µT e −31 a −32°. Frente −1,5 µT, trás +0,8 µT. A proa no centro mudou 12° porque a cadeira girou ao ser empurrada. **Serve, com o sensor no centro:** nos testes, gira-se a cadeira com o canto dos sensores sobre o eixo |
+| `261015-163019` | Piso, num cruzamento de rejunte | Centro com 19,8 µT e −15°; a 10 cm, de 15 a 28 µT e proa de 66 a 111°. **Não serve:** ferragem da laje. O `DISTURBIO` entrou e saiu nos limites certos |
+
+### Magnetômetro: proa nivelada (15/10/2026)
+
+Log `261015-164018`. Cadeira girada pelo encosto, com o canto dos sensores sobre o eixo e a caixa nivelada (roll e pitch dentro de ±1,5°). Posições de 90 em 90°, com a borda da caixa alinhada a olho com o rejunte do piso (erro estimado de 2–3°). Proa compensada (`mag`) em cada parada:
+
+| Posição | Horário | Anti-horário |
+|---|---|---|
+| 0° (início) | 98,6° | — |
+| 90° | 190,1° | 190,0° |
+| 180° | 282,9° | 282,5° |
+| 270° | 10,5° | 12,0° |
+| 0° | 101,3° | 100,6° |
+
+- **Giros de 90°:** +91,5 / +92,8 / +87,6 / +90,8° no horário e −89,3 / −89,5 / −92,5 / −89,4° no anti-horário. Erro máximo de 2,8°, dentro dos ±3–5° esperados com o alinhamento a olho. A proa **cresce no giro horário**, como manda a convenção.
+- **Repetibilidade:** a mesma posição física repete em 0,1 a 1,5° entre o giro horário e o anti-horário. A volta ao 0° ficou a 2,0–2,7° do início, o que é compatível com o alinhamento a olho.
+- **\|m\|** de 25,5 a 26,1 µT em todas as posições. A proa filtrada acompanhou a do magnetômetro sem atraso visível nos giros lentos.
+- **A inclinação varia com a proa:** −25,8° com o nariz perto do norte magnético (~10°), −32,1° perto do sul (~190°), −29,9° e −27,7° no leste e no oeste. Isso dá ~±3° em torno de −29°, com o eixo quase alinhado ao nariz. Indica um **desalinhamento de ~3° em pitch entre o GY-273 e a caixa** (ou entre o GY-273 e o MPU, cuja montagem tem roll −3,3° e pitch +2,5°). É a limitação já prevista ("Desalinhamento entre o GY-273 e a caixa"): pela inclinação de −32°, um desalinhamento de 3° dá até ~2° de erro de proa, o que é compatível com os desvios dos giros. Aceitável na bancada.
+
+### Magnetômetro: compensação de inclinação com o calço (15/10/2026)
+
+Log `261015-164533`. Cadeira parada, nariz perto do sul magnético (proa de ~186–192°), calço de 2,5 cm. Sob o nariz, o calço ficou a 5,5 cm da ponta, e sob a cauda, a 7,5 cm da ponta (os ângulos usados são os medidos pela fusão). Entre as posições, a caixa voltou a ficar nivelada, e a proa nivelada escorregou de 191,7° para 185,9–188,2° ao mexer no calço. Por isso, cada inclinação é comparada com a média das posições niveladas vizinhas:
+
+| Posição | Roll / pitch | `mag` (compensada) | `deitada` | Nivelada vizinha |
+|---|---|---|---|---|
+| Asa esquerda para baixo | −11,3° / +2,5° | 187,0° (−3,0°) | 194,5° (+4,5°) | ~190° |
+| Asa direita para baixo | +12,3° / +2,7° | 185,0° (−3,2°) | 176,6° (−11,6°) | 188,2° |
+| Nariz para cima | +2,3° / +11,3° | 187,7° (+0,7°) | 186,9° (−0,1°) | ~187° |
+| Cauda para cima | +4,2° / −7,1° | 187,8° (+1,3°) | 185,3° (−1,2°) | ~186,5° |
+
+- **Com roll de ~12°, a compensação reduziu o erro de até 11,6° para ~3°.** O resíduo de ~3° é compatível com o desalinhamento de ~3° do GY-273 visto na proa nivelada, somado ao escorregamento da caixa ao mexer no calço.
+- **Com pitch de 7 a 11°, nem a `deitada` errou**: com o nariz para o sul, o erro da proa sem compensação aparece pelo roll, e o do pitch fica perto de zero (ele é máximo com o nariz para leste ou oeste). O teste de pitch precisa ser feito com o nariz para leste ou oeste.
+- \|m\| de 25,5 a 26,1 µT e inclinação de −31,2 a −32,1° em todas as posições.
+
+### Magnetômetro: compensação de inclinação a ±30° (15/10/2026)
+
+Log `261015-165644`. Caixa segurada à mão na cadeira, com o ângulo lido no `p`. Roll com o nariz perto do sul (~187–191°), onde o erro sem compensação vem do roll. Pitch com o nariz perto do leste (~100°), onde ele vem do pitch. Cada inclinação é comparada com a média das posições niveladas vizinhas:
+
+| Inclinação | Nivelada vizinha | `mag` (compensada) | `deitada` (sem compensação) |
+|---|---|---|---|
+| Roll +30° | 189,4° | 185,5° (**−3,9°**) | 166,8° (−22,6°) |
+| Roll −30° | 190,0° | 188,6° (**−1,4°**) | 201,7° (+11,7°) |
+| Pitch +30° | 100,3° | 96,4° (**−3,9°**) | 78,8° (−21,5°) |
+| Pitch −30° | 98,9° | 103,5° (**+4,6°**) | 116,8° (+17,9°) |
+
+- **A compensação reduz o erro de 12 a 23° para 1,4 a 4,6°**, dentro dos ~3–5° esperados. O resíduo vem principalmente do desalinhamento de ~3° do GY-273 e da caixa segurada à mão (a proa nivelada antes e depois de cada inclinação difere em até 4°).
+- \|m\| de 25,7 a 26,9 µT e inclinação de −29,5 a −32,9° em todas as posições: a calibração vale também com a caixa inclinada.
+
+### Magnetômetro: distúrbio com chave de fenda (15/10/2026)
+
+Log `261015-170239`. Caixa nivelada na cadeira, proa de ~99,6°, τ = 1 s, limite de distúrbio de 15 %. Chave de fenda de aço aproximada devagar (~3 s) do canto dos sensores até ~3–5 cm, mantida ~5 s e afastada.
+
+| Momento | `mag` | `proa` (filtrada) | \|m\| | Estado |
+|---|---|---|---|---|
+| Parada, antes | 99,6° | 99,6° | 25,7 µT | ok |
+| Aproximando (\|m\| ainda dentro de 15 %) | até 107,8° | sobe até 105,2° | 25,7 → 22,1 µT | ok |
+| Pico (~0,6 s) | 105–106° | 105,2° (parada) | 21,7–21,9 µT | `DISTURBIO` |
+| Chave afastada | 99,6° | 105 → 99,7° em ~5 s | 25,6 µT | ok |
+
+- **A detecção funcionou**, mas a chave a 3–5 cm só levou o \|m\| a −15,6 %, então o `DISTURBIO` durou ~0,6 s. Durante a aproximação, com o desvio abaixo de 15 %, a correção continuou ativa e a proa filtrada acompanhou ~5,6° dos 8° de erro da `mag`. **A proa não saltou** (sempre andou suave) e **voltou ao valor certo em ~5 s** depois de afastar a chave.
+- É a limitação prevista: o filtro só atenua distúrbios abaixo do limite. Um ajuste possível é baixar `MAG_DISTURB_PCT` para ~10 % (no lugar de teste, o \|m\| fica de −2 a +5 % em todas as orientações, até ±30° de inclinação) e/ou aumentar τ. Isso fica para decidir depois.
+
+### Magnetômetro: giros rápidos (15/10/2026)
+
+Log `261015-170459`. Caixa nivelada na cadeira, giros de ~90° em ~1,5–2,5 s (até ~60 °/s) pelo encosto: quatro no sentido horário e quatro no anti-horário, com 5 s ou mais parada entre eles.
+
+- **A proa filtrada acompanha os giros sem atraso:** a diferença para a `mag` ficou em até 2,1° durante o movimento. A filtrada vai um pouco à frente, porque o giroscópio responde na hora e a `mag` (média de 8 no chip) atrasa um pouco.
+- **Sem ultrapassar o valor final:** ao parar, a filtrada encontra a `mag` em ~1–2 s, ficando a até 0,2° dela. Os pequenos repiques (até ~3°) acompanham a própria `mag`, porque a cadeira balança ao parar.
+- **Sem deriva parada:** nos trechos de 10–20 s parada, a filtrada variou até 0,1°.
+- Paradas: 99,0 → 191,6 → 283,2 → 10,7 → 99,5° no horário, e 10,7 → 282,8 → 190,7 → 98,2° no anti-horário. \|m\| de 25,0 a 25,7 µT, sem `DISTURBIO`.
 
 ## Orientação de montagem do MPU6050
 

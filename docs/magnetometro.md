@@ -1,6 +1,6 @@
 # Magnetômetro: proa com compensação de inclinação
 
-> **Status (14/10/2026): implementado, falta a bancada.** Estratégia aprovada em 13/10 (D1–D8). O código compila (`aircraft` e `i2cscan`) e passa nos testes `native` (23 casos do magnetômetro, 94 no total). O mapeamento de eixos do GY-273 foi confirmado na bancada. Os resultados da bancada entram aqui e no [hardware.md](hardware.md).
+> **Status (15/10/2026): implementado; calibração com elipsoide completo (D4, revisto em 15/10), calibração, proa nivelada e compensação de inclinação validadas em 15/10; filtro (distúrbio e giros rápidos) também em 15/10; falta o item 8 do roteiro, que depende do BMP280.** Estratégia aprovada em 13/10 (D1–D8). O código compila (`aircraft` e `i2cscan`) e passa nos testes `native` (28 casos do magnetômetro, 99 no total). O mapeamento de eixos do GY-273 foi confirmado na bancada. Os resultados da bancada entram aqui e no [hardware.md](hardware.md).
 
 Último item da etapa 2 do [plano.md](plano.md): "magnetômetro com compensação de inclinação (proa)". O GY-273 (HMC5883L legítimo, ID "H43") já foi validado no diagnóstico: autoteste OK nos três eixos e ruído de ~1 LSB (ver [hardware.md](hardware.md), "HMC5883L no diagnóstico").
 
@@ -9,7 +9,7 @@
 1. **Mapeamento de eixos:** feito em 13/10 (x = X, y = −Y, z = −Z), e mantido na montagem final.
 2. **Implementação:** feita em 14/10 (ver "Arquivos").
 3. **`chipToBody` do MPU atualizado em 14/10** para a montagem final (x = Y, y = X, z = −Z). Sinais conferidos, seis posições e `z` refeitos e calço com erro ≤ 0,5°, também em 14/10 ([hardware.md](hardware.md)). **A bancada do magnetômetro está liberada.**
-4. **Bancada:** seguir o "Roteiro de validação". **Calibração pendente (14/10): falta uma extensão USB de 2–3 m.** A bancada perto do notebook tem gradiente de campo (~5 µT em 10 cm), e a calibração tem que ser feita longe dele, na cadeira giratória com o apoio de 23 cm (ver [hardware.md](hardware.md), "Calibração do magnetômetro: tentativas de 14/10/2026"). O BME280 foi danificado em 14/10, e o BMP280 chega em 17/10. O firmware funciona sem barômetro, então o roteiro do magnetômetro não depende dele.
+4. **Bancada:** seguir o "Roteiro de validação". A bancada perto do notebook tem gradiente de campo (~5 µT em 10 cm), então a calibração é feita na cadeira giratória com o apoio de 23 cm, a ~1,5 m do notebook, com uma extensão USB. Lá, em 15/10, a coleta cobriu 24/24 setores, mas o ajuste alinhado aos eixos deixou 4,6 % de resíduo. O D4 passou para o elipsoide completo, que dá 0,63 % com os mesmos pontos. Com o firmware novo, a calibração foi **aceita e gravada** (resíduo de 0,77 %, repetível em 0,2 µT) e o \|m\| corrigido ficou dentro de ±2 % em todas as orientações. Itens 4 e 5 do roteiro feitos em 15/10, na cadeira: giros de 90° com erro máximo de 2,8° e compensação de inclinação com 1,4 a 4,6° de erro a ±30° (contra 12 a 23° sem compensação). Itens 6 e 7 também em 15/10: com a chave de fenda, a proa filtrada não saltou e voltou em ~5 s, mas acompanhou ~5,6° de 8° enquanto o desvio ficou abaixo dos 15 % do limite (ajuste de `MAG_DISTURB_PCT` ou τ a decidir); nos giros rápidos, acompanhou a `mag` a até 2,1°, sem ultrapassar e sem deriva. **Falta:** o item 8 (convivência), que depende do BMP280. Ver [hardware.md](hardware.md), "Calibração do magnetômetro: tentativas de 15/10/2026". O BME280 foi danificado em 14/10, e o BMP280 chega em 17/10. O firmware funciona sem barômetro, então o roteiro do magnetômetro não depende dele.
 5. **Depois:** refatoração do `main.cpp`, como abertura da semana 3 (ver [plano.md](plano.md)).
 
 ## Montagem física
@@ -131,13 +131,16 @@ Com a proa magnética ψ, o campo nos eixos do modelo é x = H·cosψ, y = −H�
 
 **Resultado (13/10/2026, log `device-monitor-261013-185902.log`):** sinais e eixo dominante conforme a previsão nas cinco posições, com o Z invertendo em P5. **Mapeamento: x = X, y = −Y, z = −Z**, fixado em `magChipToBody` (`lib/mag`), e não numa tabela no `config.h`, porque é uma propriedade da montagem física. O teste do mapeamento usa os valores de P1 e P2. Tabela e anomalias (giros irregulares) no [hardware.md](hardware.md), "Magnetômetro: mapeamento de eixos e fontes de distorção".
 
-### D4. Calibração por ajuste de elipsoide alinhado aos eixos
+### D4. Calibração por ajuste de elipsoide completo (revisto em 15/10/2026)
 
-- **Modelo:** `A·x² + B·y² + C·z² + D·x + E·y + F·z = 1`, ajustado por mínimos quadrados com **todos** os pontos coletados.
-- **Resultado:** o centro (offset b, o hard iron) e as três escalas (a diagonal de W, o soft iron).
-- **Conta:** equações normais 6×6, resolvidas por eliminação de Gauss, uma vez ao fim da coleta. Antes do ajuste, os pontos são centralizados e normalizados para o sistema não ficar mal condicionado.
+- **Modelo:** `x·Q·x + L·x = 1`, com Q simétrica: 9 parâmetros (x², y², z², xy, xz, yz, x, y, z), ajustados por mínimos quadrados com **todos** os pontos coletados.
+- **Resultado:**
+  - o centro b = −½·Q⁻¹·L (offset, o hard iron);
+  - **W**, a raiz simétrica da forma do elipsoide (o soft iron, com os acoplamentos entre eixos): com os semieixos rₖ e as direções vₖ (autovetores de Q), W = Σ (R/rₖ)·vₖ·vₖᵀ, e R = média geométrica dos semieixos.
+- **Conta:** equações normais 9×9, resolvidas por eliminação de Gauss, e autovalores 3×3 por Jacobi, uma vez ao fim da coleta. Antes do ajuste, os pontos são centralizados e normalizados para o sistema não ficar mal condicionado.
 - **Por que não mín./máx.:** essa opção usa só 6 pontos e depende de alinhar cada eixo exatamente com o campo, o que é difícil girando à mão. Um pico de ruído também viraria o extremo.
-- **Evolução prevista:** elipsoide completo, com 9 parâmetros e acoplamento entre os eixos. Entra se o resíduo ficar alto no modelo final, por exemplo com o powerbank. O script `tools/mag_fit.py` (D8) compara os dois ajustes com dados reais e serve de critério. A NVS já grava **W como matriz 3×3** (diagonal por enquanto), então a evolução não muda o formato.
+- **Por que o elipsoide completo:** até 15/10, o firmware usava o elipsoide alinhado aos eixos (6 parâmetros, W diagonal), com o completo previsto como evolução se o resíduo ficasse alto. Na cadeira giratória, longe do notebook, o alinhado deixou **4,6 %** de resíduo em duas coletas, e o completo, **0,63 %** (~0,16 µT, quase o ruído). O termo que faltava era um acoplamento y–z de 0,073 na W. Com o lugar ruim (mesa perto do notebook, 14/10), o completo não ajudava (7,1 → 6,1 %): o modelo só resolve o que gira junto com o sensor. Ver [hardware.md](hardware.md), "Calibração do magnetômetro: tentativas de 15/10/2026".
+- **NVS:** já gravava W como matriz 3×3, então o formato não mudou. Uma calibração diagonal antiga continua válida.
 
 ### D5. Procedimento de calibração (comando `m`)
 
@@ -176,13 +179,13 @@ O que a bancada mostrou:
 **Ajuste e conferência.** O resultado é recusado, com o motivo na serial, se:
 - o raio ficar fora de 10 a 60 µT (faixa larga, para o modelo final). A serial mostra também a comparação com os 26,2 µT do WMM, só como informação;
 - o resíduo RMS de \|m\| corrigido passar de 3 % do raio;
-- alguma escala, normalizada para média 1, sair de 0,7 a 1,3;
-- o sistema 6×6 for singular, ou algum coeficiente quadrático não for positivo (a forma ajustada não é um elipsoide);
+- algum semieixo, normalizado para média 1, sair de 0,7 a 1,3;
+- o sistema 9×9 for singular, ou a forma quadrática não for positiva definida (a forma ajustada não é um elipsoide);
 - a cobertura for insuficiente.
 
 **Revisão:**
-- O firmware mostra o offset (µT), as escalas, o raio, o resíduo e a cobertura.
-- `s` grava na NVS: namespace `mag_cal`, com versão, ganho, **mapeamento de eixos** (`MAG_AXIS_MAP_ID`, ao lado de `magChipToBody` em `lib/mag`), offset b e matriz W. Uma calibração feita com outro mapeamento ou com outro ganho é ignorada no boot, com aviso. Se a orientação do GY-273 mudar, `magChipToBody` e `MAG_AXIS_MAP_ID` mudam juntos.
+- O firmware mostra o offset (µT), os semieixos normalizados (na ordem do eixo do modelo em que cada um mais pesa, como x, y, z), a W em três linhas, o raio, o resíduo e a cobertura.
+- `s` grava na NVS: namespace `mag_cal`, com versão, ganho, **mapeamento de eixos** (`MAG_AXIS_MAP_ID`, ao lado de `magChipToBody` em `lib/mag`), offset b e matriz W. Uma calibração feita com outro mapeamento ou com outro ganho é ignorada no boot, com aviso. Um registro com W não simétrica, não positiva definida ou com autovalores fora de 0,25..4 (`magWPlausible`) também é ignorado, como corrompido. Se a orientação do GY-273 mudar, `magChipToBody` e `MAG_AXIS_MAP_ID` mudam juntos.
 - `x` descarta e mantém a calibração anterior.
 - `d` imprime os pontos em CSV para o `tools/mag_fit.py`, entre as linhas `# mag_cal inicio` e `# mag_cal fim`, com o ajuste do firmware numa linha `# firmware`. A revisão continua aberta depois disso. A impressão bloqueia o laço por ~11 s (4 500 linhas a 115200), e a atitude recomeça depois.
 - **Calibração recusada:** a revisão também abre, com o motivo e os valores, mas o `s` não grava. Só `d` (para analisar a coleta no `mag_fit.py`) e `x`.
@@ -244,6 +247,9 @@ O `printHelp()` passa a listar `m` e `p`.
 2. **`magChipToBody`:** sinais, mais os valores medidos em P1 e P2 do D3 (proa de ~106° e ~196°, crescendo no giro horário).
 3. **Ajuste:**
    - offset (+15, −8, +30 µT) e escalas (1,1 / 0,9 / 1,05) conhecidos, com ruído de 0,1 µT, são recuperados;
+   - distorção com acoplamento entre eixos (y–z de 0,08, como na bancada) é recuperada: W simétrica e W·D proporcional à identidade;
+   - o mesmo com autovalores iguais (esfera), com um autovalor duplo e com o elipsoide fortemente girado (45° em dois eixos);
+   - `magWPlausible`: aceita a identidade e a W da bancada; recusa W assimétrica, indefinida, fora da faixa ou não finita;
    - funciona com 20 de 24 setores;
    - recusa plano único, raio fora da faixa, salto de distúrbio, escala fora da faixa e forma não elipsoidal.
 4. **Setores:** direções conhecidas caem no setor certo; o mínimo de pontos por setor é respeitado.
@@ -256,8 +262,8 @@ O `printHelp()` passa a listar `m` e `p`.
    - inicialização com a primeira proa válida.
 
 **Conferência fora do firmware:** `firmware/aircraft/tools/mag_fit.py` (usa só `numpy`) lê o CSV da tecla `d`, salvo em `firmware/aircraft/logs`, e ajusta elipsoides de 6 e de 9 parâmetros. O script mostra duas coisas:
-- se o ajuste do firmware está certo com dados reais (se as duas contas de 6 parâmetros baterem);
-- se o elipsoide completo reduz muito o resíduo, o que é o critério para a evolução do D4.
+- se o ajuste do firmware está certo com dados reais: compara com a conta de 9 parâmetros (ou com a de 6, em logs anteriores a 15/10/2026, que têm só a diagonal de W);
+- quanto o elipsoide completo reduz o resíduo em relação ao alinhado aos eixos.
 
 ## Valores no `config.h` (seção HMC5883L, a ajustar na bancada)
 
@@ -275,7 +281,7 @@ O `printHelp()` passa a listar `m` e `p`.
 | `MAG_CAL_MIN_PTS_SECTOR` | 5 | Pontos para um setor contar |
 | `MAG_CAL_MIN_RADIUS_UT` / `MAG_CAL_MAX_RADIUS_UT` | 10 / 60 | Faixa do raio ajustado |
 | `MAG_CAL_MAX_RESID_PCT` | 3 | Resíduo máximo do ajuste |
-| `MAG_CAL_MIN_SCALE` / `MAG_CAL_MAX_SCALE` | 0,7 / 1,3 | Faixa das escalas |
+| `MAG_CAL_MIN_SCALE` / `MAG_CAL_MAX_SCALE` | 0,7 / 1,3 | Faixa dos semieixos normalizados |
 | `MAG_DISTURB_PCT` | 15 | Desvio de \|m\| que suspende a correção |
 | `MAG_HEADING_TAU_S` | 1,0 | Filtro da proa (D6) |
 | `MAG_MAX_PITCH_DEG` | 70 | Acima disso, sem correção pelo magnetômetro |
@@ -310,12 +316,12 @@ Gravar: `pio run -e aircraft -t upload`. Monitor, salvando o log: `pio device mo
    | Teste | Como | Passa se |
    |---|---|---|
    | Coleta boa | `m`, girando como descrito no D5 | 24/24 antes dos 180 s; raio perto de 26 µT; resíduo < 3 % |
-   | Repetibilidade | Duas calibrações seguidas | Offsets dentro de ~1 µT; escalas dentro de ~2 % |
+   | Repetibilidade | Duas calibrações seguidas | Offsets dentro de ~1 µT; semieixos dentro de ~2 % |
    | Recusa por cobertura | `m` girando só apoiada na mesa | Recusada; o "faltam" aponta ±z |
    | Guia de progresso | `m` sem nunca virar a caixa de cabeça para baixo | O "faltam" mostra a face; ao virar, ela some |
    | Recusa por distúrbio | Chave de fenda encostada por alguns segundos no meio da coleta | Resíduo > 3 %, recusada |
    | Resultado aplicado | Depois do `s`, fluxo `p` em várias orientações | \|m\| corrigido dentro de ±3 % |
-   | Conferência independente | `d` → log → `tools/mag_fit.py` | Ajuste de 6 parâmetros igual ao do firmware |
+   | Conferência independente | `d` → log → `tools/mag_fit.py` | Ajuste de 9 parâmetros igual ao do firmware |
    | NVS | `s` e reinício | Mesma calibração no boot; `ST_MAG_CAL` ligado |
    | Descartar | Nova `m`, depois `x` | A calibração anterior continua valendo, inclusive depois de reiniciar |
    | Sem calibração | Primeiro boot, antes de qualquer `s` (não há comando para apagar a NVS) | Aviso no boot e no `c`; `SEM_CAL` no `p`; proa calculada |
@@ -337,7 +343,7 @@ Gravar: `pio run -e aircraft -t upload`. Monitor, salvando o log: `pio device mo
 | `lib/hmc5883l/` | Driver |
 | `lib/mag/` | Lógica pura: decodificação, mapeamento, ajuste, cobertura, proa e filtro |
 | `lib/mag_store/` | Calibração na NVS (namespace `mag_cal`) |
-| `test/test_mag/` | Testes `native` (23 casos) |
+| `test/test_mag/` | Testes `native` (28 casos) |
 | `tools/mag_fit.py` | Conferência do ajuste com o CSV da tecla `d`. Uso, a partir de `firmware/aircraft`: `python tools/mag_fit.py` (último log em `logs/`) ou `python tools/mag_fit.py logs/arquivo.log` |
 | `src/main.cpp` | Integração, comandos `m` e `p`, linhas `mag` no `c` e no `r` |
 | `include/config.h` | Seção MAG |

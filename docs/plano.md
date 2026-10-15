@@ -37,7 +37,7 @@ Cada etapa termina com algo **demonstrável**. Tópico da disciplina entre colch
 - Indicador de curva (gz) e variômetro (derivada da altitude) no PFD
 - Gravação de "caixa-preta" na flash do A
 - Replay de um log CSV na página web
-- CI no GitHub Actions rodando `pio test -e native` (semana 7, folga)
+- ~~CI no GitHub Actions rodando `pio test -e native` (semana 7, folga)~~ adiantado em 15/10/2026, depois que um commit parcial deixou o `main` sem compilar: `.github/workflows/ci.yml` roda os testes `native` do aircraft e compila `aircraft`, `i2cscan` e `ground` a cada push e pull request
 
 ## Riscos conhecidos
 - Mesmo canal para o AP e o ESP-NOW (fixo em 1) — validar já na semana 3

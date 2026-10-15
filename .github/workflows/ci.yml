@@ -1,0 +1,58 @@
+# CI: testes de lógica pura (native) e compilação dos três ambientes de firmware a cada push e pull request.
+# Nada é gravado em placa: o check_board_mac.py só age antes de upload/uploadfs.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  testes-native:
+    name: Testes native (aircraft)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-native-${{ hashFiles('firmware/*/platformio.ini') }}
+      - name: Instalar o PlatformIO
+        run: pip install platformio==6.2.0
+      - name: pio test -e native
+        working-directory: firmware/aircraft
+        run: pio test -e native
+
+  compilacao:
+    name: Compilação (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dir: firmware/aircraft
+            env: aircraft
+          - dir: firmware/aircraft
+            env: i2cscan
+          - dir: firmware/ground
+            env: ground
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ matrix.env }}-${{ hashFiles('firmware/*/platformio.ini') }}
+      - name: Instalar o PlatformIO
+        run: pip install platformio==6.2.0
+      - name: pio run -e ${{ matrix.env }}
+        working-directory: ${{ matrix.dir }}
+        run: pio run -e ${{ matrix.env }}

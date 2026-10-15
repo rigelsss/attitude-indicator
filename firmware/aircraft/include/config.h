@@ -127,7 +127,9 @@
 #define MAG_MAX_FAIL_STREAK      5        // falhas seguidas até ST_MAG_OK cair
 #define MAG_RETRY_MS             5000     // HMC5883L ausente no boot: nova tentativa
 #define MAG_FAIL_RETRY_MS        1000     // HMC5883L falhando: uma tentativa por intervalo (não atrasa o MPU)
-#define MAG_CAL_MS               90000    // duração máxima da coleta da calibração (m)
+#define MAG_CAL_MS               180000   // duração máxima da coleta da calibração (m): 6 giros de 360° feitos com
+                                          // calma (90 e 120 s ficaram curtos na bancada, 14/10/2026); 4 500 pontos,
+                                          // ~54 kB alocados só durante a calibração
 #define MAG_CAL_PROGRESS_MS      2000     // intervalo das linhas de progresso da coleta
 #define MAG_CAL_MIN_SECTORS      20       // setores cobertos (de 24) para aceitar a coleta
 #define MAG_CAL_MIN_PTS_SECTOR   5        // pontos para um setor contar

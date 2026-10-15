@@ -9,7 +9,7 @@
 1. **Mapeamento de eixos:** feito em 13/10 (x = X, y = −Y, z = −Z), e mantido na montagem final.
 2. **Implementação:** feita em 14/10 (ver "Arquivos").
 3. **`chipToBody` do MPU atualizado em 14/10** para a montagem final (x = Y, y = X, z = −Z). Sinais conferidos, seis posições e `z` refeitos e calço com erro ≤ 0,5°, também em 14/10 ([hardware.md](hardware.md)). **A bancada do magnetômetro está liberada.**
-4. **Bancada:** seguir o "Roteiro de validação". O BME280 foi danificado em 14/10, e o BMP280 chega em 17/10. O firmware funciona sem barômetro, então o roteiro do magnetômetro não depende dele.
+4. **Bancada:** seguir o "Roteiro de validação". **Calibração pendente (14/10): falta uma extensão USB de 2–3 m.** A bancada perto do notebook tem gradiente de campo (~5 µT em 10 cm), e a calibração tem que ser feita longe dele, na cadeira giratória com o apoio de 23 cm (ver [hardware.md](hardware.md), "Calibração do magnetômetro: tentativas de 14/10/2026"). O BME280 foi danificado em 14/10, e o BMP280 chega em 17/10. O firmware funciona sem barômetro, então o roteiro do magnetômetro não depende dele.
 5. **Depois:** refatoração do `main.cpp`, como abertura da semana 3 (ver [plano.md](plano.md)).
 
 ## Montagem física
@@ -142,20 +142,26 @@ Com a proa magnética ψ, o campo nos eixos do modelo é x = H·cosψ, y = −H�
 ### D5. Procedimento de calibração (comando `m`)
 
 **Coleta:**
-- `m` inicia a coleta, que termina sozinha ao completar os 24 setores, ou depois de `MAG_CAL_MS` (90 s).
-- Os pontos (até 2 250, a 25 Hz) ficam guardados em µT, nos eixos do modelo e sem calibração, num buffer de ~27 kB alocado só durante a calibração. O buffer é necessário porque o resíduo e a recontagem da cobertura precisam de uma segunda passada sobre os pontos, e a tecla `d` os imprime.
+- `m` inicia a coleta, que termina sozinha ao completar os 24 setores, ou depois de `MAG_CAL_MS` (180 s; 90 e 120 s ficaram curtos para girar com calma).
+- Os pontos (até 4 500, a 25 Hz) ficam guardados em µT, nos eixos do modelo e sem calibração, num buffer de ~54 kB alocado só durante a calibração. O buffer é necessário porque o resíduo e a recontagem da cobertura precisam de uma segunda passada sobre os pontos, e a tecla `d` os imprime.
 - Durante a coleta e a revisão, a proa e o fluxo `p` ficam suspensos. O MPU continua normal. `x` cancela.
 
-**Como girar a caixa:** no ar, passando por todas as orientações, e não apoiada na mesa. Para cada face da caixa voltada para cima, faça um giro em torno da vertical, devagar (~10 s por giro):
+**Como girar a caixa (revisto na bancada em 14/10/2026):** **no mesmo lugar**, sem transportá-la, e num ponto onde o campo seja uniforme. Para cada face apoiada, um giro de 360° em torno da vertical, devagar (~20–25 s por giro):
 
-1. topo para cima (caixa normal);
-2. fundo para cima (de cabeça para baixo);
-3. asa direita para cima;
-4. asa esquerda para cima;
-5. nariz para cima;
-6. nariz para baixo.
+1. fundo apoiado (caixa normal);
+2. tampa apoiada (de cabeça para baixo);
+3. asa direita apoiada;
+4. asa esquerda apoiada;
+5. cauda apoiada (nariz para cima);
+6. nariz apoiado (nariz para baixo).
 
-Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar cobre os mesmos setores. Na montagem final, o ESP32 e o powerbank giram junto com a caixa. O cabo USB (só na bancada, para a serial) fica com folga e preso à caixa nos primeiros ~20 cm.
+O que a bancada mostrou:
+- **Girar no ar** desloca o sensor em dezenas de centímetros. Num lugar com ferro por perto, isso deu saltos de 19 µT e leituras de 8 µT, impossíveis só com o campo da Terra e a caixa.
+- **Girar sobre a mesa ao lado do notebook** eliminou os saltos, mas o lugar tem gradiente: ~5 µT em 10 cm. Como o sensor fica num canto, ele percorre um círculo de ~15 cm a cada giro, e o resíduo ficou em 7 %, sem correção possível pela calibração.
+- **Uma cadeira giratória com um apoio de 23 cm** (para afastar a caixa do aço do mecanismo), longe do notebook, mostrou campo uniforme: 25,0–25,8 µT entre o assento, o apoio e fora da cadeira. Gira-se a cadeira pelo encosto, com o canto dos sensores perto do eixo. É o método adotado; ele precisa de uma extensão USB para ficar a 1 m ou mais do notebook.
+- Antes de calibrar num lugar novo, vale o "mapa": com o `p` e o nariz fixo, deslocar a caixa ~10 cm em várias direções; o \|m\| tem que variar menos de ~1 µT.
+
+**Cada giro precisa cobrir os 360°:** só assim o campo passa por todas as direções horizontais da caixa (nariz, asas e cauda). Ida e volta de 180° para o mesmo lado cobre só metade. Para não torcer o cabo USB, dá para fazer a volta inteira num sentido e desfazê-la no outro, ou meia volta para cada lado, voltando ao centro entre elas. Na montagem final, o ESP32 e o powerbank giram junto com a caixa. O cabo USB (só na bancada, para a serial) fica com folga e preso à caixa nos primeiros ~20 cm.
 
 **Cobertura, com 24 setores:**
 - A direção de cada ponto é tomada em relação a um centro provisório, o meio do mín./máx. corrente de cada eixo.
@@ -178,7 +184,7 @@ Não é preciso dar volta inteira contínua. Girar 180° para um lado e voltar c
 - O firmware mostra o offset (µT), as escalas, o raio, o resíduo e a cobertura.
 - `s` grava na NVS: namespace `mag_cal`, com versão, ganho, **mapeamento de eixos** (`MAG_AXIS_MAP_ID`, ao lado de `magChipToBody` em `lib/mag`), offset b e matriz W. Uma calibração feita com outro mapeamento ou com outro ganho é ignorada no boot, com aviso. Se a orientação do GY-273 mudar, `magChipToBody` e `MAG_AXIS_MAP_ID` mudam juntos.
 - `x` descarta e mantém a calibração anterior.
-- `d` imprime os pontos em CSV para o `tools/mag_fit.py`, entre as linhas `# mag_cal inicio` e `# mag_cal fim`, com o ajuste do firmware numa linha `# firmware`. A revisão continua aberta depois disso. A impressão bloqueia o laço por ~5 s (2 250 linhas a 115200), e a atitude recomeça depois.
+- `d` imprime os pontos em CSV para o `tools/mag_fit.py`, entre as linhas `# mag_cal inicio` e `# mag_cal fim`, com o ajuste do firmware numa linha `# firmware`. A revisão continua aberta depois disso. A impressão bloqueia o laço por ~11 s (4 500 linhas a 115200), e a atitude recomeça depois.
 - **Calibração recusada:** a revisão também abre, com o motivo e os valores, mas o `s` não grava. Só `d` (para analisar a coleta no `mag_fit.py`) e `x`.
 
 **Sem calibração na NVS:** offset zero e W identidade. `ST_MAG_CAL` fica desligado, e há aviso no boot e no `c`. A proa é calculada assim mesmo.
@@ -262,7 +268,7 @@ O `printHelp()` passa a listar `m` e `p`.
 | `MAG_READ_HZ` | 25 | Leitura pelo firmware |
 | `MAG_MAX_FAIL_STREAK` / `MAG_FAIL_RETRY_MS` | 5 / 1000 | Falhas, como no BME280 |
 | `MAG_RETRY_MS` | 5000 | HMC ausente no boot: nova tentativa |
-| `MAG_CAL_MS` | 90000 | Duração máxima da coleta |
+| `MAG_CAL_MS` | 180000 | Duração máxima da coleta |
 | `MAG_CAL_PROGRESS_MS` | 2000 | Linhas de progresso da coleta |
 | `MAG_REF_FIELD_UT` | 26,2 | \|B\| do WMM na bancada, só para comparação na revisão |
 | `MAG_CAL_MIN_SECTORS` | 20 (de 24) | Cobertura mínima |
@@ -303,7 +309,7 @@ Gravar: `pio run -e aircraft -t upload`. Monitor, salvando o log: `pio device mo
 
    | Teste | Como | Passa se |
    |---|---|---|
-   | Coleta boa | `m`, girando como descrito no D5 | 24/24 antes dos 90 s; raio perto de 26 µT; resíduo < 3 % |
+   | Coleta boa | `m`, girando como descrito no D5 | 24/24 antes dos 180 s; raio perto de 26 µT; resíduo < 3 % |
    | Repetibilidade | Duas calibrações seguidas | Offsets dentro de ~1 µT; escalas dentro de ~2 % |
    | Recusa por cobertura | `m` girando só apoiada na mesa | Recusada; o "faltam" aponta ±z |
    | Guia de progresso | `m` sem nunca virar a caixa de cabeça para baixo | O "faltam" mostra a face; ao virar, ela some |

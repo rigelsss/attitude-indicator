@@ -65,7 +65,7 @@ Desempenho segundo o datasheet:
 
 ## Altitude relativa
 
-h = 44330 · (1 − (p/p₀)^0,1903), a fórmula barométrica padrão, com p₀ sendo a pressão do zero.
+h = 44330 · (1 − (p/p₀)^0,1903), a fórmula barométrica padrão, com p₀ sendo a pressão do zero. Com p ou p₀ não finitas, nulas ou negativas, `baroAltitudeM()` devolve NaN (desde 15/10/2026, com teste `native`), e a serial mostra "alt inválida" em vez de um número.
 
 - Perto de 1010 hPa, 12 Pa equivalem a ~1 m (teste `native`).
 - Na escala da bancada, poucos metros, o erro do modelo é desprezível perto do ruído e da deriva.

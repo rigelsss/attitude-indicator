@@ -1,10 +1,12 @@
 # attitude-indicator — Horizonte Artificial com ESP32
 
+[![CI](https://github.com/rigelsss/attitude-indicator/actions/workflows/ci.yml/badge.svg)](https://github.com/rigelsss/attitude-indicator/actions/workflows/ci.yml)
+
 Horizonte artificial em bancada com dois ESP32. Uma placa fica no modelo, mede a atitude (roll, pitch e proa) com sensores inerciais e a transmite sem fio. A outra mostra essa atitude como um instrumento de painel e a disponibiliza para o navegador e para um cliente Python.
 
 Projeto final da disciplina **Sistemas Embarcados 2026.2**. Usa Arduino via PlatformIO e cobre I2C, SPI, interrupções, FreeRTOS, ESP-NOW e IoT.
 
-> **Estado:** em desenvolvimento. O MPU6050 está validado em bancada, e o firmware do ESP A já o lê por um driver próprio e o calibra (acelerômetro em seis posições e bias do giroscópio no boot), ainda sem cálculo de atitude. Ver [Estado do projeto](#estado-do-projeto).
+> **Estado:** em desenvolvimento. O firmware do ESP A lê e calibra o MPU6050 e o magnetômetro, calcula roll e pitch com um filtro complementar e a proa compensada pela inclinação, tudo validado em bancada. O barômetro aguarda a troca do BME280 por um BMP280. Ainda sem rádio nem tasks FreeRTOS (`main.cpp` provisório). Ver [Estado do projeto](#estado-do-projeto).
 
 ## Como funciona
 
@@ -27,7 +29,7 @@ ESP A (avião) ──ESP-NOW──▶ ESP B (solo) ──Wi-Fi AP / WebSocket─
 | A | ESP32 NodeMCU-32S | Controlador do avião |
 | A | MPU6050 (GY-521) | Acelerômetro e giroscópio |
 | A | GY-273 (HMC5883L) | Magnetômetro (proa) |
-| A | BME280 | Pressão e temperatura (altitude relativa) |
+| A | BME280 ou BMP280 | Pressão e temperatura (altitude relativa). O BME280 da bancada foi danificado em 14/10/2026; o firmware identifica os dois |
 | A | OLED 0,91" SSD1306 128x32 | Status |
 | B | ESP32 NodeMCU-32S | Estação de solo |
 | B | TFT ST7789 | Horizonte artificial |
@@ -104,14 +106,16 @@ pio run -e ground -t upload
 pio device monitor -b 115200
 ```
 
-No estado atual, o ESP A configura o MPU6050, carrega da NVS a calibração do acelerômetro e mede o bias do giroscópio nos primeiros segundos. A placa precisa estar parada; enquanto ela se mexe, o firmware usa o último bias salvo e tenta de novo. Pelo monitor (use `pio device monitor -b 115200 --echo` para ver o que digita):
+No estado atual, o ESP A configura o MPU6050, o magnetômetro e o barômetro, carrega da NVS as calibrações e mede o bias do giroscópio nos primeiros segundos. A placa precisa estar parada; enquanto ela se mexe, o firmware usa o último bias salvo e tenta de novo. Pelo monitor (use `pio device monitor -b 115200 --echo` para ver o que digita):
 
 | Tecla | Ação |
 |---|---|
 | `c` | Estado da calibração e valores brutos e corrigidos do último segundo |
 | `6` | Calibração do acelerômetro em seis posições, guiada pelo firmware e gravada na NVS depois de confirmar com `s` |
 | `g` | Recalibra o bias do giroscópio (placa parada) |
-| `r` | Liga ou desliga o resumo por segundo do driver (taxa, ruído, perdas e falhas de I2C) |
+| `z` | Calibração de montagem: corrige o desalinhamento do módulo em relação à caixa, em duas posições ([fusao.md](docs/fusao.md)) |
+| `a` | Liga ou desliga o fluxo de atitude (roll e pitch) |
+| `r` | Liga ou desliga o resumo por segundo do driver (taxa, ruído, pulsos perdidos e descartados, fila cheia e falhas de I2C) |
 | `b` | Liga ou desliga o fluxo de altitude (10 Hz): temperatura, pressão, altitude relativa e variação de temperatura desde o zero |
 | `0` | Zera a altitude de novo (média de 2 s com a placa parada) |
 | `m` | Calibração do magnetômetro: girar a caixa em todas as orientações até cobrir os 24 setores; revisão com `s` (gravar na NVS), `x` (descartar) e `d` (pontos em CSV para `tools/mag_fit.py`) |
@@ -121,13 +125,15 @@ O LED da placa pisca uma vez por segundo. O ESP B só inicializa a serial e pisc
 
 Para só compilar, omita `-t upload`. Se houver mais de uma placa conectada, defina `upload_port` e `monitor_port` no `platformio.ini` correspondente, ou passe `-p COMx` no monitor.
 
-Testes da lógica pura (calibração e fusão), que rodam no PC, sem placa, em `firmware/aircraft`:
+Testes da lógica pura (calibração, fusão, barômetro e magnetômetro), que rodam no PC, sem placa, em `firmware/aircraft`:
 
 ```powershell
 pio test -e native
 ```
 
 O ambiente `native` usa o compilador do PC: é preciso ter um GCC no PATH. No Windows, por exemplo, o do MSYS2 UCRT64 (`C:\msys64\ucrt64\bin`).
+
+O GitHub Actions ([ci.yml](.github/workflows/ci.yml)) roda esses testes e compila `aircraft`, `i2cscan` e `ground` a cada push e pull request.
 
 Página web no ESP B (quando existir): `pio run -e ground -t uploadfs`, em `firmware/ground`. Depois, conecte-se à rede `Horizonte-ESP` e abra `http://192.168.4.1`.
 
@@ -166,8 +172,11 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 - [x] MPU6050 validado em bancada: endereço, ruído e repouso, seis posições, orientação dos eixos, contato a 100 e 400 kHz e pino INT
 - [x] Driver do MPU6050 no firmware do ESP A: ±4 g, ±500 °/s, DLPF, 200 Hz pelo INT e recuperação de falhas
 - [x] Calibração no firmware: correção do acelerômetro com persistência na NVS e bias do giroscópio no boot ([estratégia](docs/calibracao.md)), com testes `native`
-- [ ] Filtro complementar (roll e pitch) com testes `native`
-- [ ] Magnetômetro (proa com compensação de inclinação), BME280 e OLED de status
+- [x] Filtro complementar (roll e pitch) e calibração de montagem, com testes `native` ([fusao.md](docs/fusao.md))
+- [x] Magnetômetro: calibração hard/soft iron por elipsoide completo, proa compensada pela inclinação e filtro da proa com o giroscópio ([magnetometro.md](docs/magnetometro.md))
+- [x] Barômetro: driver próprio, altitude relativa e zero, com testes `native` ([barometro.md](docs/barometro.md))
+- [ ] Barômetro com o BMP280 na bancada (o BME280 foi danificado) e convivência dos três sensores
+- [ ] OLED de status no ESP A
 - [ ] Tasks FreeRTOS no ESP A acionadas pelo INT
 - [ ] ESP-NOW A → B com detecção de perda de pacotes
 - [ ] ESP B: horizonte no TFT, OLED, encoder e alarmes
@@ -181,6 +190,7 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 | [docs/plano.md](docs/plano.md) | Etapas semanais e riscos |
 | [docs/hardware.md](docs/hardware.md) | Registro de bancada: endereços, medidas, calibração e orientação |
 | [docs/calibracao.md](docs/calibracao.md) | Estratégia de calibração do MPU6050 |
+| [docs/fusao.md](docs/fusao.md) | Filtro complementar (roll e pitch), calibração de montagem e validação |
 | [docs/barometro.md](docs/barometro.md) | BME280: configuração, altitude relativa, zero e roteiro de validação |
 | [docs/magnetometro.md](docs/magnetometro.md) | HMC5883L: mapeamento de eixos, calibração hard/soft iron, proa compensada, filtro da proa e roteiro de validação |
 | [docs/protocolo-websocket.md](docs/protocolo-websocket.md) | Contrato JSON entre o ESP B e os clientes |

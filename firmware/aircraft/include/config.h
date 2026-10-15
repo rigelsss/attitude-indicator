@@ -136,7 +136,7 @@
 #define MAG_CAL_MIN_RADIUS_UT    10.0f    // raio ajustado aceito (faixa larga: modelo final)
 #define MAG_CAL_MAX_RADIUS_UT    60.0f
 #define MAG_CAL_MAX_RESID_PCT    3.0f     // resíduo RMS de |m| corrigido, % do raio
-#define MAG_CAL_MIN_SCALE        0.7f     // escalas normalizadas para média 1
+#define MAG_CAL_MIN_SCALE        0.7f     // semieixos do elipsoide normalizados para média 1
 #define MAG_CAL_MAX_SCALE        1.3f
 #define MAG_REF_FIELD_UT         26.2f    // |B| do WMM2025 na bancada (João Pessoa): só informativo
 #define MAG_DISTURB_PCT          15.0f    // |m| corrigido afastado do raio mais que isto: correção suspensa

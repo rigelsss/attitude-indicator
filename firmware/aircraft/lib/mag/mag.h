@@ -1,6 +1,6 @@
 // mag.h — magnetômetro em lógica pura (sem Arduino.h), testável com pio test -e native.
 // Decodificação da rajada do HMC5883L, mapeamento de eixos, calibração hard/soft iron por ajuste de
-// elipsoide alinhado aos eixos, cobertura da esfera, proa compensada pela inclinação e filtro da proa
+// elipsoide completo (com acoplamentos entre eixos), cobertura da esfera, proa compensada pela inclinação e filtro da proa
 // com o giroscópio. Estratégia: docs/magnetometro.md. Evidência de bancada: docs/hardware.md.
 //
 // Eixos do modelo como em lib/attitude: x para o nariz, y para a asa direita, z para baixo.
@@ -46,8 +46,8 @@ static const uint8_t MAG_AXIS_MAP_ID = 1;   // 1: GY-273 com X para o nariz, chi
 
 // ---------- Calibração: hard iron e soft iron ----------
 
-// Correção m = W · (bruto − offset), nos eixos do modelo. No ajuste alinhado aos eixos, W é diagonal;
-// a matriz completa fica para um ajuste de elipsoide com acoplamentos (docs/magnetometro.md, D4).
+// Correção m = W · (bruto − offset), nos eixos do modelo. W é simétrica: a raiz da forma do elipsoide
+// ajustado, com os acoplamentos entre eixos (docs/magnetometro.md, D4).
 struct MagCal {
     Vec3  offset{0, 0, 0};    // µT
     Mat3  w = mat3Identity();
@@ -55,6 +55,11 @@ struct MagCal {
 };
 
 Vec3 magApplyCal(const MagCal &cal, const Vec3 &raw);
+
+// W aceitável ao carregar da NVS: finita, simétrica (tolerância de 1e-3) e com os três autovalores entre
+// 0,25 e 4 (positiva definida). É uma checagem contra registro corrompido; a qualidade da calibração é
+// conferida no ajuste (MagFitLimits).
+bool magWPlausible(const Mat3 &w);
 
 // Cobertura: a esfera de direções é dividida em 24 setores. A face do cubo do eixo dominante
 // (+x, −x, +y, −y, +z, −z) é dividida em 4 quadrantes pelos sinais dos outros dois eixos.
@@ -88,7 +93,7 @@ private:
 struct MagFitLimits {
     float    minRadiusUt, maxRadiusUt;   // raio ajustado aceito
     float    maxResidPct;                // resíduo RMS de |m| corrigido, em % do raio
-    float    minScale, maxScale;         // escalas normalizadas para média 1
+    float    minScale, maxScale;         // semieixos normalizados para média 1
     uint16_t minSectors;                 // setores cobertos, recontados com o centro ajustado
     uint16_t minPtsSector;               // pontos para um setor contar
 };
@@ -96,8 +101,8 @@ struct MagFitLimits {
 enum class MagFitStatus : uint8_t {
     Ok,
     TooFewPoints,
-    Singular,           // sistema 6×6 sem solução (pontos num plano, por exemplo)
-    NotEllipsoid,       // coeficiente quadrático não positivo: a forma ajustada não é um elipsoide
+    Singular,           // sistema 9×9 sem solução (pontos num plano, por exemplo)
+    NotEllipsoid,       // forma quadrática não positiva definida: a forma ajustada não é um elipsoide
     Coverage,           // menos setores cobertos que o mínimo
     RadiusOutOfRange,
     ScaleOutOfRange,
@@ -109,14 +114,17 @@ const char *magFitStatusText(MagFitStatus s);
 struct MagFitResult {
     MagFitStatus status = MagFitStatus::TooFewPoints;
     MagCal   cal;                 // válido só com status Ok (preenchido sempre que o ajuste existe)
-    Vec3     scale{1, 1, 1};      // semieixos normalizados para média 1 (informativo)
+    Vec3     scale{1, 1, 1};      // semieixos normalizados para média 1, na ordem do eixo do modelo em que
+                                  // cada um mais pesa (iguais às escalas x, y, z quando quase alinhado)
     float    residPct = 0;        // resíduo RMS de |m| corrigido, % do raio
     int      sectors = 0;         // setores cobertos em relação ao centro ajustado
 };
 
-// Ajuste de A·x² + B·y² + C·z² + D·x + E·y + F·z = 1 por mínimos quadrados, com todos os pontos
-// (µT, eixos do modelo, sem calibração). Os pontos são centralizados e normalizados antes do ajuste
-// para o sistema não ficar mal condicionado. W = diag(R/rᵢ), com R = média geométrica dos semieixos.
+// Ajuste do elipsoide completo x·Q·x + L·x = 1 (Q simétrica, 9 parâmetros) por mínimos quadrados, com
+// todos os pontos (µT, eixos do modelo, sem calibração). Os pontos são centralizados e normalizados
+// antes do ajuste para o sistema não ficar mal condicionado. Com os semieixos rₖ e as direções vₖ
+// (autovetores de Q), W = Σ (R/rₖ)·vₖ·vₖᵀ, com R = média geométrica dos semieixos.
+// O ajuste alinhado aos eixos (6 parâmetros) deixou resíduo de 4,6 % na bancada, e este, 0,6 %.
 MagFitStatus magFitEllipsoid(const Vec3 *pts, size_t n, const MagFitLimits &lim, MagFitResult &out);
 
 // ---------- Proa ----------

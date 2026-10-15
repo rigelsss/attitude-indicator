@@ -189,7 +189,7 @@ static HeadingFilter g_hdg(HEADING_PARAMS);
 enum class MagMode : uint8_t { Off, Collect, Review };
 static MagMode g_magMode = MagMode::Off;
 static const size_t MAG_CAL_MAX_POINTS = (size_t)MAG_CAL_MS / 1000 * MAG_READ_HZ;
-static Vec3 *g_magPts = nullptr;          // alocado só durante a calibração (~27 kB)
+static Vec3 *g_magPts = nullptr;          // alocado só durante a calibração (MAG_CAL_MAX_POINTS × 12 B, ~54 kB)
 static size_t g_magN = 0;
 static uint32_t g_magCalStartMs = 0;
 static uint32_t g_magCalNextProgMs = 0;
@@ -456,8 +456,10 @@ static void magCalFinish() {
     Serial.printf("[mag] coleta encerrada: %lu pontos em %.0f s\n", (unsigned long)g_magN,
                   (millis() - g_magCalStartMs) / 1000.0f);
     if (st != MagFitStatus::TooFewPoints && st != MagFitStatus::Singular && st != MagFitStatus::NotEllipsoid) {
-        Serial.printf("  offset %+.2f %+.2f %+.2f µT | escalas %.3f %.3f %.3f | W %.4f %.4f %.4f\n", c.offset.x,
-                      c.offset.y, c.offset.z, r.scale.x, r.scale.y, r.scale.z, c.w.m[0][0], c.w.m[1][1], c.w.m[2][2]);
+        Serial.printf("  offset %+.2f %+.2f %+.2f µT | semieixos %.3f %.3f %.3f\n", c.offset.x, c.offset.y,
+                      c.offset.z, r.scale.x, r.scale.y, r.scale.z);
+        for (int i = 0; i < 3; i++)
+            Serial.printf("  W %s %+.4f %+.4f %+.4f\n", i == 0 ? "=" : " ", c.w.m[i][0], c.w.m[i][1], c.w.m[i][2]);
         Serial.printf("  raio %.2f µT (WMM na bancada: %.1f µT) | resíduo %.2f %% | cobertura %d/%d setores\n",
                       c.radiusUt, MAG_REF_FIELD_UT, r.residPct, r.sectors, MAG_SECTORS);
     }
@@ -465,7 +467,7 @@ static void magCalFinish() {
     if (st == MagFitStatus::Ok) {
         Serial.println("[mag] calibração ok. s = gravar na NVS | x = descartar | d = pontos em CSV");
     } else {
-        Serial.printf("[mag] calibração RECUSADA: %s (limites: raio %.0f–%.0f µT, resíduo ≤ %.1f %%, escalas "
+        Serial.printf("[mag] calibração RECUSADA: %s (limites: raio %.0f–%.0f µT, resíduo ≤ %.1f %%, semieixos "
                       "%.2f–%.2f, ≥ %d setores). x = sair | d = pontos em CSV\n",
                       magFitStatusText(st), MAG_CAL_MIN_RADIUS_UT, MAG_CAL_MAX_RADIUS_UT, MAG_CAL_MAX_RESID_PCT,
                       MAG_CAL_MIN_SCALE, MAG_CAL_MAX_SCALE, MAG_CAL_MIN_SECTORS);
@@ -502,9 +504,11 @@ static void magCalSample(const Vec3 &raw, uint32_t tMs) {
 static void magCalDump() {
     const MagCal &c = g_magFit.cal;
     Serial.printf("# mag_cal inicio: %lu pontos (µT, eixos do modelo, sem calibração)\n", (unsigned long)g_magN);
-    Serial.printf("# firmware status=%s b=%.4f,%.4f,%.4f w=%.5f,%.5f,%.5f R=%.4f resid=%.3f setores=%d\n",
-                  magFitStatusText(g_magFit.status), c.offset.x, c.offset.y, c.offset.z, c.w.m[0][0], c.w.m[1][1],
-                  c.w.m[2][2], c.radiusUt, g_magFit.residPct, g_magFit.sectors);
+    Serial.printf("# firmware status=%s b=%.4f,%.4f,%.4f w=%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f R=%.4f "
+                  "resid=%.3f setores=%d\n",
+                  magFitStatusText(g_magFit.status), c.offset.x, c.offset.y, c.offset.z, c.w.m[0][0], c.w.m[0][1],
+                  c.w.m[0][2], c.w.m[1][0], c.w.m[1][1], c.w.m[1][2], c.w.m[2][0], c.w.m[2][1], c.w.m[2][2],
+                  c.radiusUt, g_magFit.residPct, g_magFit.sectors);
     Serial.println("x,y,z");
     for (size_t i = 0; i < g_magN; i++)
         Serial.printf("%.3f,%.3f,%.3f\n", g_magPts[i].x, g_magPts[i].y, g_magPts[i].z);
@@ -1096,10 +1100,12 @@ static void printStatus() {
 
     if (g_magCal.valid) {
         const MagCal &mc = g_magCal.cal;
-        Serial.printf("  magnetômetro: calibrado | offset %+.1f %+.1f %+.1f µT | W %.3f %.3f %.3f | raio %.1f µT | "
-                      "resíduo %.1f %% | %d setores\n",
-                      mc.offset.x, mc.offset.y, mc.offset.z, mc.w.m[0][0], mc.w.m[1][1], mc.w.m[2][2], mc.radiusUt,
-                      g_magCal.residPct, g_magCal.sectors);
+        Serial.printf("  magnetômetro: calibrado | offset %+.1f %+.1f %+.1f µT | raio %.1f µT | resíduo %.1f %% | "
+                      "%d setores\n",
+                      mc.offset.x, mc.offset.y, mc.offset.z, mc.radiusUt, g_magCal.residPct, g_magCal.sectors);
+        Serial.printf("  magnetômetro: W = [%+.3f %+.3f %+.3f; %+.3f %+.3f %+.3f; %+.3f %+.3f %+.3f]\n", mc.w.m[0][0],
+                      mc.w.m[0][1], mc.w.m[0][2], mc.w.m[1][0], mc.w.m[1][1], mc.w.m[1][2], mc.w.m[2][0],
+                      mc.w.m[2][1], mc.w.m[2][2]);
     } else {
         Serial.println("  magnetômetro: NÃO calibrado (offset zero, escala 1, sem detecção de distúrbio): use m");
     }

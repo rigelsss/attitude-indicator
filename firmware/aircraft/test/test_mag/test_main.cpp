@@ -210,6 +210,125 @@ static void test_fit_recovers_offset_and_scale() {
         TEST_ASSERT_FLOAT_WITHIN(0.02f * r.cal.radiusUt, r.cal.radiusUt, norm(magApplyCal(r.cal, g_cloud[i])));
 }
 
+// Elipsoide inclinado: bruto = offset + D·(raio·u) + ruído, com D simétrica e acoplamento y–z
+// (como na bancada, 15/10/2026: termo fora da diagonal de ~0,07)
+static void test_fit_recovers_coupled_soft_iron() {
+    g_seed = 4242;
+    const Vec3 off = {8.3f, 6.5f, 9.9f};
+    const float D[3][3] = {{1.02f, 0.02f, 0.01f}, {0.02f, 1.10f, 0.08f}, {0.01f, 0.08f, 0.88f}};
+    int n = 0;
+    for (int i = 0; i < 1500; i++) {
+        const Vec3 u = fib(i, 1500);
+        const float p[3] = {25.9f * u.x, 25.9f * u.y, 25.9f * u.z};
+        g_cloud[n++] = {off.x + D[0][0] * p[0] + D[0][1] * p[1] + D[0][2] * p[2] + 0.1f * gauss(),
+                        off.y + D[1][0] * p[0] + D[1][1] * p[1] + D[1][2] * p[2] + 0.1f * gauss(),
+                        off.z + D[2][0] * p[0] + D[2][1] * p[1] + D[2][2] * p[2] + 0.1f * gauss()};
+    }
+    MagFitResult r;
+    TEST_ASSERT_EQUAL(MagFitStatus::Ok, magFitEllipsoid(g_cloud, n, LIM, r));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, off.x, r.cal.offset.x);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, off.y, r.cal.offset.y);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, off.z, r.cal.offset.z);
+    TEST_ASSERT_TRUE(r.residPct < 1.0f);
+    // W simétrica e W·D proporcional à identidade (D simétrica: a raiz simétrica desfaz D sem rotação)
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) {
+            TEST_ASSERT_FLOAT_WITHIN(1e-4f, r.cal.w.m[i][j], r.cal.w.m[j][i]);
+            float wd = 0;
+            for (int k = 0; k < 3; k++) wd += r.cal.w.m[i][k] * D[k][j];
+            const float k0 = r.cal.radiusUt / 25.9f;
+            TEST_ASSERT_FLOAT_WITHIN(0.01f, i == j ? k0 : 0.0f, wd);
+        }
+    // Semieixos na ordem dos eixos do modelo: y é o maior e z o menor
+    TEST_ASSERT_TRUE(r.scale.y > r.scale.x && r.scale.x > r.scale.z);
+    for (int i = 0; i < n; i += 97)
+        TEST_ASSERT_FLOAT_WITHIN(0.02f * r.cal.radiusUt, r.cal.radiusUt, norm(magApplyCal(r.cal, g_cloud[i])));
+}
+
+// Distorção com matriz cheia: bruto = offset + D·(raio·u) + ruído
+static int makeCloudMat(Vec3 *pts, int n, float radius, Vec3 off, const float D[3][3], float noise) {
+    for (int i = 0; i < n; i++) {
+        const Vec3 u = fib(i, n);
+        const float p[3] = {radius * u.x, radius * u.y, radius * u.z};
+        pts[i] = {off.x + D[0][0] * p[0] + D[0][1] * p[1] + D[0][2] * p[2] + noise * gauss(),
+                  off.y + D[1][0] * p[0] + D[1][1] * p[1] + D[1][2] * p[2] + noise * gauss(),
+                  off.z + D[2][0] * p[0] + D[2][1] * p[1] + D[2][2] * p[2] + noise * gauss()};
+    }
+    return n;
+}
+
+// Ajuste aceito, offset recuperado, W simétrica e W·D = (R/raio)·I (D simétrica)
+static void checkFitInvertsD(const Vec3 *pts, int n, float radius, Vec3 off, const float D[3][3]) {
+    MagFitResult r;
+    TEST_ASSERT_EQUAL(MagFitStatus::Ok, magFitEllipsoid(pts, n, LIM, r));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, off.x, r.cal.offset.x);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, off.y, r.cal.offset.y);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, off.z, r.cal.offset.z);
+    TEST_ASSERT_TRUE(r.residPct < 1.0f);
+    TEST_ASSERT_TRUE(magWPlausible(r.cal.w));
+    const float k0 = r.cal.radiusUt / radius;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) {
+            TEST_ASSERT_FLOAT_WITHIN(1e-4f, r.cal.w.m[i][j], r.cal.w.m[j][i]);
+            float wd = 0;
+            for (int k = 0; k < 3; k++) wd += r.cal.w.m[i][k] * D[k][j];
+            TEST_ASSERT_FLOAT_WITHIN(0.01f, i == j ? k0 : 0.0f, wd);
+        }
+}
+
+// Autovalores iguais (esfera): o Jacobi não tem direção preferida, e W tem de sair ∝ identidade
+static void test_fit_sphere_equal_eigenvalues() {
+    g_seed = 31;
+    const float D[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    const int n = makeCloudMat(g_cloud, 1500, 25.7f, {-5, 12, 3}, D, 0.1f);
+    checkFitInvertsD(g_cloud, n, 25.7f, {-5, 12, 3}, D);
+}
+
+// Dois semieixos iguais (autovalor duplo) e um diferente: D = Rx(45°)·diag(1,15, 1,15, 0,85)·Rx(45°)ᵀ,
+// com o autovalor duplo no plano de x e (0, 1, 1)
+static void test_fit_repeated_eigenvalue() {
+    g_seed = 32;
+    const float a = 1.15f, b = 0.85f;
+    const float D[3][3] = {{a, 0, 0}, {0, (a + b) / 2, (a - b) / 2}, {0, (a - b) / 2, (a + b) / 2}};
+    const int n = makeCloudMat(g_cloud, 1500, 25.7f, {8, 6, 10}, D, 0.1f);
+    checkFitInvertsD(g_cloud, n, 25.7f, {8, 6, 10}, D);
+}
+
+// Elipsoide fortemente girado: D = R·diag(1,25, 1,0, 0,8)·Rᵀ, R = Rz(45°)·Rx(45°)
+static void test_fit_strongly_rotated() {
+    g_seed = 33;
+    const float s = 0.70710678f;
+    const float R[3][3] = {{s, -s * s, s * s}, {s, s * s, -s * s}, {0, s, s}};   // Rz(45°)·Rx(45°)
+    const float L[3] = {1.25f, 1.0f, 0.8f};
+    float D[3][3];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) {
+            D[i][j] = 0;
+            for (int k = 0; k < 3; k++) D[i][j] += R[i][k] * L[k] * R[j][k];
+        }
+    const int n = makeCloudMat(g_cloud, 1500, 25.7f, {-15, 20, 5}, D, 0.1f);
+    checkFitInvertsD(g_cloud, n, 25.7f, {-15, 20, 5}, D);
+}
+
+static void test_w_plausible() {
+    TEST_ASSERT_TRUE(magWPlausible(mat3Identity()));
+    // W gravada na bancada em 15/10/2026
+    const Mat3 bench = {{{0.9741f, 0.0188f, -0.0071f}, {0.0188f, 0.9268f, -0.0742f}, {-0.0071f, -0.0742f, 1.1141f}}};
+    TEST_ASSERT_TRUE(magWPlausible(bench));
+    Mat3 w = bench;
+    w.m[1][2] = 0.05f;   // assimétrica
+    TEST_ASSERT_FALSE(magWPlausible(w));
+    // Diagonal positiva, mas indefinida: autovalores 1 + 2 e 1 − 2
+    const Mat3 indef = {{{1, 2, 0}, {2, 1, 0}, {0, 0, 1}}};
+    TEST_ASSERT_FALSE(magWPlausible(indef));
+    // Positiva definida, mas fora da faixa (autovalor 10)
+    const Mat3 big = {{{10, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+    TEST_ASSERT_FALSE(magWPlausible(big));
+    w = bench;
+    w.m[0][0] = NAN;
+    TEST_ASSERT_FALSE(magWPlausible(w));
+}
+
 static void test_fit_partial_coverage() {
     g_seed = 99;
     // Sem a calota de z > 0,75 (~12 % da esfera): ainda acerta, com 20 ou mais setores
@@ -401,6 +520,11 @@ int main(int, char **) {
     RUN_TEST(test_coverage_minimum_points_and_faces);
     RUN_TEST(test_minmax_center);
     RUN_TEST(test_fit_recovers_offset_and_scale);
+    RUN_TEST(test_fit_recovers_coupled_soft_iron);
+    RUN_TEST(test_fit_sphere_equal_eigenvalues);
+    RUN_TEST(test_fit_repeated_eigenvalue);
+    RUN_TEST(test_fit_strongly_rotated);
+    RUN_TEST(test_w_plausible);
     RUN_TEST(test_fit_partial_coverage);
     RUN_TEST(test_fit_rejects_planar_and_few);
     RUN_TEST(test_fit_rejects_bad_results);

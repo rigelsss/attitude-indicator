@@ -31,6 +31,10 @@
 
 static Mpu6050 g_mpu;
 static QueueHandle_t g_intQueue = nullptr;   // instantes (micros) dos pulsos de "data ready"
+// Pulsos que não couberam na fila (cheia: o laço ficou parado mais de MPU_INT_QUEUE_LEN períodos).
+// Só a ISR escreve; o laço só lê. Total desde o boot. O pulso perdido também aparece em "perdidas"
+// (intervalo entre pulsos), e a leitura seguinte sai pela checagem de atraso, sem dt errado na fusão.
+static volatile uint32_t g_intOverflow = 0;
 static bool g_mpuReady = false;
 static uint32_t g_mpuRetryMs = 0;            // MPU ausente: próxima tentativa de configuração
 
@@ -276,9 +280,13 @@ static void startBaro() {
 }
 
 static void printBaroLine(const BaroSample &b) {
-    if (g_baroRefValid)
+    const float alt = g_baroRefValid ? baroAltitudeM(b.pressHpa, g_baroRefHpa) : NAN;
+    if (isfinite(alt))
         Serial.printf("[baro] %6.2f °C | %8.2f hPa | alt %+6.2f m | ΔT %+5.2f °C desde o zero\n", b.tempC, b.pressHpa,
-                      baroAltitudeM(b.pressHpa, g_baroRefHpa), b.tempC - g_baroRefTempC);
+                      alt, b.tempC - g_baroRefTempC);
+    else if (g_baroRefValid)
+        Serial.printf("[baro] %6.2f °C | %8.2f hPa | alt: inválida (pressão ou zero fora da faixa)\n", b.tempC,
+                      b.pressHpa);
     else
         Serial.printf("[baro] %6.2f °C | %8.2f hPa | alt: sem zero\n", b.tempC, b.pressHpa);
 }
@@ -290,11 +298,13 @@ static void printBaroSummary() {
         return;
     }
     Serial.printf("    baro: %s | ", g_baro.ok() ? "ok" : "FALHANDO");
+    const float alt = g_baroHave && g_baroRefValid ? baroAltitudeM(g_baroLast.pressHpa, g_baroRefHpa) : NAN;
     if (!g_baroHave) Serial.print("sem leitura");
+    else if (isfinite(alt))
+        Serial.printf("%.2f hPa | alt %+.2f m | %.1f °C (ΔT %+.1f desde o zero)", g_baroLast.pressHpa, alt,
+                      g_baroLast.tempC, g_baroLast.tempC - g_baroRefTempC);
     else if (g_baroRefValid)
-        Serial.printf("%.2f hPa | alt %+.2f m | %.1f °C (ΔT %+.1f desde o zero)", g_baroLast.pressHpa,
-                      baroAltitudeM(g_baroLast.pressHpa, g_baroRefHpa), g_baroLast.tempC,
-                      g_baroLast.tempC - g_baroRefTempC);
+        Serial.printf("%.2f hPa | alt inválida | %.1f °C", g_baroLast.pressHpa, g_baroLast.tempC);
     else Serial.printf("%.2f hPa | sem zero | %.1f °C", g_baroLast.pressHpa, g_baroLast.tempC);
     Serial.printf(" | falhas %lu (seguidas %lu, recuperações %lu)\n", (unsigned long)g_baro.failTotal(),
                   (unsigned long)g_baro.failStreak(), (unsigned long)g_baro.recoveries());
@@ -622,7 +632,7 @@ static void beginSettle() {
 static void IRAM_ATTR onMpuInt() {
     uint32_t t = micros();
     BaseType_t woke = pdFALSE;
-    xQueueSendFromISR(g_intQueue, &t, &woke);
+    if (xQueueSendFromISR(g_intQueue, &t, &woke) != pdTRUE) g_intOverflow++;
     if (woke) portYIELD_FROM_ISR();
 }
 
@@ -689,10 +699,11 @@ static void printWindow() {
     Serial.printf("[A] %.0f Hz | a (g) %+.3f %+.3f %+.3f  |a| %.3f | g (°/s) %+.2f %+.2f %+.2f | T %.1f °C\n",
                   rate, mean[0], mean[1], mean[2], amod, mean[3], mean[4], mean[5], g_win.tempSum / n);
     Serial.printf("    ruído: a %.1f mg, g %.3f °/s | pico |g| %.1f °/s | saturadas a %lu g %lu | perdidas %lu | "
-                  "descartadas %lu | falhas %lu (seguidas %lu, recuperações %lu)\n",
+                  "descartadas %lu | falhas %lu (seguidas %lu, recuperações %lu) | fila cheia %lu\n",
                   sdA * 1000.0, sdG, g_win.peakGyro, (unsigned long)g_win.satAcc, (unsigned long)g_win.satGyro,
                   (unsigned long)g_win.lost, (unsigned long)g_win.stale, (unsigned long)g_mpu.failTotal(),
-                  (unsigned long)g_mpu.failStreak(), (unsigned long)g_mpu.recoveries());
+                  (unsigned long)g_mpu.failStreak(), (unsigned long)g_mpu.recoveries(),
+                  (unsigned long)g_intOverflow);
     const AngleStats *att = g_win.att;
     if (att[0].count() == 0) {
         Serial.println("    atitude: não inicializada");
@@ -1123,6 +1134,8 @@ static void printStatus() {
     const Vec3 aCor = g_cal.accelValid ? applyAccelCal(g_cal.accel, aRaw) : aRaw;
     const Vec3 gCor = applyGyroBias(gRaw, g_gyroBias);
     const float tNow = g_lastWin.tempSum / n;
+    Serial.printf("  pulsos do INT: no último 1 s, perdidos %lu e descartados %lu | fila cheia %lu desde o boot\n",
+                  (unsigned long)g_lastWin.lost, (unsigned long)g_lastWin.stale, (unsigned long)g_intOverflow);
     Serial.printf("  último 1 s (%lu amostras, %.1f °C):\n", (unsigned long)n, tNow);
     Serial.printf("    a bruto     %+.4f %+.4f %+.4f g  |a| %.4f\n", aRaw.x, aRaw.y, aRaw.z, norm(aRaw));
     Serial.printf("    a corrigido %+.4f %+.4f %+.4f g  |a| %.4f\n", aCor.x, aCor.y, aCor.z, norm(aCor));

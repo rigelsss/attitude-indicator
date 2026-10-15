@@ -33,6 +33,7 @@ BaroComp bme280Compensate(const Bme280Calib &cal, int32_t adcT, int32_t adcP, fl
 
 // Altitude em metros de p em relação a pRef, pela fórmula barométrica padrão:
 // h = 44330 · (1 − (p/pRef)^0,1903). Positiva quando p < pRef (subiu).
+// NaN se p ou pRef não forem finitas e positivas: quem chama trata como "sem altitude".
 float baroAltitudeM(float pressHpa, float refHpa);
 
 // Média e desvio padrão (populacional) de uma grandeza, de forma incremental (Welford)

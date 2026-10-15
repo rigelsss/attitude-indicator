@@ -59,6 +59,7 @@ BaroComp bme280Compensate(const Bme280Calib &cal, int32_t adcT, int32_t adcP, fl
 }
 
 float baroAltitudeM(float pressHpa, float refHpa) {
+    if (!(isfinite(pressHpa) && pressHpa > 0 && isfinite(refHpa) && refHpa > 0)) return NAN;
     return (float)(44330.0 * (1.0 - pow((double)pressHpa / refHpa, 0.1903)));
 }
 

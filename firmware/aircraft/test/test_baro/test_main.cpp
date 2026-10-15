@@ -102,6 +102,17 @@ static void test_altitude_bench_meter() {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.00f, baroAltitudeM(1009.88f, 1010.0f));
 }
 
+static void test_altitude_invalid_inputs() {
+    // Pressão ou referência não finitas, nulas ou negativas: NaN, e não um número qualquer
+    TEST_ASSERT_TRUE(isnan(baroAltitudeM(0.0f, 1010.0f)));
+    TEST_ASSERT_TRUE(isnan(baroAltitudeM(-5.0f, 1010.0f)));
+    TEST_ASSERT_TRUE(isnan(baroAltitudeM(NAN, 1010.0f)));
+    TEST_ASSERT_TRUE(isnan(baroAltitudeM(INFINITY, 1010.0f)));
+    TEST_ASSERT_TRUE(isnan(baroAltitudeM(1010.0f, 0.0f)));
+    TEST_ASSERT_TRUE(isnan(baroAltitudeM(1010.0f, -1010.0f)));
+    TEST_ASSERT_TRUE(isnan(baroAltitudeM(1010.0f, NAN)));
+}
+
 static void test_scalar_stats() {
     ScalarStats s;
     s.reset();
@@ -166,6 +177,7 @@ int main() {
     RUN_TEST(test_altitude_zero_at_reference);
     RUN_TEST(test_altitude_one_hpa_near_sea_level);
     RUN_TEST(test_altitude_bench_meter);
+    RUN_TEST(test_altitude_invalid_inputs);
     RUN_TEST(test_scalar_stats);
     RUN_TEST(test_zero_window_ok);
     RUN_TEST(test_zero_window_too_few_samples);

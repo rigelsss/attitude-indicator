@@ -62,6 +62,7 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 13/10/2026 | A | Idem, testes de controle: fios, ESP32, cabo USB, jumper e emenda avulsos | 100 kHz | Sem nada se mover, o campo repete em 0,2 µT. Fontes isoladas: jumper e emenda a 2 cm < 1 µT; ESP32 girado 1,5 µT; cabo USB 3,2 µT. Autoteste com ganho constante (0,3 %) e 3,32 V estáveis | Variações grandes (até ~23 µT e 79°) mexendo nos fios, sem causa isolada. Decisão: montagem final com tudo fixo |
 | 14/10/2026 | A | Idem, powerbank a 30, 20 e 10 cm do GY-273 | 100 kHz | Desligado: < 0,1 µT mesmo a 10 cm. Ligado, alimentando a placa B: 0,8 µT a 10 cm e 1,6 µT encostado | Powerbank irrelevante a 10 cm ou mais, desde que fixo |
 | 14/10/2026 | A | **Montagem final** na caixa de papelão (28 × 13 × 10 cm): MPU, GY-273 e BME280 numa mini protoboard no canto da caixa, ESP32 e powerbank na outra metade; jumpers macho-macho com no máximo dois conectores, sem emendas; 3V3 | 100 e 400 kHz | Dois curtos na montagem; o BME280 deixou de responder. MPU e HMC5883L intactos: `t` com 3 040 e 10 460 leituras, 0 falhas; autoteste OK; eixos do MPU confirmados (X asa direita, Y nariz, Z para cima) | MPU ~4° inclinado em roll em relação à caixa, aceito. Ver "Montagem final na caixa" |
+| 14/10/2026 | A | Montagem final, firmware `aircraft` com o magnetômetro; calibração `m` (90, 120 e 180 s) | 400 kHz | 25 leituras/s, 0 falhas. Nenhuma calibração aceita: no ar, saltos de 19 µT; na mesa, 24/24 setores, mas resíduo de 7,1 %; o ajuste do firmware bateu com o `mag_fit.py` (diferença < 0,001 µT) | Bancada perto do notebook com gradiente de ~5 µT em 10 cm; cadeira giratória com apoio de 23 cm uniforme. Falta uma extensão USB. Ver "Calibração do magnetômetro: tentativas de 14/10/2026" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -712,6 +713,28 @@ Firmware `aircraft` com o `chipToBody` da montagem final (x = Y, y = X, z = −Z
   - Em repouso, ±0,00–0,01° em cada janela de 1 s.
   - **Todos dentro da meta de ≤ 1°** do [fusao.md](fusao.md). O celular mostrou os mesmos 11° e 5°.
 - **Magnetômetro no `r`:** 25 leituras/s, 0 falhas, \|m\| 25,6–27,4 µT sem calibração.
+
+### Calibração do magnetômetro: tentativas de 14/10/2026
+
+Firmware `aircraft`, montagem final, BME280 ausente. Procedimento e conclusões em [magnetometro.md](magnetometro.md), D5.
+
+| Log | Método | Resultado |
+|---|---|---|
+| `261014-204104` | No ar, uma face para cima e giro em torno da vertical (90 s) | 12/24: o nariz nunca passou pelo norte magnético |
+| `261014-210631` | No ar, cada face apontada para o norte magnético e giro de "volante" (90 s) | 19/24; resíduo de 17,6 %; \|B\| bruto de 8 a 49 µT e um salto de 19 µT em 40 ms, impossíveis só com o campo da Terra e o hard iron da caixa |
+| `261014-211746` | Idem, 120 s | 17/24 (±y e ±z pela metade: giros de 180° num sentido só); resíduo de 12 % |
+| `261014-212227` | Fluxo `p`: mesa, mãos na caixa, junto ao peito | O corpo muda o \|m\| em ~1,7 µT |
+| `261014-212650` | Fluxo `p`: vira-e-volta (de lado, de cabeça para baixo, nariz para cima) e volta ao contorno | Volta a 0,1 µT e 0,3° do início: **boa estabilidade da montagem** nessas três posições. Não prova que nada se mova em todas as orientações nem com movimentos mais bruscos |
+| `261014-213305` | Na mesa, no lugar, cada face apoiada e giro de 360° (180 s) | **24/24** em 132 s, raio de 27,3 µT, escalas 1,00/1,14/0,86, resíduo de **7,1 %**, sem saltos. Elipsoide de 9 parâmetros: 6,1 %. O firmware bateu com o `mag_fit.py` |
+| `261014-213828` | Fluxo `p`: mapa da mesa (±10 cm, um ponto de frente para o notebook) | \|m\| corrigido de 24,9 a 29,8 µT com a proa quase igual: **gradiente de ~5 µT em 10 cm** |
+| `261014-214602` | Fluxo `p`: assento da cadeira giratória, apoio de 23 cm, fora da cadeira | \|m\| corrigido de 25,5 / 25,8 / 25,0 µT: **lugar uniforme**; o aço da cadeira não pesou nessa orientação |
+| `261014-215323` e seguintes | Cadeira com o apoio, ainda perto do notebook (cabo curto) | 16/24 aos 80 s, coleta interrompida |
+
+Conclusões:
+
+- **O ajuste numérico do firmware está confirmado:** duas coletas reais deram o mesmo resultado no firmware e no `mag_fit.py`. Parada, a caixa repete o campo em 0,1 µT. **A proa ainda não foi validada:** isso depende de uma calibração aceita e da parte 2 do roteiro (proa nivelada, compensação de inclinação, distúrbio e filtro).
+- **O problema é o lugar e o jeito de girar.** Transportar a caixa no ar, ou girá-la em torno do centro (o sensor fica num canto e percorre ~15 cm), atravessa as variações do campo perto do notebook. A calibração só corrige o que gira junto com o sensor.
+- **Próxima tentativa:** extensão USB de 2–3 m, cadeira com o apoio a 1 m ou mais do notebook, canto dos sensores perto do eixo, 360° em cada face, `d` sempre. No uso real, sem cabo, a calibração poderá vir pelo rádio (`CMD_CALIBRATE_MAG`).
 
 ## Orientação de montagem do MPU6050
 

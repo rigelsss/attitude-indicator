@@ -116,6 +116,7 @@
 #define BARO_ZERO_MIN_SAMPLES_PCT 90      // janela aceita com pelo menos este % das leituras
 #define BARO_ZERO_MAX_STD_PA     1.5f     // desvio máximo da pressão na janela (≈ 12 cm): placa parada
 #define BARO_TEMP_WARN_C         1.0f     // aviso: chip a mais disto da temperatura do zero
+#define BARO_STALE_MS            200      // telemetria: última leitura mais velha que isto, altitude inválida (5 leituras)
                                           // (TCOP do datasheet: ±1,5 Pa/K ≈ ±13 cm/K)
 #define BARO_PRINT_HZ            10       // main provisório: taxa do fluxo de altitude (comando b)
 
@@ -143,6 +144,7 @@
 #define MAG_HEADING_TAU_S        1.0f     // filtro da proa: constante de tempo da correção pelo magnetômetro
 #define MAG_MAX_PITCH_DEG        70.0f    // acima disto, sem correção pelo magnetômetro (faixa validada da fusão)
 #define MAG_MAX_DT_MS            200      // correção: maior passo considerado no ganho
+#define MAG_STALE_MS             200      // telemetria: última leitura mais velha que isto, proa só pelo giroscópio
 #define MAG_PRINT_HZ             10       // main provisório: taxa do fluxo de proa (comando p)
 
 // ---------- Rádio ----------

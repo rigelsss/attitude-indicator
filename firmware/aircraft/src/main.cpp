@@ -28,6 +28,7 @@
 #include "hmc5883l.h"
 #include "mag.h"
 #include "mag_store.h"
+#include "telemetry_flags.h"
 
 static Mpu6050 g_mpu;
 static QueueHandle_t g_intQueue = nullptr;   // instantes (micros) dos pulsos de "data ready"
@@ -1076,7 +1077,58 @@ static void fusionSample(const ImuSample &s, uint32_t intUs) {
     }
 }
 
+// ---------- Validade dos dados (campo valid do TelemetryPacket, lib/telemetry_flags) ----------
+
+static const ValidityLimits VALIDITY_LIMITS = {FUSION_MAX_DT_MS, BARO_STALE_MS, MAG_STALE_MS};
+
+static uint32_t ageMs(bool have, uint32_t tMs) {
+    return have ? millis() - tMs : AGE_NEVER;
+}
+
+static ValidityInputs validityInputs() {
+    ValidityInputs in;
+    in.attInitialized = g_att.initialized();
+    in.attDegraded = g_att.degraded();
+    in.attAgeMs = g_fusPrevValid ? (micros() - g_fusPrevIntUs) / 1000UL : AGE_NEVER;
+    in.baroOk = g_baroReady && g_baro.ok();
+    in.baroZeroValid = g_baroRefValid;
+    in.altFinite = g_baroHave && g_baroRefValid && isfinite(baroAltitudeM(g_baroLast.pressHpa, g_baroRefHpa));
+    in.baroAgeMs = ageMs(g_baroHave, g_baroLast.tMs);
+    in.hdgInitialized = g_hdg.initialized();
+    in.hdgMagSuspended = g_magStep == HeadingFilter::Mag::Tilted || g_magStep == HeadingFilter::Mag::Disturbed ||
+                         g_magStep == HeadingFilter::Mag::AttitudeDegraded || g_magStep == HeadingFilter::Mag::BadData;
+    in.magAgeMs = ageMs(g_magPrevValid, g_magPrevMs);
+    return in;
+}
+
+// Uma linha no estado (c): cada flag com o motivo quando está desligada. in é capturado no início do c:
+// as linhas anteriores levam ~100 ms na serial, e as idades medidas depois delas refletiriam a impressão
+static void printValidity(const ValidityInputs &in) {
+    const uint16_t v = telemetryValidFlags(in, VALIDITY_LIMITS);
+    Serial.print("  validade (telemetria): ATT ");
+    if (v & VAL_ATT) Serial.print("ok");
+    else if (!in.attInitialized) Serial.print("não (filtro não inicializado)");
+    else Serial.printf("não (MPU sem amostra há %lu ms)", (unsigned long)in.attAgeMs);
+    Serial.printf(" | ATT_DEGRADED %s | ALT ", (v & VAL_ATT_DEGRADED) ? "sim" : "não");
+    if (v & VAL_ALT) Serial.print("ok");
+    else if (!in.baroOk) Serial.print("não (sem barômetro)");
+    else if (!in.baroZeroValid) Serial.print("não (sem zero)");
+    else if (!in.altFinite) Serial.print("não (valor inválido)");
+    else Serial.printf("não (leitura de %lu ms atrás)", (unsigned long)in.baroAgeMs);
+    Serial.print(" | HDG ");
+    if (v & VAL_HDG) Serial.print("ok");
+    else if (!(v & VAL_ATT)) Serial.print("não (sem atitude)");
+    else Serial.print("não (filtro da proa não inicializado)");
+    Serial.print(" | HDG_GYRO_ONLY ");
+    if (!(v & VAL_HDG_GYRO_ONLY)) Serial.print("não");
+    else if (in.attDegraded) Serial.print("sim (ATITUDE_DEGRADADA)");
+    else if (in.magAgeMs > VALIDITY_LIMITS.magMaxAgeMs) Serial.print("sim (magnetômetro sem leitura recente)");
+    else Serial.printf("sim (%s)", magStateText());
+    Serial.printf(" | valid = 0x%04X\n", v);
+}
+
 static void printStatus() {
+    const ValidityInputs validity = validityInputs();   // antes de imprimir (ver printValidity)
     Serial.println("[A] estado da calibração");
     if (g_cal.accelValid) {
         const AccelCal &c = g_cal.accel;
@@ -1123,6 +1175,7 @@ static void printStatus() {
     Serial.printf("  magnetômetro: ±%.1f Ga, %.0f Hz, média de %d, leitura a %d Hz\n", MAG_RANGE_MGA / 1000.0f,
                   MAG_OUTPUT_HZ, MAG_AVG_SAMPLES, MAG_READ_HZ);
     printMagSummary();
+    printValidity(validity);
 
     const uint32_t n = g_lastWin.samples;
     if (n == 0) {

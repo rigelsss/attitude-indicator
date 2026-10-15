@@ -1,10 +1,10 @@
 """Conferência da calibração do magnetômetro fora do firmware (docs/magnetometro.md, D8).
 
 Lê os pontos impressos pela tecla d (revisão da calibração, comando m) num log do monitor serial,
-refaz o ajuste do elipsoide alinhado aos eixos (6 parâmetros, o mesmo do firmware) e ajusta também o
-elipsoide completo (9 parâmetros, com acoplamentos entre eixos). Mostra:
-  - se o ajuste do firmware bate com o de 6 parâmetros feito aqui;
-  - quanto o elipsoide completo reduz o resíduo (critério para a evolução do D4).
+ajusta o elipsoide completo (9 parâmetros, com acoplamentos entre eixos, o mesmo do firmware desde
+15/10/2026) e o alinhado aos eixos (6 parâmetros, o do firmware antes disso). Mostra:
+  - se o ajuste do firmware bate com o equivalente feito aqui (9 ou 6 parâmetros, conforme o log);
+  - quanto o elipsoide completo reduz o resíduo em relação ao alinhado aos eixos.
 
 Uso (a partir de firmware/aircraft):
     python tools/mag_fit.py                 # último log em logs/
@@ -37,6 +37,10 @@ def ler_coleta(caminho):
         if l.startswith("# firmware"):
             for chave, valor in re.findall(r"(\w+)=(\S+)", l):
                 firmware[chave] = valor
+            # o status tem espaços ("resíduo acima do limite"): vai até o campo b=
+            m = re.search(r"status=(.*?) b=", l)
+            if m:
+                firmware["status"] = m.group(1)
             continue
         partes = l.strip().split(",")
         if len(partes) == 3:
@@ -55,7 +59,7 @@ def residuo_pct(pts, b, w, r):
 
 
 def ajuste_6(pts):
-    """A·x² + B·y² + C·z² + D·x + E·y + F·z = 1, com normalização (igual ao firmware)."""
+    """A·x² + B·y² + C·z² + D·x + E·y + F·z = 1, com normalização (firmware até 15/10/2026)."""
     c0 = pts.mean(axis=0)
     s0 = np.sqrt(np.mean(np.sum((pts - c0) ** 2, axis=1)))
     u = (pts - c0) / s0
@@ -73,7 +77,7 @@ def ajuste_6(pts):
 
 
 def ajuste_9(pts):
-    """Elipsoide completo: x·M·x + v·x = 1 (M simétrica). W = raiz simétrica de M normalizada."""
+    """Elipsoide completo: x·M·x + v·x = 1 (M simétrica). W = raiz simétrica de M normalizada (igual ao firmware)."""
     c0 = pts.mean(axis=0)
     s0 = np.sqrt(np.mean(np.sum((pts - c0) ** 2, axis=1)))
     u = (pts - c0) / s0
@@ -94,6 +98,21 @@ def ajuste_9(pts):
     return c0 + s0 * cu, w, r
 
 
+def comparar_firmware(fw, b, w, r):
+    """Compara o ajuste do firmware (linha # firmware) com o ajuste equivalente feito aqui."""
+    bf = np.array([float(t) for t in fw["b"].split(",")])
+    wv = [float(t) for t in fw["w"].split(",")]
+    wf = np.array(wv).reshape(3, 3) if len(wv) == 9 else np.diag(wv)
+    rf = float(fw["R"])
+    print(f"  firmware: status {fw.get('status')} | offset {bf} | raio {rf:.3f} | resíduo {float(fw['resid']):.3f} %")
+    print(f"  W do firmware =\n{wf}")
+    d_off = np.max(np.abs(bf - b))
+    d_w = np.max(np.abs(wf - w))
+    ok = d_off < 0.05 and d_w < 1e-3 and abs(rf - r) < 0.05
+    print(f"  diferença: offset {d_off:.4f} µT, W {d_w:.5f}, raio {abs(rf - r):.4f} µT -> "
+          f"{'BATE' if ok else 'NÃO BATE'}")
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")   # acentos e µ no console do Windows
     if len(sys.argv) > 1:
@@ -106,23 +125,15 @@ def main():
     pts, fw = ler_coleta(caminho)
     print(f"arquivo: {caminho}\npontos: {len(pts)}")
     np.set_printoptions(precision=3, suppress=True)
+    # Até 15/10/2026 o firmware usava o ajuste de 6 parâmetros (w com 3 valores); depois, o de 9
+    fw9 = bool(fw) and len(fw["w"].split(",")) == 9
 
     b6, w6, r6 = ajuste_6(pts)
     res6 = residuo_pct(pts, b6, w6, r6)
-    print("\n6 parâmetros (alinhado aos eixos, como no firmware)")
+    print("\n6 parâmetros (alinhado aos eixos)")
     print(f"  offset {b6} µT | W diag {np.diag(w6)} | raio {r6:.3f} µT | resíduo {res6:.3f} %")
-
-    if fw:
-        bf = np.array([float(t) for t in fw["b"].split(",")])
-        wf = np.array([float(t) for t in fw["w"].split(",")])
-        rf = float(fw["R"])
-        print(f"  firmware: status {fw.get('status')} | offset {bf} | W diag {wf} | raio {rf:.3f} | "
-              f"resíduo {float(fw['resid']):.3f} %")
-        d_off = np.max(np.abs(bf - b6))
-        d_w = np.max(np.abs(wf - np.diag(w6)))
-        ok = d_off < 0.05 and d_w < 1e-3 and abs(rf - r6) < 0.05
-        print(f"  diferença: offset {d_off:.4f} µT, W {d_w:.5f}, raio {abs(rf - r6):.4f} µT -> "
-              f"{'BATE' if ok else 'NÃO BATE'}")
+    if fw and not fw9:
+        comparar_firmware(fw, b6, w6, r6)
 
     try:
         b9, w9, r9 = ajuste_9(pts)
@@ -130,11 +141,13 @@ def main():
         print(f"\n9 parâmetros: {e}")
         return
     res9 = residuo_pct(pts, b9, w9, r9)
-    print("\n9 parâmetros (elipsoide completo)")
+    print("\n9 parâmetros (elipsoide completo, como no firmware desde 15/10/2026)")
     print(f"  offset {b9} µT | raio {r9:.3f} µT | resíduo {res9:.3f} %")
     print(f"  W =\n{w9}")
     fora = np.max(np.abs(w9 - np.diag(np.diag(w9))))
     print(f"  maior termo fora da diagonal: {fora:.4f}")
+    if fw9:
+        comparar_firmware(fw, b9, w9, r9)
     print(f"\nresíduo: 6 parâmetros {res6:.3f} % -> 9 parâmetros {res9:.3f} % "
           f"(redução de {(1 - res9 / res6) * 100 if res6 > 0 else 0:.0f} %)")
 

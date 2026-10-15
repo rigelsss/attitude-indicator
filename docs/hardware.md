@@ -842,6 +842,19 @@ Log `261015-170459`. Caixa nivelada na cadeira, giros de ~90° em ~1,5–2,5 s (
 - **Sem deriva parada:** nos trechos de 10–20 s parada, a filtrada variou até 0,1°.
 - Paradas: 99,0 → 191,6 → 283,2 → 10,7 → 99,5° no horário, e 10,7 → 282,8 → 190,7 → 98,2° no anti-horário. \|m\| de 25,0 a 25,7 µT, sem `DISTURBIO`.
 
+### Flags de validade da telemetria (contrato v2, 15/10/2026)
+
+Log `261015-203538`. Firmware com o contrato v2, BMP280 ainda ausente, caixa na mesa. Linha "validade" do `c`:
+
+| Momento | Linha "validade" | `valid` |
+|---|---|---|
+| Parada, depois do boot | ATT ok, ATT_DEGRADED não, ALT não (sem barômetro), HDG ok, HDG_GYRO_ONLY não | `0x0009` |
+| Chave de fenda a 1–2 cm (\|m\| 19,2–21,6 µT, `DISTÚRBIO`) | HDG_GYRO_ONLY sim (DISTURBIO) | `0x0019` |
+| Chave afastada | volta ao estado inicial | `0x0009` |
+
+- Boot com `TelemetryPacket = 56 bytes` (era 49): o layout novo está no firmware.
+- As flags seguiram as regras de `lib/telemetry_flags`. Durante o distúrbio, a proa filtrada ficou em 101,0°, contra 98,7–98,8° antes e depois. `ALT` e `ATT_DEGRADED` ligados ficam para conferir com o BMP280 e numa saturação do giroscópio.
+
 ## Orientação de montagem do MPU6050
 
 ### Montagem final (14/10/2026, em uso)

@@ -30,6 +30,8 @@
 #include "mag_store.h"
 #include "telemetry_flags.h"
 
+extern const char *const BUILD_STAMP;   // build_info.cpp: data e hora da compilação
+
 static Mpu6050 g_mpu;
 static QueueHandle_t g_intQueue = nullptr;   // instantes (micros) dos pulsos de "data ready"
 // Pulsos que não couberam na fila (cheia: o laço ficou parado mais de MPU_INT_QUEUE_LEN períodos).
@@ -439,7 +441,9 @@ static void magCalFree() {
 }
 
 static void magCalStart() {
-    if (g_mode != CalMode::None) {
+    // A coleta não usa a janela do giroscópio: pode começar durante a calibração do boot (que só confirma
+    // com a caixa parada e, até lá, usa o bias salvo). As outras calibrações continuam bloqueando o m
+    if (g_mode != CalMode::None && g_mode != CalMode::GyroBoot) {
         Serial.println("[mag] espere a calibração em andamento terminar");
         return;
     }
@@ -1372,8 +1376,8 @@ void setup() {
     Serial.begin(115200);
     delay(500);
     pinMode(PIN_LED_STATUS, OUTPUT);
-    Serial.printf("[A] boot — TelemetryPacket = %u bytes (main provisório: MPU6050 e calibração)\n",
-                  (unsigned)sizeof(TelemetryPacket));
+    Serial.printf("[A] boot — compilado em %s — TelemetryPacket = %u bytes (main provisório: MPU6050 e "
+                  "calibração)\n", BUILD_STAMP, (unsigned)sizeof(TelemetryPacket));
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_FREQ_HZ);
     Wire.setTimeOut(I2C_TIMEOUT_MS);   // vale para o barramento inteiro e sobrevive a Wire.end()/begin()
     g_intQueue = xQueueCreate(MPU_INT_QUEUE_LEN, sizeof(uint32_t));

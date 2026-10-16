@@ -10,10 +10,13 @@
 #include "config.h"
 #include "telemetry.h"
 
+extern const char *const BUILD_STAMP;   // build_info.cpp: data e hora da compilação
+
 void setup() {
     Serial.begin(115200);
     pinMode(PIN_LED_LINK, OUTPUT);
-    Serial.printf("[B] boot — TelemetryPacket = %u bytes\n", (unsigned)sizeof(TelemetryPacket));
+    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes\n", BUILD_STAMP,
+                  (unsigned)sizeof(TelemetryPacket));
 }
 
 void loop() {

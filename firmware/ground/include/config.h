@@ -33,5 +33,11 @@
 #define WS_PORT          81
 #define WS_RATE_HZ       30
 
+// ---------- Proa ----------
+// Declinação magnética na bancada (WMM2025, João Pessoa, 13/10/2026; docs/magnetometro.md), negativa
+// para oeste. O pacote traz a proa MAGNÉTICA; só a exibição (TFT e página, via "decl" no JSON) mostra a
+// verdadeira: proa verdadeira = magnética + declinação, com o rótulo MAG ou VERD
+#define MAG_DECLINATION_DEG  -20.7f
+
 // MAC da Placa A (avião)
 static const uint8_t PEER_MAC[6] = {0x1C, 0x69, 0x20, 0xA4, 0xE9, 0x44};

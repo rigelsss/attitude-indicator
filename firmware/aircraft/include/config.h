@@ -1,9 +1,14 @@
 // config.h — ESP A (avião): pinagem e parâmetros
 #pragma once
 
-// ---------- I2C (barramento único) ----------
+// ---------- I2C ----------
+// Barramento 0 (Wire): sensores (MPU6050, BME280/BMP280, HMC5883L)
 #define PIN_I2C_SDA      21
 #define PIN_I2C_SCL      22
+// Barramento 1 (Wire1): OLED de status, separado para um quadro (~12 ms) não atrasar o MPU (plano.md,
+// semana 3). GPIO 32 e 33: uso geral, fora dos pinos de strapping e da flash. Ainda sem uso
+#define PIN_I2C1_SDA     32
+#define PIN_I2C1_SCL     33
 #define I2C_FREQ_HZ      400000
 #define I2C_FREQ_DIAG_HZ 100000   // diagnóstico: mais tolerante a fios longos e soldas ruins
 #define I2C_TIMEOUT_MS   5        // limite por transação (padrão do Wire: 50 ms); 128 bytes a 400 kHz ≈ 3 ms
@@ -51,8 +56,10 @@
                                        // atendido entre elas (abaixo do período do BME280, 40 ms)
 #define MPU_RETRY_MS            2000   // MPU6050 ausente: nova tentativa de configuração
 #define MAIN_PRINT_MS           1000   // main provisório: intervalo do resumo na serial
-#define SERIAL_TX_BUFFER_BYTES  1024   // buffer de transmissão da serial: as impressões não bloqueiam o laço
-                                       // (resumo + fluxo a 10 Hz ≈ 4 kB/s, abaixo dos ~11,5 kB/s de 115200)
+#define SERIAL_TX_BUFFER_BYTES  4096   // buffer de transmissão da serial: as impressões não bloqueiam o laço
+                                       // (resumo + fluxo a 10 Hz ≈ 4 kB/s, abaixo dos ~11,5 kB/s de 115200).
+                                       // O c imprime ~1,4 kB de uma vez: com 1 kB, o laço bloqueava ~30 ms,
+                                       // perto do reinício da fusão (FUSION_MAX_DT_MS)
 
 // ---------- Calibração do MPU6050 (docs/calibracao.md) ----------
 #define CAL_WINDOW_MS                 2000    // janela de média: 400 amostras a 200 Hz
@@ -118,8 +125,8 @@
 #define BARO_REF_MIN_HPA         300.0f   // p0 aceito: faixa de operação do BME280/BMP280 (300..1100 hPa)
 #define BARO_REF_MAX_HPA         1100.0f
 #define BARO_TEMP_WARN_C         1.0f     // aviso: chip a mais disto da temperatura do zero
-#define BARO_STALE_MS            200      // telemetria: última leitura mais velha que isto, altitude inválida (5 leituras)
                                           // (TCOP do datasheet: ±1,5 Pa/K ≈ ±13 cm/K)
+#define BARO_STALE_MS            200      // telemetria: última leitura mais velha que isto, altitude inválida (5 leituras)
 #define BARO_PRINT_HZ            10       // main provisório: taxa do fluxo de altitude (comando b)
 
 // ---------- HMC5883L: proa magnética (docs/magnetometro.md) ----------

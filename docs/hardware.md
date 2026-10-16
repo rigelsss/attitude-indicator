@@ -855,6 +855,14 @@ Log `261015-203538`. Firmware com o contrato v2, BMP280 ainda ausente, caixa na 
 - Boot com `TelemetryPacket = 56 bytes` (era 49): o layout novo está no firmware.
 - As flags seguiram as regras de `lib/telemetry_flags`. Durante o distúrbio, a proa filtrada ficou em 101,0°, contra 98,7–98,8° antes e depois. `ALT` e `ATT_DEGRADED` ligados ficam para conferir com o BMP280 e numa saturação do giroscópio.
 
+### Buffer da serial e `m` durante a calibração do boot (15/10/2026)
+
+Logs `261015-214828` (firmware antigo: a gravação não tinha acontecido) e `261015-215433` (firmware novo). Caixa na mesa, BMP280 ainda ausente.
+
+- **Buffer de 1 kB (antigo):** cada `c` (~1,4 kB) deixou o laço parado ~55 ms, com `descartados 11 | reinícios 1` no fluxo `a`: **o `c` reiniciava a fusão.**
+- **Buffer de 4 kB (novo):** 6 `c` com o `a` ligado. Em 5 deles, `descartados 0 | reinícios 0`. Em 1, `descartados 13 | reinícios 1`: nesse instante, a nova tentativa do barômetro ausente (a cada 5 s) imprimiu o erro do núcleo (`[E][Wire.cpp:499] requestFrom()`) no meio da saída do `c`. Esse log do núcleo não passa pelo buffer do `Serial` e esperou a transmissão em curso, parando o laço ~65 ms. Sem o `c`, o mesmo erro não causa descarte. Com o BMP280 ligado, a tentativa deixa de existir. Nas tasks (semana 3), a serial fica numa task de baixa prioridade.
+- **`m` durante a calibração do giroscópio do boot:** com a caixa balançando, o giroscópio recusou janelas, e o `m` começou a coleta normalmente (antes: "espere a calibração em andamento terminar"). O `x` cancelou ("calibração anterior mantida"). O `z` continuou bloqueado. Com a caixa parada, o giroscópio calibrou e o magnetômetro seguiu com a mesma calibração.
+
 ## Orientação de montagem do MPU6050
 
 ### Montagem final (14/10/2026, em uso)

@@ -48,3 +48,4 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - Placa A (avião): MAC 1C:69:20:A4:E9:44, ESP32-D0WD-V3 rev 3.1, COM7
 - Placa B (solo): MAC 14:33:5C:03:8A:B4, COM7
 - As duas usam a COM7 (uma de cada vez), então a porta não identifica a placa. O `firmware/shared/scripts/check_board_mac.py` confere o MAC antes de `upload`/`uploadfs` e cancela se não bater com o `custom_board_mac` do ambiente.
+- A linha de boot dos dois firmwares mostra `compilado em AAAA-MM-DD HH:MM:SS` (`firmware/shared/scripts/build_stamp.py` e `src/build_info.cpp`). Antes de analisar um log de bancada, conferir se o carimbo é da última compilação: um `upload` que falhou (por exemplo, com o monitor aberto na COM7) deixa o firmware antigo na placa.

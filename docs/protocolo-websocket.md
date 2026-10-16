@@ -7,7 +7,7 @@ Endpoint: `ws://192.168.4.1:81/` (IP padrão do AP do ESP32). Página: `http://1
 ```json
 {
   "t": 123456,
-  "roll": -3.2, "pitch": 1.8, "hdg": 274.5,
+  "roll": -3.2, "pitch": 1.8, "hdg": 274.5, "decl": -20.7,
   "gx": 0.1, "gy": -0.3, "gz": 0.0,
   "alt": 1.2, "hpa": 1013.2, "temp": 26.4,
   "status": 55, "valid": 13,
@@ -15,6 +15,8 @@ Endpoint: `ws://192.168.4.1:81/` (IP padrão do AP do ESP32). Página: `http://1
   "alarm": { "bank": false, "pitch": false, "link": false }
 }
 ```
+
+`hdg` é a proa **magnética**, como no `TelemetryPacket`. `decl` é a declinação magnética do local (`MAG_DECLINATION_DEG` no `config.h` do B, negativa para oeste): a página mostra a proa verdadeira como `hdg + decl`, levada a 0..360, com o rótulo "VERD", ou a magnética com "MAG".
 
 Campos de `TelemetryPacket` com nomes curtos, mais o bloco `link`, que é calculado pelo B (pacotes perdidos via `seq`, taxa real, idade do último pacote).
 

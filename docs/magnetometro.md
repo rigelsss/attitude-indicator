@@ -209,7 +209,7 @@ O que a bancada mostrou:
 
 | Tecla | Quando | Ação |
 |---|---|---|
-| `m` | Modo normal | Calibração do magnetômetro (D5). Recusada se outra calibração estiver em andamento ou se o HMC estiver falhando |
+| `m` | Modo normal | Calibração do magnetômetro (D5). Recusada se outra calibração estiver em andamento (exceto a do giroscópio no boot, desde 15/10/2026: a coleta não usa o giroscópio) ou se o HMC estiver falhando |
 | `x` | Coleta | Cancela |
 | `s` / `x` / `d` | Revisão | Grava / descarta / imprime os pontos em CSV |
 | `p` | Modo normal | Liga ou desliga o fluxo de proa a 10 Hz |
@@ -293,7 +293,7 @@ O `printHelp()` passa a listar `m` e `p`.
 - **Desalinhamento entre o GY-273 e a caixa.** A rotação de montagem (`z`) corrige só o MPU. Um desalinhamento de poucos graus do GY-273 vira um erro de proa de poucos graus, que aumenta com a inclinação. A soft iron não corrige rotação. É aceitável num modelo de bancada.
 - **Distorções que se movem em relação à caixa:** cabo USB, mão, mesa de aço, objetos próximos. A calibração não as corrige. O filtro (D6) só atenua as passageiras.
 - **Referência de proa na bancada:** a bússola do celular tem erro de alguns graus e também sofre com metal. Os testes medem principalmente **giros relativos**, por exemplo de 90° alinhando com a borda da mesa, e a repetibilidade.
-- **Proa magnética, sem declinação.** Em João Pessoa, a declinação é de −20,7°: o norte verdadeiro fica 20,7° no sentido horário a partir do norte magnético. Isso fica documentado, não corrigido.
+- **Proa magnética no A.** Em João Pessoa, a declinação é de −20,7°: o norte verdadeiro fica 20,7° no sentido horário a partir do norte magnético, e a bússola do celular (norte verdadeiro) difere da proa do A por isso. Desde 15/10/2026, a declinação fica no `config.h` do B (`MAG_DECLINATION_DEG`) e é aplicada só na exibição (TFT e página, semanas 4 e 5): proa verdadeira = magnética + declinação. O pacote continua com a proa magnética.
 
 ## Roteiro de validação na bancada
 

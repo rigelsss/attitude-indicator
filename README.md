@@ -39,16 +39,17 @@ ESP A (avião) ──ESP-NOW──▶ ESP B (solo) ──Wi-Fi AP / WebSocket─
 
 ### Pinagem do ESP A
 
-Todos os módulos I2C compartilham o mesmo barramento, alimentados em 3V3.
+Os sensores compartilham o barramento I2C principal, alimentados em 3V3. O OLED de status vai num segundo barramento (`Wire1`), para a atualização da tela não atrasar o MPU.
 
 | Sinal | GPIO | Ligação |
 |---|---|---|
 | I2C SDA | 21 | SDA de todos os módulos |
 | I2C SCL | 22 | SCL de todos os módulos |
+| I2C1 SDA / SCL (OLED de status) | 32 / 33 | SDA e SCL do OLED 0,91" (ainda não ligado) |
 | INT do MPU6050 | 19 | Pino INT da GY-521 ("data ready"). Passe este fio separado do SDA e do SCL: as bordas do pulso induzem ruído no I2C |
 | LED de status | 2 | LED da própria placa |
 
-Na GY-521, deixe **AD0 desconectado** (a placa já o mantém em nível baixo, o que seleciona o endereço `0x68`) e **XDA e XCL desconectados**. Endereços esperados: MPU6050 `0x68`, HMC5883L `0x1E`, BME280 `0x76`, OLED `0x3C`.
+Na GY-521, deixe **AD0 desconectado** (a placa já o mantém em nível baixo, o que seleciona o endereço `0x68`) e **XDA e XCL desconectados**. Endereços esperados: MPU6050 `0x68`, HMC5883L `0x1E`, BME280/BMP280 `0x76` e, no segundo barramento, OLED `0x3C`.
 
 ### Pinagem do ESP B
 
@@ -122,6 +123,8 @@ No estado atual, o ESP A configura o MPU6050, o magnetômetro e o barômetro, ca
 | `p` | Liga ou desliga o fluxo de proa (~10 Hz): proa filtrada, proa do magnetômetro, proa sem compensação, \|m\|, inclinação magnética, roll, pitch e estado |
 
 O LED da placa pisca uma vez por segundo. O ESP B só inicializa a serial e pisca o LED.
+
+Feche o monitor antes de gravar: ele prende a porta, e o `upload` falha. A primeira linha do boot mostra `compilado em AAAA-MM-DD HH:MM:SS`, o que confirma que a placa está com o firmware que acabou de ser gravado.
 
 Para só compilar, omita `-t upload`. Se houver mais de uma placa conectada, defina `upload_port` e `monitor_port` no `platformio.ini` correspondente, ou passe `-p COMx` no monitor.
 

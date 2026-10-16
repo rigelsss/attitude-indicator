@@ -549,6 +549,16 @@ static void test_mat3_is_rotation() {
     TEST_ASSERT_FALSE(mat3IsRotation(bad, 1e-3f));
 }
 
+static void test_mat3_rotation_angle() {
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.0f, mat3RotationAngleDeg(mat3Identity()));
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 30.0f, mat3RotationAngleDeg(rotX(30)));
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 90.0f, mat3RotationAngleDeg(rotY(-90)));
+    // Montagem da bancada (roll −3,28°, pitch +2,52°): ~4,1° no total
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 4.13f, mat3RotationAngleDeg(mul(rotX(-3.28f), rotY(2.52f))));
+    const Mat3 bad = {{{NAN, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+    TEST_ASSERT_TRUE(isnan(mat3RotationAngleDeg(bad)));
+}
+
 // Repouso da calibração de montagem: rotação lenta constante passa pelo desvio, não pela média
 static void test_level_window_rejects_slow_rotation() {
     const RestLimits lim = {0.15f, 0.95f, 1.05f};
@@ -626,6 +636,7 @@ int main() {
     RUN_TEST(test_mount_preserves_nose);
     RUN_TEST(test_mount_rejects);
     RUN_TEST(test_mat3_is_rotation);
+    RUN_TEST(test_mat3_rotation_angle);
     RUN_TEST(test_level_window_rejects_slow_rotation);
     RUN_TEST(test_angle_stats);
     return UNITY_END();

@@ -418,6 +418,8 @@ static void test_disturbed() {
     TEST_ASSERT_TRUE(magDisturbed(31.0f, 26.2f, 15.0f));
     TEST_ASSERT_TRUE(magDisturbed(21.0f, 26.2f, 15.0f));
     TEST_ASSERT_FALSE(magDisturbed(80.0f, 0.0f, 15.0f));   // sem calibração: sem detecção
+    TEST_ASSERT_TRUE(magDisturbed(NAN, 26.2f, 15.0f));      // |m| inválido conta como distúrbio
+    TEST_ASSERT_TRUE(magDisturbed(INFINITY, 26.2f, 15.0f));
 }
 
 // ---------- Filtro da proa ----------

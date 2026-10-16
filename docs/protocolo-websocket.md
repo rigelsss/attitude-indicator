@@ -18,7 +18,7 @@ Endpoint: `ws://192.168.4.1:81/` (IP padrão do AP do ESP32). Página: `http://1
 
 Campos de `TelemetryPacket` com nomes curtos, mais o bloco `link`, que é calculado pelo B (pacotes perdidos via `seq`, taxa real, idade do último pacote).
 
-### `status` e `valid` (contrato v2, `TELEMETRY_VERSION` 2)
+### `status` e `valid` (contrato v3, `TELEMETRY_VERSION` 3)
 
 Os dois são números (bitmask), copiados do `TelemetryPacket` ([telemetry.h](../firmware/shared/include/telemetry.h)):
 
@@ -30,7 +30,7 @@ Os dois são números (bitmask), copiados do `TelemetryPacket` ([telemetry.h](..
 | 0 | 1 | `VAL_ATT` | Filtro de atitude inicializado e última amostra do MPU com até 50 ms | Desligada: horizonte riscado |
 | 1 | 2 | `VAL_ATT_DEGRADED` | Com `VAL_ATT`: giroscópio saturou e a correção pelo acelerômetro está se recuperando | Atitude em amarelo |
 | 2 | 4 | `VAL_ALT` | Barômetro ok, zero válido, última leitura com até 200 ms e altitude finita | Desligada: altitude "---" |
-| 3 | 8 | `VAL_HDG` | Filtro da proa inicializado e `VAL_ATT` | Desligada: proa "---" |
+| 3 | 8 | `VAL_HDG` | Filtro da proa inicializado, `VAL_ATT` e magnetômetro calibrado (sem calibração a proa pode errar dezenas de graus) | Desligada: proa "---" |
 | 4 | 16 | `VAL_HDG_GYRO_ONLY` | Com `VAL_HDG`: correção pelo magnetômetro suspensa (atitude degradada, ligada já no mesmo pacote de `VAL_ATT_DEGRADED`; distúrbio; inclinação acima de 70°) ou magnetômetro sem leitura há mais de 200 ms. A proa segue só pelo giroscópio e pode derivar | Proa em amarelo, com "GIRO" |
 
 No exemplo acima, `valid` = 13 = `VAL_ATT` + `VAL_ALT` + `VAL_HDG`: tudo válido, com a proa corrigida pelo magnetômetro.
@@ -50,5 +50,7 @@ O enlace caído (o A parou de transmitir) não tem flag: o B o detecta pela idad
 O B traduz para `CommandPacket` (ESP-NOW) e repassa o `AckPacket` do A:
 
 ```json
-{ "ack": "calibrate_gyro", "ok": true }
+{ "ack": "calibrate_gyro", "result": "done", "ok": true }
 ```
+
+`result` vem do `AckPacket.result` (contrato v3): `"rejected"` (não executado), `"accepted"` (recebido e iniciado; nos comandos demorados, um `"done"` vem depois) ou `"done"` (concluído). `ok` continua por compatibilidade e vale `true` só com `"done"`. O B casa cada ACK com o comando pelo `cmd_seq` (o `seq` do `CommandPacket` confirmado) e descarta ACK duplicado ou atrasado. A lógica dos estados entra com os comandos (semana 5); a v3 só reserva os campos.

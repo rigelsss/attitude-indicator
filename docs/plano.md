@@ -15,6 +15,8 @@ Cada etapa termina com algo **demonstrável**. Tópico da disciplina entre colch
 ## Pendências para a semana 3 (rádio)
 
 > **Contrato v2 feito em 15/10/2026** (adiantado, sem o rádio): `TELEMETRY_VERSION` 2, cabeçalho de 8 bytes com todos os campos alinhados e conferidos por `static_assert`, campo `valid` com as flags `VAL_ATT`, `VAL_ATT_DEGRADED`, `VAL_ALT`, `VAL_HDG` e `VAL_HDG_GYRO_ONLY` (regras em `lib/telemetry_flags`, testadas no `native`), linha "validade" no `c` e protocolo WebSocket atualizado. O "dado antigo" entrou como idade máxima dentro de cada flag (`FUSION_MAX_DT_MS`, `BARO_STALE_MS`, `MAG_STALE_MS`). **Fica para a semana 3:** montar e enviar o pacote, e no B copiar o buffer com `memcpy` e descartar outras versões. Os dois itens abaixo ficam como registro da decisão.
+
+> **Contrato v3, também em 15/10/2026:** `AckPacket` com `result` (`ACK_REJECTED`, `ACK_ACCEPTED`, `ACK_DONE`, só reservados; a lógica entra na semana 5) e `cmd_seq` (o `seq` do comando confirmado), sem mudar os 12 bytes; `VAL_HDG` passou a exigir o magnetômetro calibrado.
 - **Flags de validade no `TelemetryPacket`** (revisão de 13/10/2026). Hoje o `status` só informa a saúde dos sensores (`ST_MPU_OK`, `ST_BARO_OK`…) e o estado da calibração. Faltam estados explícitos para o B saber quando um dado não pode ser exibido:
   - **atitude inicializada:** o filtro ainda espera a média inicial, ou reiniciou por uma lacuna;
   - **atitude degradada:** giroscópio saturado, recuperando a correção;
@@ -25,6 +27,20 @@ Cada etapa termina com algo **demonstrável**. Tópico da disciplina entre colch
 
   O B usa essas flags para mostrar o dado como indisponível (horizonte riscado, altitude "---"), em vez de congelar o último valor. Isso muda o contrato: atualizar os dois firmwares, incrementar `TELEMETRY_VERSION` e espelhar no `docs/protocolo-websocket.md`.
 - **Alinhamento do contrato** (junto com as flags, para a versão subir uma vez só). O `MsgHeader` tem 5 bytes, então `t_ms` e todos os floats ficam em offsets ímpares. Acessar o campo direto pelo struct funciona, mas um ponteiro `float *p = &pkt.roll` causa `LoadStoreAlignment` no Xtensa. Correção: cabeçalho de 8 bytes, com bytes de reserva. No B, o callback do ESP-NOW copia o `data` com `memcpy` para uma struct local antes de enfileirar, e nunca faz cast do ponteiro: o buffer recebido não tem alinhamento garantido.
+
+## Cronograma da revisão de 15/10/2026
+
+Itens de uma revisão externa (numeração dela), distribuídos pela etapa em que o assunto aparece:
+
+- **Semana 2 (agora):**
+  - 2 (ACK com `cmd_seq`) e 4 (`VAL_HDG` sem calibração): **feitos** no contrato v3;
+  - 6 (`m` bloqueado durante a calibração do giroscópio do boot), 9 (buffer da serial), 10 (declinação) e 12 (comentários e pinos do `Wire1` no `config.h`): rápidos, no código da semana 2. **Falta o texto original dos itens 6, 9 e 10** para avaliar;
+  - 5 (reinício da fusão): tema da semana 2, mas não bloqueia nada. Pode ir até a semana 6, antes da montagem no modelo;
+  - 17 (sincronizar o plano): esta seção.
+- **Semana 3 (tasks e rádio):** 7 (perdas pelo `seq`), 8 (camada única de comandos), 11 (callback de envio do ESP-NOW) e a primeira parte do 3 (filtrar o remetente pelo `PEER_MAC` no callback de recepção do A).
+- **Semana 4 (TFT):** 1 (sprite e heap) e 13 (GPIO 5 como CS do TFT).
+- **Semana 5 (web e comandos):** a segunda parte do 3 (validar o `arg` do `CMD_SET_RATE_HZ`), 15 (senha do AP) e a lógica dos estados do ACK (aceito, concluído, recusado).
+- **Folga (semana 7):** 14 (`upload_port` fixo; o risco de gravar a placa errada já é coberto pelo `check_board_mac.py`) e 16 (CI, **já feito** em 15/10; na folga, só ampliações).
 
 ## Decisões para a semana 3 (revisão de 13/10/2026)
 - **B em `WIFI_AP_STA`.** No ESP32, a interface STA usa o MAC base e o softAP usa o MAC base + 1. O `PEER_MAC` do A é o MAC base do B (`…:8A:B4`). Em `WIFI_AP` puro, o B só receberia em `…:8A:B5`, e os pacotes não chegariam. Com `WIFI_AP_STA`, o MAC base continua valendo. O B nunca chama `WiFi.begin()`, para o STA não varrer canais e tirar o rádio do canal 1.

@@ -73,7 +73,7 @@ h = 44330 · (1 − (p/p₀)^0,1903), a fórmula barométrica padrão, com p₀ 
 ## Zero
 
 1. **No boot e depois de uma reconfiguração com o zero em andamento:** espera `BARO_SETTLE_MS` (2 s) pelo filtro IIR, que começa da primeira medição.
-2. **Janela de `BARO_ZERO_WINDOW_MS` (2 s, ~50 leituras):** p₀ é a **média** da janela. No diagnóstico, zerar com uma leitura só errou até 0,33 m. Uma janela com média ou desvio não finitos é recusada (defesa; o driver não produziu esse valor na bancada).
+2. **Janela de `BARO_ZERO_WINDOW_MS` (2 s, ~50 leituras):** p₀ é a **média** da janela. No diagnóstico, zerar com uma leitura só errou até 0,33 m. Uma janela com média ou desvio não finitos é recusada (defesa; o driver não produziu esse valor na bancada). Desde 15/10/2026, também é recusada uma média fora de `BARO_REF_MIN_HPA`..`BARO_REF_MAX_HPA` (300 a 1100 hPa, a faixa de operação do chip), como leituras zeradas: a serial mostra "p0 fora de ..." e mede de novo.
 3. **Aceite:** a janela só vale com pelo menos 90 % das leituras e com desvio da pressão até `BARO_ZERO_MAX_STD_PA` (1,5 Pa ≈ 12 cm). Se não passar, a janela é medida de novo.
 4. **Comando `0`:** zera de novo, sem a espera do passo 1.
 

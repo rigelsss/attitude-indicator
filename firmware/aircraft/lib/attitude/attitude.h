@@ -117,6 +117,9 @@ Mat3 mat3Identity();
 Vec3 mat3Apply(const Mat3 &r, const Vec3 &v);
 // Linhas unitárias e ortogonais e determinante +1, dentro de tol
 bool mat3IsRotation(const Mat3 &r, float tol);
+// Ângulo da rotação r (graus, 0..180), pelo traço: acos((tr − 1)/2). Só faz sentido com mat3IsRotation(r);
+// NaN se r não for finita
+float mat3RotationAngleDeg(const Mat3 &r);
 
 struct MountResult {
     Mat3  r;                 // eixos nominais do modelo (chipToBody) → eixos da caixa

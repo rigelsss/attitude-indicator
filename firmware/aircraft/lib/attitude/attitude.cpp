@@ -191,6 +191,12 @@ bool mat3IsRotation(const Mat3 &r, float tol) {
     return fabsf(dot(row[0], cross(row[1], row[2])) - 1.0f) <= tol;
 }
 
+float mat3RotationAngleDeg(const Mat3 &r) {
+    const float tr = r.m[0][0] + r.m[1][1] + r.m[2][2];
+    if (!isfinite(tr)) return NAN;
+    return acosf(fminf(1.0f, fmaxf(-1.0f, (tr - 1.0f) / 2.0f))) * RAD2DEG;
+}
+
 // Ângulo (graus) entre a força específica unitária u e a de repouso nivelado (0, 0, −1)
 static float tiltDeg(const Vec3 &u) {
     return acosf(fminf(1.0f, fmaxf(-1.0f, -u.z))) * RAD2DEG;

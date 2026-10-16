@@ -115,6 +115,8 @@
 #define BARO_ZERO_WINDOW_MS      2000     // janela de zero: média de ~50 leituras
 #define BARO_ZERO_MIN_SAMPLES_PCT 90      // janela aceita com pelo menos este % das leituras
 #define BARO_ZERO_MAX_STD_PA     1.5f     // desvio máximo da pressão na janela (≈ 12 cm): placa parada
+#define BARO_REF_MIN_HPA         300.0f   // p0 aceito: faixa de operação do BME280/BMP280 (300..1100 hPa)
+#define BARO_REF_MAX_HPA         1100.0f
 #define BARO_TEMP_WARN_C         1.0f     // aviso: chip a mais disto da temperatura do zero
 #define BARO_STALE_MS            200      // telemetria: última leitura mais velha que isto, altitude inválida (5 leituras)
                                           // (TCOP do datasheet: ±1,5 Pa/K ≈ ±13 cm/K)

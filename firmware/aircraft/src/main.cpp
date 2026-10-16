@@ -235,7 +235,8 @@ static void baroZeroSample(const BaroSample &b) {
     g_bzTemp.add(b.tempC);
     if (b.tMs - g_bzStartMs < BARO_ZERO_WINDOW_MS) return;
 
-    const BaroZeroResult r = evaluateZeroWindow(g_bzPress, g_bzTemp, BARO_ZERO_MIN_SAMPLES, BARO_ZERO_MAX_STD_PA);
+    const BaroZeroResult r = evaluateZeroWindow(g_bzPress, g_bzTemp, BARO_ZERO_MIN_SAMPLES, BARO_ZERO_MAX_STD_PA,
+                                                BARO_REF_MIN_HPA, BARO_REF_MAX_HPA);
     if (r.status == BaroZeroCheck::Ok) {
         g_baroRefValid = true;
         g_baroRefHpa = r.refHpa;
@@ -251,6 +252,9 @@ static void baroZeroSample(const BaroSample &b) {
                       "medindo de novo\n", r.stdPa, BARO_ZERO_MAX_STD_PA);
     else if (r.status == BaroZeroCheck::Invalid)
         Serial.println("[baro] zero recusado: leitura inválida (não finita) na janela; medindo de novo");
+    else if (r.status == BaroZeroCheck::OutOfRange)
+        Serial.printf("[baro] zero recusado: p0 = %.2f hPa fora de %.0f–%.0f hPa (leitura absurda); medindo de novo\n",
+                      r.refHpa, BARO_REF_MIN_HPA, BARO_REF_MAX_HPA);
     else
         Serial.printf("[baro] zero recusado: %lu leituras, mínimo %lu; medindo de novo\n",
                       (unsigned long)g_bzPress.count(), (unsigned long)BARO_ZERO_MIN_SAMPLES);
@@ -1386,7 +1390,8 @@ void setup() {
         g_gyroBias = g_cal.gyroBias;   // provisório até a janela deste boot ser aceita
         g_gyroBiasTempC = g_cal.gyroTempC;
     }
-    levelStoreLoad(g_level);
+    levelStoreLoad(g_level, LEVEL_MAX_TILT_DEG);
+    if (g_level.rejected) Serial.println("[A] NVS: calibração de montagem com valores impossíveis, ignorada. Refaça com z");
     if (g_level.valid && !sameAccelCal(g_level.accelCalValid, g_level.accelCal, g_cal.accelValid, g_cal.accel)) {
         g_level = LevelData();
         Serial.println("[A] NVS: montagem medida com outra calibração do acelerômetro, ignorada. Refaça com z");

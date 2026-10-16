@@ -330,6 +330,11 @@ MagFitStatus magFitEllipsoid(const Vec3 *pts, size_t n, const MagFitLimits &lim,
             cal.w.m[i][j] = (float)s;
         }
     cal.radiusUt = (float)R;
+    // Rede de segurança numérica: as checagens acima já excluem os casos conhecidos
+    bool finite = isfinite(cal.radiusUt) && finite3(cal.offset);
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) finite = finite && isfinite(cal.w.m[i][j]);
+    if (!finite) return out.status = MagFitStatus::NotEllipsoid;
     int perm[3];
     axisOrder(V, perm);
     out.scale = {(float)(r[perm[0]] / rMean), (float)(r[perm[1]] / rMean), (float)(r[perm[2]] / rMean)};
@@ -379,6 +384,7 @@ MagTilt magTiltCompensate(const Vec3 &m, float rollDeg, float pitchDeg) {
 
 bool magDisturbed(float normUt, float refRadiusUt, float pct) {
     if (!(refRadiusUt > 0)) return false;
+    if (!isfinite(normUt)) return true;   // |m| inválido não pode ser tratado como campo limpo
     return fabsf(normUt - refRadiusUt) > refRadiusUt * pct / 100.0f;
 }
 

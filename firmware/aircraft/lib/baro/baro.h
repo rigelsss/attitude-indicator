@@ -58,6 +58,7 @@ enum class BaroZeroCheck : uint8_t {
     TooFewSamples,   // janela incompleta (falhas de leitura ou chip reconfigurado)
     Unstable,        // desvio da pressão acima do limite: placa mexida ou ar agitado
     Invalid,         // média ou desvio não finitos (leitura inválida na janela)
+    OutOfRange,      // pressão média fora da faixa plausível (leituras zeradas ou absurdas)
 };
 
 struct BaroZeroResult {
@@ -67,6 +68,7 @@ struct BaroZeroResult {
     float tempC;     // temperatura média do chip na janela
 };
 
-// Avalia a janela de zero: pressão em Pa (estatística em Pa para o limite ficar em Pa) e temperatura em °C
+// Avalia a janela de zero: pressão em Pa (estatística em Pa para o limite ficar em Pa) e temperatura em °C.
+// A média tem de ficar em minHpa..maxHpa (faixa de operação do chip) para virar p0.
 BaroZeroResult evaluateZeroWindow(const ScalarStats &pressPa, const ScalarStats &tempC, uint32_t minSamples,
-                                  float maxStdPa);
+                                  float maxStdPa, float minHpa, float maxHpa);

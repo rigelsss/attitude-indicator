@@ -79,13 +79,14 @@ void ScalarStats::add(double v) {
 double ScalarStats::stddev() const { return n_ > 0 ? sqrt(m2_ / n_) : 0.0; }
 
 BaroZeroResult evaluateZeroWindow(const ScalarStats &pressPa, const ScalarStats &tempC, uint32_t minSamples,
-                                  float maxStdPa) {
+                                  float maxStdPa, float minHpa, float maxHpa) {
     BaroZeroResult r;
     r.refHpa = (float)(pressPa.mean() / 100.0);
     r.stdPa = (float)pressPa.stddev();
     r.tempC = (float)tempC.mean();
     if (pressPa.count() < minSamples) r.status = BaroZeroCheck::TooFewSamples;
     else if (!isfinite(r.refHpa) || !isfinite(r.stdPa) || !isfinite(r.tempC)) r.status = BaroZeroCheck::Invalid;
+    else if (r.refHpa < minHpa || r.refHpa > maxHpa) r.status = BaroZeroCheck::OutOfRange;
     else if (r.stdPa > maxStdPa) r.status = BaroZeroCheck::Unstable;
     else r.status = BaroZeroCheck::Ok;
     return r;

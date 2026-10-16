@@ -136,7 +136,7 @@ static void fillWindow(ScalarStats &p, ScalarStats &t, uint32_t n, double ampPa)
 static void test_zero_window_ok() {
     ScalarStats p, t;
     fillWindow(p, t, 50, 0.3);
-    const BaroZeroResult r = evaluateZeroWindow(p, t, 45, 1.5f);
+    const BaroZeroResult r = evaluateZeroWindow(p, t, 45, 1.5f, 300.0f, 1100.0f);
     TEST_ASSERT_EQUAL(BaroZeroCheck::Ok, r.status);
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 1010.17f, r.refHpa);
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.3f, r.stdPa);
@@ -146,13 +146,13 @@ static void test_zero_window_ok() {
 static void test_zero_window_too_few_samples() {
     ScalarStats p, t;
     fillWindow(p, t, 30, 0.3);
-    TEST_ASSERT_EQUAL(BaroZeroCheck::TooFewSamples, evaluateZeroWindow(p, t, 45, 1.5f).status);
+    TEST_ASSERT_EQUAL(BaroZeroCheck::TooFewSamples, evaluateZeroWindow(p, t, 45, 1.5f, 300.0f, 1100.0f).status);
 }
 
 static void test_zero_window_unstable() {
     ScalarStats p, t;
     fillWindow(p, t, 50, 3.0);   // placa mexida: ±3 Pa ≈ ±25 cm
-    TEST_ASSERT_EQUAL(BaroZeroCheck::Unstable, evaluateZeroWindow(p, t, 45, 1.5f).status);
+    TEST_ASSERT_EQUAL(BaroZeroCheck::Unstable, evaluateZeroWindow(p, t, 45, 1.5f, 300.0f, 1100.0f).status);
 }
 
 // Uma leitura não finita contamina média e desvio; antes, a janela era aceita com p0 = NaN
@@ -160,10 +160,27 @@ static void test_zero_window_rejects_non_finite() {
     ScalarStats p, t;
     fillWindow(p, t, 50, 0.3);
     p.add(NAN);
-    TEST_ASSERT_EQUAL(BaroZeroCheck::Invalid, evaluateZeroWindow(p, t, 45, 1.5f).status);
+    TEST_ASSERT_EQUAL(BaroZeroCheck::Invalid, evaluateZeroWindow(p, t, 45, 1.5f, 300.0f, 1100.0f).status);
     fillWindow(p, t, 50, 0.3);
     t.add(NAN);
-    TEST_ASSERT_EQUAL(BaroZeroCheck::Invalid, evaluateZeroWindow(p, t, 45, 1.5f).status);
+    TEST_ASSERT_EQUAL(BaroZeroCheck::Invalid, evaluateZeroWindow(p, t, 45, 1.5f, 300.0f, 1100.0f).status);
+}
+
+// Janela estável, mas com pressão absurda (leituras zeradas ou fora da faixa do chip): não vira p0
+static void test_zero_window_out_of_range() {
+    ScalarStats p, t;
+    for (int i = 0; i < 50; i++) {
+        p.add(0.0);
+        t.add(24.5);
+    }
+    TEST_ASSERT_EQUAL(BaroZeroCheck::OutOfRange, evaluateZeroWindow(p, t, 45, 1.5f, 300.0f, 1100.0f).status);
+    p.reset();
+    for (int i = 0; i < 50; i++) p.add(125000.0);   // 1250 hPa
+    TEST_ASSERT_EQUAL(BaroZeroCheck::OutOfRange, evaluateZeroWindow(p, t, 45, 1.5f, 300.0f, 1100.0f).status);
+    // Nos limites, aceita
+    p.reset();
+    for (int i = 0; i < 50; i++) p.add(30000.0);
+    TEST_ASSERT_EQUAL(BaroZeroCheck::Ok, evaluateZeroWindow(p, t, 45, 1.5f, 300.0f, 1100.0f).status);
 }
 
 int main() {
@@ -183,5 +200,6 @@ int main() {
     RUN_TEST(test_zero_window_too_few_samples);
     RUN_TEST(test_zero_window_unstable);
     RUN_TEST(test_zero_window_rejects_non_finite);
+    RUN_TEST(test_zero_window_out_of_range);
     return UNITY_END();
 }

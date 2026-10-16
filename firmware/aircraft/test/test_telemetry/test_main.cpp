@@ -21,6 +21,7 @@ static ValidityInputs allGood() {
     in.altFinite = true;
     in.baroAgeMs = 40;
     in.hdgInitialized = true;
+    in.magCalibrated = true;
     in.hdgMagSuspended = false;
     in.magAgeMs = 40;
     return in;
@@ -98,6 +99,15 @@ static void test_heading_rules() {
     TEST_ASSERT_BITS_LOW(VAL_HDG | VAL_HDG_GYRO_ONLY, telemetryValidFlags(in, LIM));
 }
 
+// Sem calibração do magnetômetro a proa pode errar dezenas de graus: VAL_HDG (e o qualificador) desligam
+static void test_heading_requires_mag_calibration() {
+    ValidityInputs in = allGood();
+    in.magCalibrated = false;
+    TEST_ASSERT_EQUAL_HEX16(VAL_ATT | VAL_ALT, telemetryValidFlags(in, LIM));
+    in.hdgMagSuspended = true;
+    TEST_ASSERT_BITS_LOW(VAL_HDG | VAL_HDG_GYRO_ONLY, telemetryValidFlags(in, LIM));
+}
+
 static void test_nothing_valid() {
     ValidityInputs in;
     memset(&in, 0, sizeof(in));
@@ -131,7 +141,7 @@ static void test_packet_roundtrip_bytes() {
     memcpy(buf + 1, &p, sizeof(p));   // buffer de recepção desalinhado de propósito
     TelemetryPacket q;
     memcpy(&q, buf + 1, sizeof(q));
-    TEST_ASSERT_EQUAL_UINT8(2, q.hdr.version);
+    TEST_ASSERT_EQUAL_UINT8(TELEMETRY_VERSION, q.hdr.version);
     TEST_ASSERT_EQUAL_HEX16(0xBEEF, q.hdr.seq);
     TEST_ASSERT_EQUAL_FLOAT(-12.5f, q.roll);
     TEST_ASSERT_EQUAL_FLOAT(271.25f, q.heading);
@@ -142,6 +152,30 @@ static void test_packet_roundtrip_bytes() {
     TEST_ASSERT_EQUAL_HEX8(0, buf[1 + 51]);
 }
 
+// ACK: result e cmd_seq atravessam um buffer desalinhado nos offsets do contrato (9 e 10)
+static void test_ack_roundtrip_bytes() {
+    AckPacket a;
+    memset(&a, 0, sizeof(a));
+    a.hdr.magic = TELEMETRY_MAGIC;
+    a.hdr.version = TELEMETRY_VERSION;
+    a.hdr.type = MSG_ACK;
+    a.hdr.seq = 7;
+    a.cmd = CMD_ZERO_ALTITUDE;
+    a.result = ACK_DONE;
+    a.cmd_seq = 0x1234;
+    uint8_t buf[sizeof(AckPacket) + 3];
+    memcpy(buf + 3, &a, sizeof(a));
+    AckPacket b;
+    memcpy(&b, buf + 3, sizeof(b));
+    TEST_ASSERT_EQUAL_UINT8(3, b.hdr.version);
+    TEST_ASSERT_EQUAL_UINT8(CMD_ZERO_ALTITUDE, b.cmd);
+    TEST_ASSERT_EQUAL_UINT8(ACK_DONE, b.result);
+    TEST_ASSERT_EQUAL_HEX16(0x1234, b.cmd_seq);
+    TEST_ASSERT_EQUAL_HEX8(ACK_DONE, buf[3 + 9]);
+    TEST_ASSERT_EQUAL_HEX8(0x34, buf[3 + 10]);   // little-endian
+    TEST_ASSERT_EQUAL_HEX8(0x12, buf[3 + 11]);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_all_valid);
@@ -149,8 +183,10 @@ int main(int, char **) {
     RUN_TEST(test_attitude_degraded_only_with_attitude);
     RUN_TEST(test_altitude_rules);
     RUN_TEST(test_heading_rules);
+    RUN_TEST(test_heading_requires_mag_calibration);
     RUN_TEST(test_nothing_valid);
     RUN_TEST(test_flags_fit_and_do_not_overlap);
     RUN_TEST(test_packet_roundtrip_bytes);
+    RUN_TEST(test_ack_roundtrip_bytes);
     return UNITY_END();
 }

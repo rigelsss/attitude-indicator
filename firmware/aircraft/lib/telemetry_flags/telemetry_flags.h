@@ -17,6 +17,7 @@ struct ValidityInputs {
     bool     altFinite;          // baroAltitudeM() finita
     uint32_t baroAgeMs;          // desde a última leitura válida do barômetro
     bool     hdgInitialized;     // HeadingFilter::initialized()
+    bool     magCalibrated;      // há calibração do magnetômetro carregada (sem ela, VAL_HDG desliga)
     bool     hdgMagSuspended;    // última correção da proa suspensa (distúrbio, inclinação alta, atitude degradada)
     uint32_t magAgeMs;           // desde a última leitura válida do magnetômetro
 };
@@ -28,6 +29,6 @@ struct ValidityLimits {
     uint32_t magMaxAgeMs;
 };
 
-// Monta o campo valid. VAL_ATT_DEGRADED só com VAL_ATT, VAL_HDG só com VAL_ATT, e VAL_HDG_GYRO_ONLY
+// Monta o campo valid. VAL_ATT_DEGRADED só com VAL_ATT, VAL_HDG só com VAL_ATT e calibração, e VAL_HDG_GYRO_ONLY
 // só com VAL_HDG: sem o dado, o qualificador não tem sentido.
 uint16_t telemetryValidFlags(const ValidityInputs &in, const ValidityLimits &lim);

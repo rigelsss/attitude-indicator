@@ -1099,6 +1099,7 @@ static ValidityInputs validityInputs() {
     in.altFinite = g_baroHave && g_baroRefValid && isfinite(baroAltitudeM(g_baroLast.pressHpa, g_baroRefHpa));
     in.baroAgeMs = ageMs(g_baroHave, g_baroLast.tMs);
     in.hdgInitialized = g_hdg.initialized();
+    in.magCalibrated = g_magCal.valid;
     in.hdgMagSuspended = g_magStep == HeadingFilter::Mag::Tilted || g_magStep == HeadingFilter::Mag::Disturbed ||
                          g_magStep == HeadingFilter::Mag::AttitudeDegraded || g_magStep == HeadingFilter::Mag::BadData;
     in.magAgeMs = ageMs(g_magPrevValid, g_magPrevMs);
@@ -1122,6 +1123,7 @@ static void printValidity(const ValidityInputs &in) {
     Serial.print(" | HDG ");
     if (v & VAL_HDG) Serial.print("ok");
     else if (!(v & VAL_ATT)) Serial.print("não (sem atitude)");
+    else if (!in.magCalibrated) Serial.print("não (magnetômetro sem calibração)");
     else Serial.print("não (filtro da proa não inicializado)");
     Serial.print(" | HDG_GYRO_ONLY ");
     if (!(v & VAL_HDG_GYRO_ONLY)) Serial.print("não");

@@ -53,7 +53,7 @@ Cada passo termina com: compilar `aircraft`, rodar `pio test -e native`, fazer a
 | 2 | Barômetro (`BaroZero` + `baro_service`) | zero do boot, `0`, `b`, SDA do BMP280 solto | feito em 20/10 (build: RAM 24 248 B, flash 363 941 B; 10 casos novos no `test_baro`; bancada abaixo) |
 | 3+4 | Magnetômetro: `MagCalibrator` + `mag_service` (agenda, proa, distúrbio, calibração `m`). Juntos em 20/10: a leitura entrega os pontos à coleta, e separar exigiria um gancho provisório | roteiro base; `p` com ímã perto do módulo; `m` cancelado com `x`; `m` completo com `d` e `s` | feito em 20/10 (build: RAM 24 384 B, flash 364 769 B; 7 casos novos no `test_mag`; bancada abaixo; `s` de uma calibração aceita não conferido) |
 | 5 | Fusão (`imuToBody` + `FusionCore`) | `a`, inclinações conhecidas, métricas iguais às da base | feito em 20/10 (build: RAM 24 408 B, flash 365 229 B; `test_fusion` com 10 casos; bancada e A/B abaixo; variação de ±50 µs no dt, pendência 5) |
-| 6a | Calibração do giroscópio + coordenador | `g`, calibração do boot, `m` durante a calibração do boot | — |
+| 6a | Calibração do giroscópio + coordenador (`GyroCalFlow`, `CalCoordinator`, `cal_service` com a carga da NVS, inclusive a montagem) | `g` parado e balançando, boot balançando, `m` durante a calibração do boot, `z` durante um `g` | feito em 20/10 (build: RAM 24 608 B, flash 366 137 B; `test_cal_flow` com 18 casos; `main.cpp` com 891 linhas; bancada abaixo) |
 | 6b | Seis posições + montagem | `z` completo; `6`: entrada, uma posição, cancelamento | — |
 | 7 | Aquisição (`lib/acq`) | `r`, `c`, INT solto, métricas iguais às da base | — |
 | 8 | Console (`src/console.cpp`) | roteiro base inteiro, mensagem a mensagem | — |
@@ -225,6 +225,66 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
   - O passo 5 mudou o tempo entre o pulso e a impressão do `a` e a posição do código. Com isso, a cópia da UART passou a coincidir com os pulsos. Isso explicaria também o atraso bimodal do passo 3+4 e a alternância do custo do filtro na linha de base.
 - **Decisão (autor, 20/10):** fechar o passo 5 como está e corrigir o caminho da INT na semana 3 (pendência 5). A média observada do dt permanece em 5,01 ms, e não foi identificado impacto nos testes realizados. O efeito durante movimentos variáveis não foi quantificado (pendência 5).
 - **Passo 5 fechado.**
+
+**Passo 6a (log `261020-181722`, carimbo `2026-10-20 18:16:11`, três boots).**
+
+- **Roteiro base, parte:** boot, `r`, `a` e `c`. O `b`, o `p` e o `0` não foram rodados; o barômetro e o magnetômetro não mudaram neste passo.
+  - Boot: linha `[A] NVS: …` igual à de antes, giroscópio calibrado e zero aceito (0,45 Pa).
+  - `r`, 6 janelas: 199–200 Hz, com perdidas, descartadas, falhas e fila cheia em 0, e o magnetômetro com 25 leituras/s.
+  - `a`, 36 linhas:
+    - atraso de 112–117 µs;
+    - custo do filtro médio de 54–68 µs e máximo de 172–192 µs. A primeira linha, com 1 amostra, deu 105/105 µs;
+    - ambíguos, descartados e reinícios em 0.
+  - `c`: `valid = 0x000D` e giroscópio corrigido em +0,007 +0,002 −0,005 °/s.
+- **dt da fusão:** 5,00/5,01/5,01 ms em todas as linhas do `a`. A variação de ±50 µs do passo 5 não apareceu neste build. Isso reforça a hipótese de que ela depende da posição do código (pendência 5). Nada foi corrigido, então a pendência continua.
+- **Calibração do giroscópio:**
+
+  | Teste | Linhas | Resultado |
+  |---|---|---|
+  | `g` parado | 128–129 | aceito: bias −4,862 +2,597 +1,141 °/s, diferença entre janelas de 0,011 °/s e 0,009° |
+  | `g` balançando | 130–137 | `recusado: placa em movimento` (41,98 °/s) e `mantido o bias anterior`, sem nova tentativa. O `c` seguinte mostrou o mesmo bias do `g` parado, como `DEFINITIVO (deste boot)` |
+  | Boot balançando | 169–175 | duas recusas (29,2 e 16,7 °/s), cada uma seguida de um novo `mantenha a placa parada…` e sem `mantido`; depois, aceito |
+  | `m` durante a calibração do boot | 194–204 | a coleta começou, sem `espere a calibração em andamento terminar`. O giroscópio foi aceito no meio da coleta (linha 199), e o `x` cancelou com `calibração anterior mantida` |
+  | `z` durante um `g` | 205–207 | `[mont] espere a calibração em andamento terminar`, e depois o `g` foi aceito |
+
+  - Nas cinco calibrações aceitas (três boots e dois `g`), o bias variou até 0,033 °/s (de −4,843 a −4,876 °/s no x), com a temperatura entre 29,2 e 29,5 °C.
+- **Mensagens:** com o mesmo texto e a mesma ordem de antes.
+
+**Passo 6a, complemento (log `261020-182139`, mesmo carimbo).** O resto do roteiro base (`b`, `p`, `0` e `c`), com a caixa parada.
+
+- **Boot:** giroscópio calibrado e zero aceito (0,57 Pa).
+- **`b`:** 57 linhas a 10 Hz, com a altitude entre −0,09 e +0,07 m.
+- **`p`:** 45 linhas a 10 Hz, todas no estado `ok`, com a proa em ~91°.
+- **`0`:** zero aceito (0,41 Pa).
+- **`c`:**
+  - `giroscópio: DEFINITIVO (deste boot)`;
+  - `altitude: zero p0 = 1009.78 hPa`;
+  - `valid = 0x000D`;
+  - perdidos, descartados e fila cheia em 0.
+- **Captura do boot com falha:** nas linhas 14–15, sumiu um trecho, do `DLPF` do MPU até o fim da ajuda, e ~30 bytes do `mantenha a placa parada` saíram duplicados.
+  - Com o mesmo binário, os três boots do log anterior saíram inteiros.
+  - O firmware não descarta bytes: o `Serial.write` espera quando o buffer de 4 kB enche, e o boot imprime ~1 kB.
+  - **Conclusão provável:** é uma falha na captura do lado do PC, na abertura do monitor junto com o boot, e não uma regressão. Se aparecer de novo com o monitor já aberto antes do boot, investigar.
+
+**Passo 6a, correção da revisão (20/10, antes do commit).**
+
+- **Início da próxima janela:** no código conferido acima, a próxima janela do giroscópio abria antes das mensagens `[cal]`. O instante era lido antes do `feed()`.
+  - Antes da refatoração, ela abria depois das mensagens: na inconsistência, na recusa do boot, na volta ao boot depois do `g` e no `endSix()`.
+  - Com o buffer da serial cheio (`r` ou `d` em curso), o tempo de bloqueio sairia da janela, que poderia ficar abaixo das 360 amostras.
+  - **Correção:** o coordenador deixa a próxima janela pendente, e o serviço a abre com `startPendingWindow(micros())` depois de imprimir.
+- **Testes novos:**
+  - média de duas janelas diferentes dentro do limite: bias de 0,50 e 0,52 °/s dá 0,51 °/s, e 24 e 26 °C dão 25 °C;
+  - temperatura da candidata depois de uma inconsistência;
+  - janela pendente até ser aberta.
+- **Bancada (log `261020-183137`, carimbo `2026-10-20 18:30:38`):**
+  - **Boot:** aceito na segunda janela, com bias −4,665 +2,555 +1,180 °/s a 27,1 °C e diferença entre as janelas de 0,003 °/s e 0,012°. A candidata passou pela janela pendente, e a janela seguinte veio completa.
+  - **`g` balançando:** `recusado: placa em movimento` (19,8 °/s), com 400 amostras, e `mantido o bias anterior`.
+  - **`c`:**
+    - o mesmo bias, como `DEFINITIVO (deste boot)`;
+    - `valid = 0x000D`;
+    - perdidos, descartados e fila cheia em 0.
+  - **`g` parado:** não foi rodado à parte. A calibração do boot passa pelo mesmo caminho do coordenador (candidata → janela pendente → aceite); só muda o tipo.
+- **Passo 6a fechado.**
 
 ## Pendências (fora da refatoração)
 

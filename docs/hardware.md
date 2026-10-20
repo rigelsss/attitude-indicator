@@ -950,6 +950,22 @@ O passo 5 não mexe na ISR. A hipótese é que o carimbo `micros()` da ISR do GP
 
 Também neste dia, com um calço mais alto, a meia diferença entre lados opostos deu 21,97° de roll e 9,53° de pitch, contra ~20–21° e ~9–10° no inclinômetro do celular. O ponto médio entre os lados repetiu a caixa nivelada (log `261020-150426`).
 
+### `z` refeito na montagem final (20/10/2026)
+
+Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo `2026-10-20 18:53:13`). A caixa foi encostada pelo nariz e, girada 180°, pela cauda, na mesma referência.
+
+| Medida (sem correção de montagem) | Roll | Pitch |
+|---|---|---|
+| Posição 1 (nariz na referência) | −2,83° | +2,82° |
+| Posição 2 (girada 180°, cauda na referência) | −2,48° | +1,06° |
+| **Módulo (resultado, gravado)** | **−2,66°** | **+1,94°** |
+| Mesa | −0,18° | +0,88° |
+
+- **Conferência:** o módulo é a média das duas medidas e a mesa é a meia diferença, como previsto em [fusao.md](fusao.md). Logo depois do `s`, com a caixa ainda na posição 2, o `c` deu atitude de roll +0,16° e pitch −0,92°. Esse é o oposto da mesa vista na posição 1, como deve ser.
+- **Persistência:** no boot seguinte, apareceu `NVS: … montagem calibrada`, e o `c` mostrou os mesmos −2,66° / +1,94°.
+- **Diferença para o `z` de 14/10** (módulo em −3,28° / +2,52°, mesa em −0,95° / −0,23°): +0,62° em roll e −0,58° em pitch. Isso passa da repetibilidade do assento medida em 13/10 (0,26°). A mesa também mudou, então a caixa estava em outro ponto da mesa. A causa provável é o assento do fundo de papelão ou o módulo ter se acomodado depois de uma semana de manuseio. Não indica erro no cálculo, que fecha na conferência acima. A montagem será refeita no modelo final.
+- **Medida recusada:** na segunda posição, duas medidas foram recusadas por `caixa em movimento` (20,9 e 30,6 °/s), e o firmware pediu a mesma posição de novo.
+
 ## Orientação de montagem do MPU6050
 
 ### Montagem final (14/10/2026, em uso)

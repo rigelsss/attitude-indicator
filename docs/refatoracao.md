@@ -54,7 +54,7 @@ Cada passo termina com: compilar `aircraft`, rodar `pio test -e native`, fazer a
 | 3+4 | Magnetômetro: `MagCalibrator` + `mag_service` (agenda, proa, distúrbio, calibração `m`). Juntos em 20/10: a leitura entrega os pontos à coleta, e separar exigiria um gancho provisório | roteiro base; `p` com ímã perto do módulo; `m` cancelado com `x`; `m` completo com `d` e `s` | feito em 20/10 (build: RAM 24 384 B, flash 364 769 B; 7 casos novos no `test_mag`; bancada abaixo; `s` de uma calibração aceita não conferido) |
 | 5 | Fusão (`imuToBody` + `FusionCore`) | `a`, inclinações conhecidas, métricas iguais às da base | feito em 20/10 (build: RAM 24 408 B, flash 365 229 B; `test_fusion` com 10 casos; bancada e A/B abaixo; variação de ±50 µs no dt, pendência 5) |
 | 6a | Calibração do giroscópio + coordenador (`GyroCalFlow`, `CalCoordinator`, `cal_service` com a carga da NVS, inclusive a montagem) | `g` parado e balançando, boot balançando, `m` durante a calibração do boot, `z` durante um `g` | feito em 20/10 (build: RAM 24 608 B, flash 366 137 B; `test_cal_flow` com 18 casos; `main.cpp` com 891 linhas; bancada abaixo) |
-| 6b | Seis posições + montagem | `z` completo; `6`: entrada, uma posição, cancelamento | — |
+| 6b | Seis posições + montagem (`SixPoseFlow`, `MountFlow`, comandos do coordenador, `CalService::handleKey`) | `z` completo com `s` e persistência; `z` com medida recusada; `6`: entrada, uma posição, cancelamento | código em 20/10 (build: RAM 24 832 B, flash 366 665 B; `test_cal_flow` com 23 casos; `main.cpp` com 630 linhas; bancada abaixo) |
 | 7 | Aquisição (`lib/acq`) | `r`, `c`, INT solto, métricas iguais às da base | — |
 | 8 | Console (`src/console.cpp`) | roteiro base inteiro, mensagem a mensagem | — |
 
@@ -286,6 +286,35 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
   - **`g` parado:** não foi rodado à parte. A calibração do boot passa pelo mesmo caminho do coordenador (candidata → janela pendente → aceite); só muda o tipo.
 - **Passo 6a fechado.**
 
+**Passo 6b (logs `261020-185412` e `261020-185947`, carimbo `2026-10-20 18:53:13`).**
+
+- **Roteiro base** (log `185947`): as mensagens são as mesmas da linha de base.
+  - `r`, 11 janelas: 199–200 Hz, com perdidas, descartadas, falhas e fila cheia em 0, e o magnetômetro com 25 leituras/s.
+  - `a`, 82 linhas:
+    - dt de 5,00–5,01/5,01/5,01 ms, de novo sem a variação de ±50 µs;
+    - atraso de 108–117 µs;
+    - custo do filtro médio de 41–44 µs e máximo de 120–136 µs. A primeira linha, com 1 amostra, deu 81/81 µs;
+    - ambíguos, descartados e reinícios em 0.
+  - `b`: 60 linhas a 10 Hz. `p`: 71 linhas, todas no estado `ok`.
+  - Zero com 1,17 Pa no boot e 0,28 Pa no `0`. `c` com `valid = 0x000D`.
+- **`6`, entrada e uma posição:**
+  - Log `185947`: a posição 1 foi aceita (`[cal] ok: +0.0806 +0.0329 +1.1068 g`) e veio o pedido da posição 2. O `x` deu `seis posições canceladas`, sem recomeçar o giroscópio, porque o bias deste boot já existia. O `c` seguinte mostrou o acelerômetro sem mudança.
+  - Log `185412`, uma tentativa anterior com a caixa deitada de lado (a bruto em y = +1,0 g): `a média (-0.014 +1.005 +0.090 g) não corresponde a "nivelada, face para cima" (outro eixo): confira e repita`, e a mesma posição pedida de novo.
+- **`z` completo:**
+  - duas medidas recusadas por movimento na posição 2, cada uma seguida do mesmo pedido;
+  - o resultado: módulo em −2,66° / +1,94° e mesa em −0,18° / +0,88°;
+  - `s` com `calibração de montagem gravada na NVS`.
+  - Os números e a conferência estão no [hardware.md](hardware.md), "`z` refeito na montagem final".
+- **Persistência:** no boot seguinte, `NVS: … montagem calibrada`, e o `c` com os mesmos ângulos.
+- **`x` na espera do `z`:** `calibração de montagem cancelada`.
+- **Fora do passo** (log `185412`): o `DISTÚRBIO` alternou cinco vezes com o |m| em 21,8–21,9 µT, em torno do limite de baixo (25,7 µT − 15 % = 21,8 µT). O limite não tem histerese, como já registrado no passo 2.
+- **Não conferido:** o `s` das seis posições. Completar o `6` obrigaria a refazer o `z`. Ficou como a pendência 6.
+- **Testes da montagem com sinal** (ajuste da revisão, antes do commit): os ângulos esperados passaram a ter sinal, sem `fabsf()`. Os casos novos:
+  - módulo em roll −3° e pitch +2°;
+  - mesa em roll +1,5° e pitch −2°;
+  - inclinada demais em roll +12°.
+- **Passo 6b fechado.**
+
 ## Pendências (fora da refatoração)
 
 1. **Teclas ignoradas na calibração do magnetômetro.** Na coleta do `m` (até 180 s), o firmware ignora as teclas sem dizer nada, e o terminal parece travado. A revisão que vem depois, que só aceita `s`, `x` e `d`, também. Proposta: ao ignorar uma tecla, imprimir uma linha curta, por exemplo `[mag] calibração em andamento: x cancela`, no máximo uma vez por segundo. Fica para depois do passo 4, num commit à parte, porque muda o comportamento. Vista em 20/10, log `261020-133830`.
@@ -296,4 +325,11 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
    - registrar a ISR pelo ESP-IDF (`gpio_install_isr_service` + `gpio_isr_handler_add`), com o handler em IRAM e `ESP_INTR_FLAG_IRAM`, num nível acima do da UART (ex.: `ESP_INTR_FLAG_LEVEL2`), sem passar pelo `attachInterrupt`;
    - conferir no `a` que o dt volta a 5,00–5,01 ms com as impressões ligadas.
    - se a variação continuar, quantificar o efeito na atitude com a caixa em movimento (giros com velocidade variável, comparando o filtro com o só-giroscópio);
+   Registrada em 20/10/2026.
+6. **`s` das seis posições sem conferência na bancada.** No passo 6b, o `6` foi conferido só até a primeira posição, porque gravar o acelerômetro descarta a montagem. Os testes do `SixPoseFlow` cobrem só o núcleo puro, não a integração com a NVS e a fusão. Na próxima calibração em seis posições (modelo final), conferir:
+   - a gravação do acelerômetro: `[cal] calibração do acelerômetro gravada na NVS`;
+   - o descarte da montagem: `[mont] montagem descartada: …` e o `c` com `montagem: NÃO calibrada`;
+   - o reinício da fusão: ele não tem mensagem própria e não conta em `reinícios` do `a`, e o filtro volta em ~100 ms (20 amostras). Com o `a` ligado durante o `s`, a linha `[att] aguardando referência` pode aparecer ou não. O critério é a atitude parada no `a` e no `c`, logo depois, já coerente com a calibração nova, sem convergir devagar a partir do valor antigo;
+   - a persistência depois do reboot: o `c` com o offset e a escala novos e a linha `NVS: … montagem sem calibração`;
+   - em seguida, refazer o `z`.
    Registrada em 20/10/2026.

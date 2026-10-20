@@ -7,12 +7,15 @@
 //   serial: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem |
 //           m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa |
 //           0 = zerar altitude | r = resumo por segundo.
-// A lógica está em lib/imu_cal, lib/attitude, lib/baro e lib/mag (puras, testadas com pio test -e native).
+// A lógica está em lib/imu_cal, lib/attitude, lib/baro, lib/mag e lib/sched (puras, testadas com pio test -e native).
+// A saída de texto passa por lib/logger. Refatoração em andamento: docs/refatoracao.md.
 // Na semana 3 este arquivo passa a só inicializar o hardware e criar as tasks (src/tasks/):
-//   sensor_task  (prio 4, core 1) — acordada pela INT do MPU, lê IMU a SAMPLE_RATE_HZ
-//   fusion_task  (prio 3, core 1) — filtro complementar → roll/pitch/heading
+//   sensor_task  (prio 4, core 1) — acordada pela INT do MPU a SAMPLE_RATE_HZ; dona do barramento: lê o
+//                MPU e, intercalados, o BME280 e o HMC5883L; calibração e fusão (roll/pitch/proa).
+//                É o laço de aquisição deste loop() (docs/plano.md, "Decisões para a semana 3")
 //   radio_task   (prio 2, core 0) — monta TelemetryPacket e envia via ESP-NOW
-//   status_task  (prio 1, core 0) — OLED de status + LED
+//   status_task  (prio 1, core 0) — OLED de status (Wire1) + LED
+//   e uma task de baixa prioridade para a serial (lib/logger e console)
 #include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
@@ -29,6 +32,8 @@
 #include "mag.h"
 #include "mag_store.h"
 #include "telemetry_flags.h"
+#include "logger.h"
+#include "sched.h"
 
 extern const char *const BUILD_STAMP;   // build_info.cpp: data e hora da compilação
 
@@ -123,7 +128,7 @@ static uint32_t g_fusPrevIntUs = 0;
 // Fluxo de atitude (comando a): estatística acumulada entre duas linhas
 struct AttStream {
     bool     on = false;
-    uint32_t nextUs = 0;
+    Periodic print;            // próxima linha
     uint32_t n = 0;            // intervalos integrados
     float    dtMin = 1e9f, dtMax = 0;
     double   dtSum = 0;
@@ -143,7 +148,7 @@ static Bme280 g_baro;
 static bool g_baroReady = false;          // begin() aceito; depois disso o driver se recupera sozinho
 static Bme280Status g_baroLastStatus = Bme280Status::Ok;   // evita repetir a mesma mensagem a cada tentativa
 static uint32_t g_baroRetryMs = 0;
-static uint32_t g_baroNextUs = 0;         // próxima leitura
+static Periodic g_baroSched;              // próxima leitura
 static uint32_t g_baroLastRecoveries = 0;
 static BaroSample g_baroLast;             // última leitura válida
 static bool g_baroHave = false;
@@ -164,7 +169,7 @@ static const uint32_t BARO_ZERO_MIN_SAMPLES =
 
 // Fluxo de altitude (comando b)
 static bool g_bsOn = false;
-static uint32_t g_bsNextUs = 0;
+static Periodic g_bsPrint;
 static const uint32_t BARO_PRINT_US = 1000000UL / BARO_PRINT_HZ;
 
 // ---------- Magnetômetro (lib/hmc5883l, lib/mag, lib/mag_store, docs/magnetometro.md) ----------
@@ -173,7 +178,7 @@ static Hmc5883l g_mag;
 static bool g_magReady = false;           // begin() aceito; depois disso o driver se recupera sozinho
 static Hmc5883lStatus g_magLastStatus = Hmc5883lStatus::Ok;
 static uint32_t g_magRetryMs = 0;
-static uint32_t g_magNextUs = 0;          // próxima leitura
+static Periodic g_magSched;               // próxima leitura
 static uint32_t g_magLastRecoveries = 0;
 static MagCalData g_magCal;               // calibração em uso (offset zero e W identidade sem calibração)
 static bool g_magHave = false;            // há uma leitura válida
@@ -208,7 +213,7 @@ static const MagFitLimits MAG_FIT_LIMITS = {MAG_CAL_MIN_RADIUS_UT, MAG_CAL_MAX_R
 
 // Fluxo de proa (comando p)
 static bool g_psOn = false;
-static uint32_t g_psNextUs = 0;
+static Periodic g_psPrint;
 static const uint32_t MAG_PRINT_US = 1000000UL / MAG_PRINT_HZ;
 
 static void baroZeroStart(bool settle) {
@@ -218,10 +223,10 @@ static void baroZeroStart(bool settle) {
     g_bzPress.reset();
     g_bzTemp.reset();
     if (settle)
-        Serial.printf("[baro] zero da altitude: aguardando %d ms o filtro do chip e depois %d ms com a caixa "
-                      "parada...\n", BARO_SETTLE_MS, BARO_ZERO_WINDOW_MS);
+        logPrintf("[baro] zero da altitude: aguardando %d ms o filtro do chip e depois %d ms com a caixa "
+                  "parada...\n", BARO_SETTLE_MS, BARO_ZERO_WINDOW_MS);
     else
-        Serial.printf("[baro] zero da altitude: medindo %d ms, mantenha a caixa parada...\n", BARO_ZERO_WINDOW_MS);
+        logPrintf("[baro] zero da altitude: medindo %d ms, mantenha a caixa parada...\n", BARO_ZERO_WINDOW_MS);
 }
 
 static void baroZeroSample(const BaroSample &b) {
@@ -245,21 +250,21 @@ static void baroZeroSample(const BaroSample &b) {
         g_baroRefTempC = r.tempC;
         g_baroTempWarned = false;
         g_bzState = BaroZeroState::Off;
-        Serial.printf("[baro] zero aceito: p0 = %.2f hPa | desvio %.2f Pa | %lu leituras | %.1f °C\n", r.refHpa,
-                      r.stdPa, (unsigned long)g_bzPress.count(), r.tempC);
+        logPrintf("[baro] zero aceito: p0 = %.2f hPa | desvio %.2f Pa | %lu leituras | %.1f °C\n", r.refHpa,
+                  r.stdPa, (unsigned long)g_bzPress.count(), r.tempC);
         return;
     }
     if (r.status == BaroZeroCheck::Unstable)
-        Serial.printf("[baro] zero recusado: desvio %.2f Pa acima de %.1f Pa (caixa mexida ou ar agitado); "
-                      "medindo de novo\n", r.stdPa, BARO_ZERO_MAX_STD_PA);
+        logPrintf("[baro] zero recusado: desvio %.2f Pa acima de %.1f Pa (caixa mexida ou ar agitado); "
+                  "medindo de novo\n", r.stdPa, BARO_ZERO_MAX_STD_PA);
     else if (r.status == BaroZeroCheck::Invalid)
-        Serial.println("[baro] zero recusado: leitura inválida (não finita) na janela; medindo de novo");
+        logPrintln("[baro] zero recusado: leitura inválida (não finita) na janela; medindo de novo");
     else if (r.status == BaroZeroCheck::OutOfRange)
-        Serial.printf("[baro] zero recusado: p0 = %.2f hPa fora de %.0f–%.0f hPa (leitura absurda); medindo de novo\n",
-                      r.refHpa, BARO_REF_MIN_HPA, BARO_REF_MAX_HPA);
+        logPrintf("[baro] zero recusado: p0 = %.2f hPa fora de %.0f–%.0f hPa (leitura absurda); medindo de novo\n",
+                  r.refHpa, BARO_REF_MIN_HPA, BARO_REF_MAX_HPA);
     else
-        Serial.printf("[baro] zero recusado: %lu leituras, mínimo %lu; medindo de novo\n",
-                      (unsigned long)g_bzPress.count(), (unsigned long)BARO_ZERO_MIN_SAMPLES);
+        logPrintf("[baro] zero recusado: %lu leituras, mínimo %lu; medindo de novo\n",
+                  (unsigned long)g_bzPress.count(), (unsigned long)BARO_ZERO_MIN_SAMPLES);
     g_bzStartMs = b.tMs;
     g_bzPress.reset();
     g_bzTemp.reset();
@@ -271,8 +276,8 @@ static void startBaro() {
     const Bme280Status st = g_baro.begin(cfg);
     if (st != Bme280Status::Ok) {
         if (st != g_baroLastStatus)
-            Serial.printf("[baro] BME280/BMP280: %s (chip_id=0x%02X); sem altitude, nova tentativa a cada %d s\n",
-                          bme280StatusText(st), g_baro.chipId(), BARO_RETRY_MS / 1000);
+            logPrintf("[baro] BME280/BMP280: %s (chip_id=0x%02X); sem altitude, nova tentativa a cada %d s\n",
+                      bme280StatusText(st), g_baro.chipId(), BARO_RETRY_MS / 1000);
         g_baroLastStatus = st;
         g_baroRetryMs = millis() + BARO_RETRY_MS;
         return;
@@ -280,41 +285,41 @@ static void startBaro() {
     g_baroLastStatus = st;
     g_baroReady = true;
     g_baroLastRecoveries = g_baro.recoveries();
-    g_baroNextUs = micros();
-    Serial.printf("[baro] %s configurado (chip_id=0x%02X): pressão x%d, temperatura x%d, IIR %d, modo normal\n",
-                  g_baro.model(), g_baro.chipId(), BARO_OSRS_P, BARO_OSRS_T, BARO_IIR_COEF);
+    g_baroSched.start(micros());
+    logPrintf("[baro] %s configurado (chip_id=0x%02X): pressão x%d, temperatura x%d, IIR %d, modo normal\n",
+              g_baro.model(), g_baro.chipId(), BARO_OSRS_P, BARO_OSRS_T, BARO_IIR_COEF);
     baroZeroStart(true);
 }
 
 static void printBaroLine(const BaroSample &b) {
     const float alt = g_baroRefValid ? baroAltitudeM(b.pressHpa, g_baroRefHpa) : NAN;
     if (isfinite(alt))
-        Serial.printf("[baro] %6.2f °C | %8.2f hPa | alt %+6.2f m | ΔT %+5.2f °C desde o zero\n", b.tempC, b.pressHpa,
-                      alt, b.tempC - g_baroRefTempC);
+        logPrintf("[baro] %6.2f °C | %8.2f hPa | alt %+6.2f m | ΔT %+5.2f °C desde o zero\n", b.tempC, b.pressHpa,
+                  alt, b.tempC - g_baroRefTempC);
     else if (g_baroRefValid)
-        Serial.printf("[baro] %6.2f °C | %8.2f hPa | alt: inválida (pressão ou zero fora da faixa)\n", b.tempC,
-                      b.pressHpa);
+        logPrintf("[baro] %6.2f °C | %8.2f hPa | alt: inválida (pressão ou zero fora da faixa)\n", b.tempC,
+                  b.pressHpa);
     else
-        Serial.printf("[baro] %6.2f °C | %8.2f hPa | alt: sem zero\n", b.tempC, b.pressHpa);
+        logPrintf("[baro] %6.2f °C | %8.2f hPa | alt: sem zero\n", b.tempC, b.pressHpa);
 }
 
 // Uma linha no resumo por segundo (r) e no estado (c)
 static void printBaroSummary() {
     if (!g_baroReady) {
-        Serial.printf("    baro: barômetro indisponível (%s)\n", bme280StatusText(g_baroLastStatus));
+        logPrintf("    baro: barômetro indisponível (%s)\n", bme280StatusText(g_baroLastStatus));
         return;
     }
-    Serial.printf("    baro: %s | ", g_baro.ok() ? "ok" : "FALHANDO");
+    logPrintf("    baro: %s | ", g_baro.ok() ? "ok" : "FALHANDO");
     const float alt = g_baroHave && g_baroRefValid ? baroAltitudeM(g_baroLast.pressHpa, g_baroRefHpa) : NAN;
-    if (!g_baroHave) Serial.print("sem leitura");
+    if (!g_baroHave) logPrint("sem leitura");
     else if (isfinite(alt))
-        Serial.printf("%.2f hPa | alt %+.2f m | %.1f °C (ΔT %+.1f desde o zero)", g_baroLast.pressHpa, alt,
-                      g_baroLast.tempC, g_baroLast.tempC - g_baroRefTempC);
+        logPrintf("%.2f hPa | alt %+.2f m | %.1f °C (ΔT %+.1f desde o zero)", g_baroLast.pressHpa, alt,
+                  g_baroLast.tempC, g_baroLast.tempC - g_baroRefTempC);
     else if (g_baroRefValid)
-        Serial.printf("%.2f hPa | alt inválida | %.1f °C", g_baroLast.pressHpa, g_baroLast.tempC);
-    else Serial.printf("%.2f hPa | sem zero | %.1f °C", g_baroLast.pressHpa, g_baroLast.tempC);
-    Serial.printf(" | falhas %lu (seguidas %lu, recuperações %lu)\n", (unsigned long)g_baro.failTotal(),
-                  (unsigned long)g_baro.failStreak(), (unsigned long)g_baro.recoveries());
+        logPrintf("%.2f hPa | alt inválida | %.1f °C", g_baroLast.pressHpa, g_baroLast.tempC);
+    else logPrintf("%.2f hPa | sem zero | %.1f °C", g_baroLast.pressHpa, g_baroLast.tempC);
+    logPrintf(" | falhas %lu (seguidas %lu, recuperações %lu)\n", (unsigned long)g_baro.failTotal(),
+              (unsigned long)g_baro.failStreak(), (unsigned long)g_baro.recoveries());
 }
 
 // Chamada logo depois de cada leitura do MPU: a transação do BME280 (~0,3 ms) fica longe do
@@ -324,20 +329,18 @@ static void baroService(uint32_t nowUs) {
         if ((int32_t)(millis() - g_baroRetryMs) >= 0) startBaro();
         return;
     }
-    if ((int32_t)(nowUs - g_baroNextUs) < 0) return;
+    if (!g_baroSched.due(nowUs)) return;
 
     BaroSample b;
     const bool ok = g_baro.read(b);
     // Com o BME280 falhando, tenta só a cada BARO_FAIL_RETRY_MS: cada transação sem resposta imprime um
     // erro do I2C e atrasa o laço, e o MPU descartava amostras (hardware.md, 12/10/2026)
-    const uint32_t period = g_baro.ok() ? BARO_PERIOD_US : BARO_FAIL_RETRY_MS * 1000UL;
-    g_baroNextUs += period;
-    if ((int32_t)(nowUs - g_baroNextUs) >= 0) g_baroNextUs = nowUs + period;   // atrasou: ressincroniza
+    g_baroSched.advance(nowUs, g_baro.ok() ? BARO_PERIOD_US : BARO_FAIL_RETRY_MS * 1000UL);
     if (g_baro.recoveries() != g_baroLastRecoveries) {
         g_baroLastRecoveries = g_baro.recoveries();
-        Serial.printf("[baro] %s perdeu a configuração (queda de alimentação?): %s\n", g_baro.model(),
-                      g_baro.configured() ? "reconfigurado; o filtro do chip recomeçou"
-                                          : "reconfiguração falhou, nova tentativa a cada leitura");
+        logPrintf("[baro] %s perdeu a configuração (queda de alimentação?): %s\n", g_baro.model(),
+                  g_baro.configured() ? "reconfigurado; o filtro do chip recomeçou"
+                                      : "reconfiguração falhou, nova tentativa a cada leitura");
         if (g_bzState != BaroZeroState::Off) baroZeroStart(true);
     }
     if (!ok) return;
@@ -345,12 +348,12 @@ static void baroService(uint32_t nowUs) {
     g_baroHave = true;
     baroZeroSample(b);
     if (g_baroRefValid && !g_baroTempWarned && fabsf(b.tempC - g_baroRefTempC) > BARO_TEMP_WARN_C) {
-        Serial.printf("[baro] AVISO: chip a %.1f °C, zero feito a %.1f °C: a altitude deriva ~13 cm/°C. "
-                      "Zere de novo com 0\n", b.tempC, g_baroRefTempC);
+        logPrintf("[baro] AVISO: chip a %.1f °C, zero feito a %.1f °C: a altitude deriva ~13 cm/°C. "
+                  "Zere de novo com 0\n", b.tempC, g_baroRefTempC);
         g_baroTempWarned = true;
     }
-    if (g_bsOn && (int32_t)(nowUs - g_bsNextUs) >= 0) {
-        g_bsNextUs = nowUs + BARO_PRINT_US;
+    if (g_bsOn && g_bsPrint.due(nowUs)) {
+        g_bsPrint.restart(nowUs, BARO_PRINT_US);
         printBaroLine(b);
     }
 }
@@ -370,8 +373,8 @@ static void startMag() {
     const Hmc5883lStatus st = g_mag.begin(cfg);
     if (st != Hmc5883lStatus::Ok) {
         if (st != g_magLastStatus)
-            Serial.printf("[mag] HMC5883L: %s; sem proa, nova tentativa a cada %d s\n", hmc5883lStatusText(st),
-                          MAG_RETRY_MS / 1000);
+            logPrintf("[mag] HMC5883L: %s; sem proa, nova tentativa a cada %d s\n", hmc5883lStatusText(st),
+                      MAG_RETRY_MS / 1000);
         g_magLastStatus = st;
         g_magRetryMs = millis() + MAG_RETRY_MS;
         return;
@@ -379,10 +382,10 @@ static void startMag() {
     g_magLastStatus = st;
     g_magReady = true;
     g_magLastRecoveries = g_mag.recoveries();
-    g_magNextUs = micros();
+    g_magSched.start(micros());
     g_magPrevValid = false;
-    Serial.printf("[mag] HMC5883L configurado: ±%.1f Ga (%.0f LSB/Ga), %.0f Hz, média de %d, modo contínuo\n",
-                  MAG_RANGE_MGA / 1000.0f, g_mag.lsbPerGa(), MAG_OUTPUT_HZ, MAG_AVG_SAMPLES);
+    logPrintf("[mag] HMC5883L configurado: ±%.1f Ga (%.0f LSB/Ga), %.0f Hz, média de %d, modo contínuo\n",
+              MAG_RANGE_MGA / 1000.0f, g_mag.lsbPerGa(), MAG_OUTPUT_HZ, MAG_AVG_SAMPLES);
 }
 
 static const char *magStateText() {
@@ -407,29 +410,29 @@ static void printMagLine() {
         snprintf(mag, sizeof(mag), "%6.1f", g_magTilt.headingDeg);
         snprintf(dip, sizeof(dip), "%+6.1f", g_magTilt.dipDeg);
     }
-    Serial.printf("[mag] proa %s | mag %s | deitada %6.1f | |m| %5.1f µT | incl %s° | roll %+6.1f pitch %+6.1f | %s%s\n",
-                  hdg, mag, magFlatHeadingDeg(g_magCorr), norm(g_magCorr), dip,
-                  g_att.initialized() ? g_att.rollDeg() : 0.0f, g_att.initialized() ? g_att.pitchDeg() : 0.0f,
-                  magStateText(), g_magCal.valid ? "" : " SEM_CAL");
+    logPrintf("[mag] proa %s | mag %s | deitada %6.1f | |m| %5.1f µT | incl %s° | roll %+6.1f pitch %+6.1f | %s%s\n",
+              hdg, mag, magFlatHeadingDeg(g_magCorr), norm(g_magCorr), dip,
+              g_att.initialized() ? g_att.rollDeg() : 0.0f, g_att.initialized() ? g_att.pitchDeg() : 0.0f,
+              magStateText(), g_magCal.valid ? "" : " SEM_CAL");
 }
 
 // Uma linha no resumo por segundo (r) e no estado (c)
 static void printMagSummary() {
     if (!g_magReady) {
-        Serial.printf("    mag: HMC5883L indisponível (%s)\n", hmc5883lStatusText(g_magLastStatus));
+        logPrintf("    mag: HMC5883L indisponível (%s)\n", hmc5883lStatusText(g_magLastStatus));
         return;
     }
-    Serial.printf("    mag: %s | %lu leituras no último 1 s | ", g_mag.ok() ? "ok" : "FALHANDO",
-                  (unsigned long)g_magLastWinReads);
-    if (!g_magHave) Serial.print("sem leitura");
+    logPrintf("    mag: %s | %lu leituras no último 1 s | ", g_mag.ok() ? "ok" : "FALHANDO",
+              (unsigned long)g_magLastWinReads);
+    if (!g_magHave) logPrint("sem leitura");
     else {
-        Serial.printf("|m| %.1f µT", norm(g_magCorr));
-        if (g_hdg.initialized()) Serial.printf(" | proa %.1f°", g_hdg.headingDeg());
-        Serial.printf(" | %s%s", magStateText(), g_magCal.valid ? "" : " SEM_CAL");
+        logPrintf("|m| %.1f µT", norm(g_magCorr));
+        if (g_hdg.initialized()) logPrintf(" | proa %.1f°", g_hdg.headingDeg());
+        logPrintf(" | %s%s", magStateText(), g_magCal.valid ? "" : " SEM_CAL");
     }
-    Serial.printf(" | falhas %lu (seguidas %lu, recuperações %lu) | saturadas %lu\n", (unsigned long)g_mag.failTotal(),
-                  (unsigned long)g_mag.failStreak(), (unsigned long)g_mag.recoveries(),
-                  (unsigned long)g_mag.saturations());
+    logPrintf(" | falhas %lu (seguidas %lu, recuperações %lu) | saturadas %lu\n", (unsigned long)g_mag.failTotal(),
+              (unsigned long)g_mag.failStreak(), (unsigned long)g_mag.recoveries(),
+              (unsigned long)g_mag.saturations());
 }
 
 static void magCalFree() {
@@ -444,16 +447,16 @@ static void magCalStart() {
     // A coleta não usa a janela do giroscópio: pode começar durante a calibração do boot (que só confirma
     // com a caixa parada e, até lá, usa o bias salvo). As outras calibrações continuam bloqueando o m
     if (g_mode != CalMode::None && g_mode != CalMode::GyroBoot) {
-        Serial.println("[mag] espere a calibração em andamento terminar");
+        logPrintln("[mag] espere a calibração em andamento terminar");
         return;
     }
     if (!g_magReady || !g_mag.ok()) {
-        Serial.println("[mag] HMC5883L indisponível ou falhando: calibração não iniciada");
+        logPrintln("[mag] HMC5883L indisponível ou falhando: calibração não iniciada");
         return;
     }
     g_magPts = (Vec3 *)malloc(MAG_CAL_MAX_POINTS * sizeof(Vec3));
     if (g_magPts == nullptr) {
-        Serial.println("[mag] ERRO: sem memória para os pontos da calibração");
+        logPrintln("[mag] ERRO: sem memória para os pontos da calibração");
         return;
     }
     g_magN = 0;
@@ -462,34 +465,34 @@ static void magCalStart() {
     g_magCalNextProgMs = g_magCalStartMs + MAG_CAL_PROGRESS_MS;
     g_magMode = MagMode::Collect;
     g_hdg.reset();
-    Serial.printf("[mag] calibração: gire a caixa devagar em TODAS as orientações por até %d s (x cancela).\n",
-                  MAG_CAL_MS / 1000);
-    Serial.println("[mag] para cada face voltada para cima (topo, fundo, asas, nariz, cauda), um giro em torno da "
-                   "vertical. Termina sozinha com os 24 setores cobertos");
+    logPrintf("[mag] calibração: gire a caixa devagar em TODAS as orientações por até %d s (x cancela).\n",
+              MAG_CAL_MS / 1000);
+    logPrintln("[mag] para cada face voltada para cima (topo, fundo, asas, nariz, cauda), um giro em torno da "
+               "vertical. Termina sozinha com os 24 setores cobertos");
 }
 
 static void magCalFinish() {
     const MagFitStatus st = magFitEllipsoid(g_magPts, g_magN, MAG_FIT_LIMITS, g_magFit);
     const MagFitResult &r = g_magFit;
     const MagCal &c = r.cal;
-    Serial.printf("[mag] coleta encerrada: %lu pontos em %.0f s\n", (unsigned long)g_magN,
-                  (millis() - g_magCalStartMs) / 1000.0f);
+    logPrintf("[mag] coleta encerrada: %lu pontos em %.0f s\n", (unsigned long)g_magN,
+              (millis() - g_magCalStartMs) / 1000.0f);
     if (st != MagFitStatus::TooFewPoints && st != MagFitStatus::Singular && st != MagFitStatus::NotEllipsoid) {
-        Serial.printf("  offset %+.2f %+.2f %+.2f µT | semieixos %.3f %.3f %.3f\n", c.offset.x, c.offset.y,
-                      c.offset.z, r.scale.x, r.scale.y, r.scale.z);
+        logPrintf("  offset %+.2f %+.2f %+.2f µT | semieixos %.3f %.3f %.3f\n", c.offset.x, c.offset.y,
+                  c.offset.z, r.scale.x, r.scale.y, r.scale.z);
         for (int i = 0; i < 3; i++)
-            Serial.printf("  W %s %+.4f %+.4f %+.4f\n", i == 0 ? "=" : " ", c.w.m[i][0], c.w.m[i][1], c.w.m[i][2]);
-        Serial.printf("  raio %.2f µT (WMM na bancada: %.1f µT) | resíduo %.2f %% | cobertura %d/%d setores\n",
-                      c.radiusUt, MAG_REF_FIELD_UT, r.residPct, r.sectors, MAG_SECTORS);
+            logPrintf("  W %s %+.4f %+.4f %+.4f\n", i == 0 ? "=" : " ", c.w.m[i][0], c.w.m[i][1], c.w.m[i][2]);
+        logPrintf("  raio %.2f µT (WMM na bancada: %.1f µT) | resíduo %.2f %% | cobertura %d/%d setores\n",
+                  c.radiusUt, MAG_REF_FIELD_UT, r.residPct, r.sectors, MAG_SECTORS);
     }
     g_magMode = MagMode::Review;
     if (st == MagFitStatus::Ok) {
-        Serial.println("[mag] calibração ok. s = gravar na NVS | x = descartar | d = pontos em CSV");
+        logPrintln("[mag] calibração ok. s = gravar na NVS | x = descartar | d = pontos em CSV");
     } else {
-        Serial.printf("[mag] calibração RECUSADA: %s (limites: raio %.0f–%.0f µT, resíduo ≤ %.1f %%, semieixos "
-                      "%.2f–%.2f, ≥ %d setores). x = sair | d = pontos em CSV\n",
-                      magFitStatusText(st), MAG_CAL_MIN_RADIUS_UT, MAG_CAL_MAX_RADIUS_UT, MAG_CAL_MAX_RESID_PCT,
-                      MAG_CAL_MIN_SCALE, MAG_CAL_MAX_SCALE, MAG_CAL_MIN_SECTORS);
+        logPrintf("[mag] calibração RECUSADA: %s (limites: raio %.0f–%.0f µT, resíduo ≤ %.1f %%, semieixos "
+                  "%.2f–%.2f, ≥ %d setores). x = sair | d = pontos em CSV\n",
+                  magFitStatusText(st), MAG_CAL_MIN_RADIUS_UT, MAG_CAL_MAX_RADIUS_UT, MAG_CAL_MAX_RESID_PCT,
+                  MAG_CAL_MIN_SCALE, MAG_CAL_MAX_SCALE, MAG_CAL_MIN_SECTORS);
     }
 }
 
@@ -507,14 +510,14 @@ static void magCalSample(const Vec3 &raw, uint32_t tMs) {
     const int covered = magSectorsCovered(counts, MAG_CAL_MIN_PTS_SECTOR);
     uint8_t miss[MAG_FACES];
     magMissingByFace(counts, MAG_CAL_MIN_PTS_SECTOR, miss);
-    Serial.printf("[mag] %2lu s | %4lu pontos | cobertura %2d/%d", (unsigned long)((tMs - g_magCalStartMs) / 1000),
-                  (unsigned long)g_magN, covered, MAG_SECTORS);
+    logPrintf("[mag] %2lu s | %4lu pontos | cobertura %2d/%d", (unsigned long)((tMs - g_magCalStartMs) / 1000),
+              (unsigned long)g_magN, covered, MAG_SECTORS);
     if (covered < MAG_SECTORS) {
-        Serial.print(" | faltam:");
+        logPrint(" | faltam:");
         for (int f = 0; f < MAG_FACES; f++)
-            if (miss[f]) Serial.printf(" %s(%d)", magFaceName(f), miss[f]);
+            if (miss[f]) logPrintf(" %s(%d)", magFaceName(f), miss[f]);
     }
-    Serial.println();
+    logPrintln();
     if (covered == MAG_SECTORS || timeUp) magCalFinish();
 }
 
@@ -522,17 +525,17 @@ static void magCalSample(const Vec3 &raw, uint32_t tMs) {
 // (~25 bytes por ponto a 115200): a atitude e a proa recomeçam depois.
 static void magCalDump() {
     const MagCal &c = g_magFit.cal;
-    Serial.printf("# mag_cal inicio: %lu pontos (µT, eixos do modelo, sem calibração)\n", (unsigned long)g_magN);
-    Serial.printf("# firmware status=%s b=%.4f,%.4f,%.4f w=%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f R=%.4f "
-                  "resid=%.3f setores=%d\n",
-                  magFitStatusText(g_magFit.status), c.offset.x, c.offset.y, c.offset.z, c.w.m[0][0], c.w.m[0][1],
-                  c.w.m[0][2], c.w.m[1][0], c.w.m[1][1], c.w.m[1][2], c.w.m[2][0], c.w.m[2][1], c.w.m[2][2],
-                  c.radiusUt, g_magFit.residPct, g_magFit.sectors);
-    Serial.println("x,y,z");
+    logPrintf("# mag_cal inicio: %lu pontos (µT, eixos do modelo, sem calibração)\n", (unsigned long)g_magN);
+    logPrintf("# firmware status=%s b=%.4f,%.4f,%.4f w=%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f R=%.4f "
+              "resid=%.3f setores=%d\n",
+              magFitStatusText(g_magFit.status), c.offset.x, c.offset.y, c.offset.z, c.w.m[0][0], c.w.m[0][1],
+              c.w.m[0][2], c.w.m[1][0], c.w.m[1][1], c.w.m[1][2], c.w.m[2][0], c.w.m[2][1], c.w.m[2][2],
+              c.radiusUt, g_magFit.residPct, g_magFit.sectors);
+    logPrintln("x,y,z");
     for (size_t i = 0; i < g_magN; i++)
-        Serial.printf("%.3f,%.3f,%.3f\n", g_magPts[i].x, g_magPts[i].y, g_magPts[i].z);
-    Serial.println("# mag_cal fim");
-    Serial.flush();
+        logPrintf("%.3f,%.3f,%.3f\n", g_magPts[i].x, g_magPts[i].y, g_magPts[i].z);
+    logPrintln("# mag_cal fim");
+    logFlush();
     fusionReset();   // o laço ficou parado: a referência de tempo da fusão não vale mais
 }
 
@@ -543,18 +546,16 @@ static void magService(uint32_t nowUs) {
         if ((int32_t)(millis() - g_magRetryMs) >= 0) startMag();
         return;
     }
-    if ((int32_t)(nowUs - g_magNextUs) < 0) return;
+    if (!g_magSched.due(nowUs)) return;
 
     MagSample ms;
     const bool ok = g_mag.read(ms);
     // Com o HMC5883L falhando, tenta só a cada MAG_FAIL_RETRY_MS (cada transação sem resposta atrasa o laço)
-    const uint32_t period = g_mag.ok() ? MAG_PERIOD_US : MAG_FAIL_RETRY_MS * 1000UL;
-    g_magNextUs += period;
-    if ((int32_t)(nowUs - g_magNextUs) >= 0) g_magNextUs = nowUs + period;   // atrasou: ressincroniza
+    g_magSched.advance(nowUs, g_mag.ok() ? MAG_PERIOD_US : MAG_FAIL_RETRY_MS * 1000UL);
     if (g_mag.recoveries() != g_magLastRecoveries) {
         g_magLastRecoveries = g_mag.recoveries();
-        Serial.printf("[mag] HMC5883L perdeu a configuração (queda de alimentação?): %s\n",
-                      g_mag.configured() ? "reconfigurado" : "reconfiguração falhou, nova tentativa a cada leitura");
+        logPrintf("[mag] HMC5883L perdeu a configuração (queda de alimentação?): %s\n",
+                  g_mag.configured() ? "reconfigurado" : "reconfiguração falhou, nova tentativa a cada leitura");
     }
     if (!ok) return;
     g_magWinReads++;
@@ -586,14 +587,13 @@ static void magService(uint32_t nowUs) {
     if (disturbed != g_magDisturbWarned) {
         g_magDisturbWarned = disturbed;
         if (disturbed)
-            Serial.printf("[mag] DISTÚRBIO: |m| %.1f µT, raio da calibração %.1f µT (limite %.0f %%): correção "
-                          "pelo magnetômetro suspensa\n", norm(g_magCorr), g_magCal.cal.radiusUt, MAG_DISTURB_PCT);
+            logPrintf("[mag] DISTÚRBIO: |m| %.1f µT, raio da calibração %.1f µT (limite %.0f %%): correção "
+                      "pelo magnetômetro suspensa\n", norm(g_magCorr), g_magCal.cal.radiusUt, MAG_DISTURB_PCT);
         else
-            Serial.printf("[mag] distúrbio terminou: |m| %.1f µT de volta ao raio da calibração\n", norm(g_magCorr));
+            logPrintf("[mag] distúrbio terminou: |m| %.1f µT de volta ao raio da calibração\n", norm(g_magCorr));
     }
-    if (g_psOn && (int32_t)(nowUs - g_psNextUs) >= 0) {
-        g_psNextUs += MAG_PRINT_US;
-        if ((int32_t)(nowUs - g_psNextUs) >= 0) g_psNextUs = nowUs + MAG_PRINT_US;
+    if (g_psOn && g_psPrint.due(nowUs)) {
+        g_psPrint.advance(nowUs, MAG_PRINT_US);
         printMagLine();
     }
 }
@@ -602,7 +602,7 @@ static void magService(uint32_t nowUs) {
 static bool handleMagCalKey(char ch) {
     if (g_magMode == MagMode::Collect) {
         if (ch == 'x') {
-            Serial.println("[mag] calibração cancelada; calibração anterior mantida");
+            logPrintln("[mag] calibração cancelada; calibração anterior mantida");
             magCalFree();
         }
         return true;   // outras teclas são ignoradas durante a coleta
@@ -611,21 +611,21 @@ static bool handleMagCalKey(char ch) {
     if (ch == 'd') {
         magCalDump();
     } else if (ch == 'x') {
-        Serial.println("[mag] resultado descartado; calibração anterior mantida");
+        logPrintln("[mag] resultado descartado; calibração anterior mantida");
         magCalFree();
     } else if (ch == 's') {
         if (g_magFit.status != MagFitStatus::Ok) {
-            Serial.println("[mag] calibração recusada não pode ser gravada (x = sair | d = pontos em CSV)");
+            logPrintln("[mag] calibração recusada não pode ser gravada (x = sair | d = pontos em CSV)");
         } else if (magStoreSave(g_magFit.cal, g_magFit.residPct, (uint8_t)g_magFit.sectors, g_mag.crb())) {
             g_magCal.valid = true;
             g_magCal.cal = g_magFit.cal;
             g_magCal.residPct = g_magFit.residPct;
             g_magCal.sectors = (uint8_t)g_magFit.sectors;
             g_hdg.reset();
-            Serial.println("[mag] calibração do magnetômetro gravada na NVS");
+            logPrintln("[mag] calibração do magnetômetro gravada na NVS");
             magCalFree();
         } else {
-            Serial.println("[mag] FALHA ao gravar na NVS; calibração anterior mantida");
+            logPrintln("[mag] FALHA ao gravar na NVS; calibração anterior mantida");
             magCalFree();
         }
     }
@@ -652,14 +652,14 @@ static void startMpu() {
     };
     Mpu6050Status st = g_mpu.begin(cfg);
     if (st != Mpu6050Status::Ok) {
-        Serial.printf("[A] MPU6050: %s (WHO_AM_I=0x%02X); nova tentativa em %d s\n", mpu6050StatusText(st),
-                      g_mpu.whoAmI(), MPU_RETRY_MS / 1000);
+        logPrintf("[A] MPU6050: %s (WHO_AM_I=0x%02X); nova tentativa em %d s\n", mpu6050StatusText(st),
+                  g_mpu.whoAmI(), MPU_RETRY_MS / 1000);
         g_mpuRetryMs = millis() + MPU_RETRY_MS;
         return;
     }
-    Serial.printf("[A] MPU6050 configurado: ±%d g, ±%d °/s, DLPF %d Hz, %.1f Hz, I2C %lu Hz\n",
-                  MPU_ACCEL_RANGE_G, MPU_GYRO_RANGE_DPS, MPU_DLPF_HZ, g_mpu.actualSampleRateHz(),
-                  (unsigned long)I2C_FREQ_HZ);
+    logPrintf("[A] MPU6050 configurado: ±%d g, ±%d °/s, DLPF %d Hz, %.1f Hz, I2C %lu Hz\n",
+              MPU_ACCEL_RANGE_G, MPU_GYRO_RANGE_DPS, MPU_DLPF_HZ, g_mpu.actualSampleRateHz(),
+              (unsigned long)I2C_FREQ_HZ);
     xQueueReset(g_intQueue);
     pinMode(PIN_MPU_INT, INPUT_PULLDOWN);
     attachInterrupt(digitalPinToInterrupt(PIN_MPU_INT), onMpuInt, RISING);
@@ -692,9 +692,9 @@ static void printWindow() {
     const uint32_t n = g_win.samples;
     const float rate = g_win.pulses * 1e6f / WINDOW_US;
     if (n == 0) {
-        Serial.printf("[A] %.0f Hz | nenhuma leitura válida | falhas %lu (seguidas %lu, recuperações %lu)%s\n",
-                      rate, (unsigned long)g_mpu.failTotal(), (unsigned long)g_mpu.failStreak(),
-                      (unsigned long)g_mpu.recoveries(), g_win.pulses == 0 ? " | sem pulsos do INT" : "");
+        logPrintf("[A] %.0f Hz | nenhuma leitura válida | falhas %lu (seguidas %lu, recuperações %lu)%s\n",
+                  rate, (unsigned long)g_mpu.failTotal(), (unsigned long)g_mpu.failStreak(),
+                  (unsigned long)g_mpu.recoveries(), g_win.pulses == 0 ? " | sem pulsos do INT" : "");
         return;
     }
     double mean[6], sd[6];
@@ -705,29 +705,29 @@ static void printWindow() {
     const double amod = sqrt(mean[0] * mean[0] + mean[1] * mean[1] + mean[2] * mean[2]);
     const double sdA = fmax(sd[0], fmax(sd[1], sd[2]));
     const double sdG = fmax(sd[3], fmax(sd[4], sd[5]));
-    Serial.printf("[A] %.0f Hz | a (g) %+.3f %+.3f %+.3f  |a| %.3f | g (°/s) %+.2f %+.2f %+.2f | T %.1f °C\n",
-                  rate, mean[0], mean[1], mean[2], amod, mean[3], mean[4], mean[5], g_win.tempSum / n);
-    Serial.printf("    ruído: a %.1f mg, g %.3f °/s | pico |g| %.1f °/s | saturadas a %lu g %lu | perdidas %lu | "
-                  "descartadas %lu | falhas %lu (seguidas %lu, recuperações %lu) | fila cheia %lu\n",
-                  sdA * 1000.0, sdG, g_win.peakGyro, (unsigned long)g_win.satAcc, (unsigned long)g_win.satGyro,
-                  (unsigned long)g_win.lost, (unsigned long)g_win.stale, (unsigned long)g_mpu.failTotal(),
-                  (unsigned long)g_mpu.failStreak(), (unsigned long)g_mpu.recoveries(),
-                  (unsigned long)g_intOverflow);
+    logPrintf("[A] %.0f Hz | a (g) %+.3f %+.3f %+.3f  |a| %.3f | g (°/s) %+.2f %+.2f %+.2f | T %.1f °C\n",
+              rate, mean[0], mean[1], mean[2], amod, mean[3], mean[4], mean[5], g_win.tempSum / n);
+    logPrintf("    ruído: a %.1f mg, g %.3f °/s | pico |g| %.1f °/s | saturadas a %lu g %lu | perdidas %lu | "
+              "descartadas %lu | falhas %lu (seguidas %lu, recuperações %lu) | fila cheia %lu\n",
+              sdA * 1000.0, sdG, g_win.peakGyro, (unsigned long)g_win.satAcc, (unsigned long)g_win.satGyro,
+              (unsigned long)g_win.lost, (unsigned long)g_win.stale, (unsigned long)g_mpu.failTotal(),
+              (unsigned long)g_mpu.failStreak(), (unsigned long)g_mpu.recoveries(),
+              (unsigned long)g_intOverflow);
     const AngleStats *att = g_win.att;
     if (att[0].count() == 0) {
-        Serial.println("    atitude: não inicializada");
+        logPrintln("    atitude: não inicializada");
         return;
     }
-    Serial.printf("    atitude: roll %+.2f ± %.2f° | pitch %+.2f ± %.2f° (%lu amostras)\n", att[0].mean(),
-                  att[0].stddev(), att[1].mean(), att[1].stddev(), (unsigned long)att[0].count());
+    logPrintf("    atitude: roll %+.2f ± %.2f° | pitch %+.2f ± %.2f° (%lu amostras)\n", att[0].mean(),
+              att[0].stddev(), att[1].mean(), att[1].stddev(), (unsigned long)att[0].count());
 }
 
 // Aviso único quando o chip se afasta da temperatura da calibração do giroscópio
 static void checkTempDrift(float nowC) {
     if (!g_gyroDefinitive || g_tempWarned) return;
     if (tempDrifted(g_gyroBiasTempC, nowC, CAL_TEMP_WARN_C)) {
-        Serial.printf("[cal] AVISO: chip a %.1f °C, calibração do giroscópio feita a %.1f °C. Recalibre com g\n",
-                      nowC, g_gyroBiasTempC);
+        logPrintf("[cal] AVISO: chip a %.1f °C, calibração do giroscópio feita a %.1f °C. Recalibre com g\n",
+                  nowC, g_gyroBiasTempC);
         g_tempWarned = true;
     }
 }
@@ -789,13 +789,13 @@ static void startCalWindow() {
 static void startGyroCal(CalMode mode) {
     g_mode = mode;
     g_biasConfirm.reset();
-    Serial.printf("[cal] giroscópio: mantenha a placa parada (duas janelas de %d ms)...\n", CAL_WINDOW_MS);
+    logPrintf("[cal] giroscópio: mantenha a placa parada (duas janelas de %d ms)...\n", CAL_WINDOW_MS);
     startCalWindow();
 }
 
 static void promptSixPose() {
-    Serial.printf("[cal] posição %d/%d: %s. Posicione a caixa, solte e aperte Enter (x cancela)\n", g_sixIdx + 1,
-                  POSE_COUNT, poseName((Pose)g_sixIdx));
+    logPrintf("[cal] posição %d/%d: %s. Posicione a caixa, solte e aperte Enter (x cancela)\n", g_sixIdx + 1,
+              POSE_COUNT, poseName((Pose)g_sixIdx));
     g_mode = CalMode::SixWait;
 }
 
@@ -828,30 +828,30 @@ static void finishGyroWindow() {
             g_cal.gyroTempC = t;
             g_cal.gyroValid = true;
         }
-        Serial.printf("[cal] giroscópio calibrado: bias %+.3f %+.3f %+.3f °/s a %.1f °C (diferença entre "
-                      "janelas %.3f °/s e %.3f° na gravidade, desvio máx. %.3f °/s)%s\n",
-                      b.x, b.y, b.z, t, g_biasConfirm.lastDelta(), g_biasConfirm.lastTilt(), r.gyroMaxStd,
-                      saved ? "" : " | FALHA ao gravar na NVS");
+        logPrintf("[cal] giroscópio calibrado: bias %+.3f %+.3f %+.3f °/s a %.1f °C (diferença entre "
+                  "janelas %.3f °/s e %.3f° na gravidade, desvio máx. %.3f °/s)%s\n",
+                  b.x, b.y, b.z, t, g_biasConfirm.lastDelta(), g_biasConfirm.lastTilt(), r.gyroMaxStd,
+                  saved ? "" : " | FALHA ao gravar na NVS");
         g_mode = CalMode::None;
         return;
     }
     if (res == BiasConfirmer::Result::Candidate || res == BiasConfirmer::Result::Inconsistent) {
         if (res == BiasConfirmer::Result::Inconsistent)
-            Serial.printf("[cal] giroscópio: entre janelas, bias mudou %.3f °/s (limite %.3f) e gravidade %.3f° "
-                          "(limite %.2f): caixa se acomodando ou girando; confirmando de novo\n",
-                          g_biasConfirm.lastDelta(), CAL_BIAS_MAX_DELTA_DPS, g_biasConfirm.lastTilt(),
-                          CAL_BIAS_MAX_TILT_DEG);
+            logPrintf("[cal] giroscópio: entre janelas, bias mudou %.3f °/s (limite %.3f) e gravidade %.3f° "
+                      "(limite %.2f): caixa se acomodando ou girando; confirmando de novo\n",
+                      g_biasConfirm.lastDelta(), CAL_BIAS_MAX_DELTA_DPS, g_biasConfirm.lastTilt(),
+                      CAL_BIAS_MAX_TILT_DEG);
         g_candTempC = tempC;
         startCalWindow();   // a janela que acabou é a candidata; a próxima confirma ou não
         return;
     }
 
-    Serial.printf("[cal] giroscópio recusado: %s (desvio máx. %.3f °/s, |a| %.3f g, %lu amostras)\n",
-                  restText(r.status), r.gyroMaxStd, r.accNorm, (unsigned long)g_cw.gyro.count());
+    logPrintf("[cal] giroscópio recusado: %s (desvio máx. %.3f °/s, |a| %.3f g, %lu amostras)\n",
+              restText(r.status), r.gyroMaxStd, r.accNorm, (unsigned long)g_cw.gyro.count());
     if (g_mode == CalMode::GyroBoot) {
         startGyroCal(CalMode::GyroBoot);   // tenta de novo, sem bloquear; o bias provisório segue em uso
     } else {
-        Serial.println("[cal] mantido o bias anterior");
+        logPrintln("[cal] mantido o bias anterior");
         g_mode = CalMode::None;
         if (!g_gyroDefinitive) startGyroCal(CalMode::GyroBoot);
     }
@@ -861,55 +861,55 @@ static void finishSixWindow() {
     const Pose pose = (Pose)g_sixIdx;
     const Vec3 m = g_cw.accRaw.mean();
     if (g_cw.accRaw.count() < CAL_MIN_SAMPLES) {
-        Serial.printf("[cal] janela incompleta (%lu amostras): repita\n", (unsigned long)g_cw.accRaw.count());
+        logPrintf("[cal] janela incompleta (%lu amostras): repita\n", (unsigned long)g_cw.accRaw.count());
         promptSixPose();
         return;
     }
     if (g_cw.gyro.maxStddev() >= CAL_REST_GYRO_MAX_STD_DPS) {
-        Serial.printf("[cal] a caixa se mexeu (desvio do giroscópio %.3f °/s): repita\n", g_cw.gyro.maxStddev());
+        logPrintf("[cal] a caixa se mexeu (desvio do giroscópio %.3f °/s): repita\n", g_cw.gyro.maxStddev());
         promptSixPose();
         return;
     }
     const PoseCheck pc = checkPose(pose, m, POSE_LIMITS);
     if (pc != PoseCheck::Ok) {
-        Serial.printf("[cal] a média (%+.3f %+.3f %+.3f g) não corresponde a \"%s\" (%s): confira e repita\n", m.x,
-                      m.y, m.z, poseName(pose), pc == PoseCheck::WrongAxis ? "outro eixo" : "inclinada demais");
+        logPrintf("[cal] a média (%+.3f %+.3f %+.3f g) não corresponde a \"%s\" (%s): confira e repita\n", m.x,
+                  m.y, m.z, poseName(pose), pc == PoseCheck::WrongAxis ? "outro eixo" : "inclinada demais");
         promptSixPose();
         return;
     }
     g_sixMeans[g_sixIdx] = m;
     g_sixTempSum += g_cw.tempSum / g_cw.accRaw.count();
-    Serial.printf("[cal] ok: %+.4f %+.4f %+.4f g\n", m.x, m.y, m.z);
+    logPrintf("[cal] ok: %+.4f %+.4f %+.4f g\n", m.x, m.y, m.z);
     if (++g_sixIdx < POSE_COUNT) {
         promptSixPose();
         return;
     }
 
     if (!sixPositionCal(g_sixMeans, g_sixResult)) {
-        Serial.println("[cal] escalas fora de 0,5..1,5: posições trocadas? Calibração descartada");
+        logPrintln("[cal] escalas fora de 0,5..1,5: posições trocadas? Calibração descartada");
         endSix();
         return;
     }
     const AccelCal &c = g_sixResult;
-    Serial.println("[cal] resultado das seis posições:");
-    Serial.printf("  offset (mg): %+.1f %+.1f %+.1f | escala: %+.2f %% %+.2f %% %+.2f %%\n", c.offset.x * 1000,
-                  c.offset.y * 1000, c.offset.z * 1000, (c.scale.x - 1) * 100, (c.scale.y - 1) * 100,
-                  (c.scale.z - 1) * 100);
+    logPrintln("[cal] resultado das seis posições:");
+    logPrintf("  offset (mg): %+.1f %+.1f %+.1f | escala: %+.2f %% %+.2f %% %+.2f %%\n", c.offset.x * 1000,
+              c.offset.y * 1000, c.offset.z * 1000, (c.scale.x - 1) * 100, (c.scale.y - 1) * 100,
+              (c.scale.z - 1) * 100);
     float norms[POSE_COUNT];
     const bool valid = validateAccelCal(c, g_sixMeans, CAL_VALID_MIN_G, CAL_VALID_MAX_G, norms);
     for (int i = 0; i < POSE_COUNT; i++) {
         const bool ok = norms[i] >= CAL_VALID_MIN_G && norms[i] <= CAL_VALID_MAX_G;
-        Serial.printf("  %-26s |a| corrigido %.4f g %s\n", poseName((Pose)i), norms[i], ok ? "" : "FORA DA FAIXA");
+        logPrintf("  %-26s |a| corrigido %.4f g %s\n", poseName((Pose)i), norms[i], ok ? "" : "FORA DA FAIXA");
     }
     if (!valid) {
         // Resultado reprovado não pode ser gravado: provavelmente posições inclinadas demais
-        Serial.printf("[cal] validação FALHOU (|a| fora de %.2f..%.2f g): resultado descartado, calibração "
-                      "anterior mantida. Apoie a caixa bem no esquadro e refaça com 6\n",
-                      CAL_VALID_MIN_G, CAL_VALID_MAX_G);
+        logPrintf("[cal] validação FALHOU (|a| fora de %.2f..%.2f g): resultado descartado, calibração "
+                  "anterior mantida. Apoie a caixa bem no esquadro e refaça com 6\n",
+                  CAL_VALID_MIN_G, CAL_VALID_MAX_G);
         endSix();
         return;
     }
-    Serial.println("[cal] validação ok (|a| entre 0,98 e 1,02 g). s = gravar na NVS | x = descartar");
+    logPrintln("[cal] validação ok (|a| entre 0,98 e 1,02 g). s = gravar na NVS | x = descartar");
     g_mode = CalMode::SixReview;
 }
 
@@ -921,8 +921,8 @@ static void promptLevel() {
         "(borda da mesa ou esquadro)",
         "caixa ainda em pé, girada 180° no plano da mesa (sem virar), com a cauda encostada na mesma referência",
     };
-    Serial.printf("[mont] posição %d/2: %s. Solte a caixa e aperte Enter (x cancela)\n", g_levelIdx + 1,
-                  STEP[g_levelIdx]);
+    logPrintf("[mont] posição %d/2: %s. Solte a caixa e aperte Enter (x cancela)\n", g_levelIdx + 1,
+              STEP[g_levelIdx]);
     g_mode = CalMode::LevelWait;
 }
 
@@ -944,16 +944,16 @@ static void finishLevelWindow() {
                                          LEVEL_REST_GYRO_MAX_MEAN_DPS);
     if (r != LevelRest::Ok) {
         const Vec3 gm = applyGyroBias(g_cw.gyro.mean(), g_gyroBias);
-        Serial.printf("[mont] medida recusada: %s (desvio máx. %.3f °/s, giro médio %+.3f %+.3f %+.3f °/s, "
-                      "|a| %.3f g): repita\n",
-                      levelRestText(r), g_cw.gyro.maxStddev(), gm.x, gm.y, gm.z, norm(g_cw.accCorr.mean()));
+        logPrintf("[mont] medida recusada: %s (desvio máx. %.3f °/s, giro médio %+.3f %+.3f %+.3f °/s, "
+                  "|a| %.3f g): repita\n",
+                  levelRestText(r), g_cw.gyro.maxStddev(), gm.x, gm.y, gm.z, norm(g_cw.accCorr.mean()));
         promptLevel();
         return;
     }
     g_levelF[g_levelIdx] = chipToBody(g_cw.accCorr.mean());
     g_levelTempSum += g_cw.tempSum / g_cw.accCorr.count();
     const Angles a = accelRollPitch(g_levelF[g_levelIdx]);
-    Serial.printf("[mont] ok: roll %+.2f° pitch %+.2f° (sem correção de montagem)\n", a.rollDeg, a.pitchDeg);
+    logPrintf("[mont] ok: roll %+.2f° pitch %+.2f° (sem correção de montagem)\n", a.rollDeg, a.pitchDeg);
     if (++g_levelIdx < 2) {
         promptLevel();
         return;
@@ -961,22 +961,22 @@ static void finishLevelWindow() {
 
     const MountCheck mc = mountFromTwoPoses(g_levelF[0], g_levelF[1], LEVEL_MAX_TILT_DEG, g_levelResult);
     if (mc == MountCheck::BadInput) {
-        Serial.println("[mont] medidas incoerentes (a mesma face estava apoiada nas duas?): calibração descartada");
+        logPrintln("[mont] medidas incoerentes (a mesma face estava apoiada nas duas?): calibração descartada");
         g_mode = CalMode::None;
         return;
     }
     const MountResult &m = g_levelResult;
-    Serial.printf("[mont] desalinhamento do módulo: roll %+.2f° pitch %+.2f° | inclinação da mesa: roll %+.2f° "
-                  "pitch %+.2f°\n",
-                  m.mountRollDeg, m.mountPitchDeg, m.tableRollDeg, m.tablePitchDeg);
+    logPrintf("[mont] desalinhamento do módulo: roll %+.2f° pitch %+.2f° | inclinação da mesa: roll %+.2f° "
+              "pitch %+.2f°\n",
+              m.mountRollDeg, m.mountPitchDeg, m.tableRollDeg, m.tablePitchDeg);
     if (mc == MountCheck::TooTilted) {
-        Serial.printf("[mont] acima de %.0f°: calibração descartada. Confira se a caixa estava em pé (sem virar), a mesa e "
-                      "a fixação do módulo\n",
-                      LEVEL_MAX_TILT_DEG);
+        logPrintf("[mont] acima de %.0f°: calibração descartada. Confira se a caixa estava em pé (sem virar), a mesa e "
+                  "a fixação do módulo\n",
+                  LEVEL_MAX_TILT_DEG);
         g_mode = CalMode::None;
         return;
     }
-    Serial.println("[mont] s = gravar na NVS | x = descartar");
+    logPrintln("[mont] s = gravar na NVS | x = descartar");
     g_mode = CalMode::LevelReview;
 }
 
@@ -1023,19 +1023,19 @@ static void printAttitudeLine(const Vec3 &acc, float tempC) {
     if (g_gyroOnly.initialized()) snprintf(gyroOnly, sizeof(gyroOnly), "%+7.2f %+7.2f", g_gyroOnly.rollDeg(),
                                            g_gyroOnly.pitchDeg());
     if (g_att.initialized())
-        Serial.printf("[att] roll %+7.2f pitch %+7.2f | acc %+7.2f %+7.2f | giro %s | |a| %.3f w %.2f | %.2f °C%s\n",
-                      g_att.rollDeg(), g_att.pitchDeg(), am.rollDeg, am.pitchDeg, gyroOnly, norm(acc),
-                      g_att.lastAccWeight(), tempC, g_att.degraded() ? " | DEGRADADO" : "");
+        logPrintf("[att] roll %+7.2f pitch %+7.2f | acc %+7.2f %+7.2f | giro %s | |a| %.3f w %.2f | %.2f °C%s\n",
+                  g_att.rollDeg(), g_att.pitchDeg(), am.rollDeg, am.pitchDeg, gyroOnly, norm(acc),
+                  g_att.lastAccWeight(), tempC, g_att.degraded() ? " | DEGRADADO" : "");
     else
-        Serial.printf("[att] aguardando referência | acc %+7.2f %+7.2f | |a| %.3f w %.2f | %.2f °C\n", am.rollDeg,
-                      am.pitchDeg, norm(acc), g_att.lastAccWeight(), tempC);
+        logPrintf("[att] aguardando referência | acc %+7.2f %+7.2f | |a| %.3f w %.2f | %.2f °C\n", am.rollDeg,
+                  am.pitchDeg, norm(acc), g_att.lastAccWeight(), tempC);
     const AttStream &a = g_as;
-    Serial.printf("      dt %.2f/%.2f/%.2f ms (%lu) | atraso máx %lu µs | filtro méd/máx %.0f/%lu µs | ambíguos %lu | "
-                  "descartados %lu | reinícios %lu\n",
-                  a.n ? a.dtMin * 1e3 : 0.0, a.n ? a.dtSum / a.n * 1e3 : 0.0, a.dtMax * 1e3, (unsigned long)a.n,
-                  (unsigned long)a.lagMaxUs, a.n ? (double)a.costSumUs / a.n : 0.0, (unsigned long)a.costMaxUs,
-                  (unsigned long)a.ambiguous,
-                  (unsigned long)a.dropped, (unsigned long)a.resets);
+    logPrintf("      dt %.2f/%.2f/%.2f ms (%lu) | atraso máx %lu µs | filtro méd/máx %.0f/%lu µs | ambíguos %lu | "
+              "descartados %lu | reinícios %lu\n",
+              a.n ? a.dtMin * 1e3 : 0.0, a.n ? a.dtSum / a.n * 1e3 : 0.0, a.dtMax * 1e3, (unsigned long)a.n,
+              (unsigned long)a.lagMaxUs, a.n ? (double)a.costSumUs / a.n : 0.0, (unsigned long)a.costMaxUs,
+              (unsigned long)a.ambiguous,
+              (unsigned long)a.dropped, (unsigned long)a.resets);
 }
 
 // Uma amostra válida, fora do descarte: calibração nos eixos do chip → eixos do modelo →
@@ -1076,12 +1076,12 @@ static void fusionSample(const ImuSample &s, uint32_t intUs) {
         g_win.att[1].add(g_att.pitchDeg());
     }
 
-    if (g_as.on && (int32_t)(intUs - g_as.nextUs) >= 0) {
+    if (g_as.on && g_as.print.due(intUs)) {
         printAttitudeLine(acc, s.tempC);
         const bool on = g_as.on;
         g_as = AttStream();
         g_as.on = on;
-        g_as.nextUs = intUs + ATT_PRINT_US;
+        g_as.print.restart(intUs, ATT_PRINT_US);
     }
 }
 
@@ -1114,82 +1114,82 @@ static ValidityInputs validityInputs() {
 // as linhas anteriores levam ~100 ms na serial, e as idades medidas depois delas refletiriam a impressão
 static void printValidity(const ValidityInputs &in) {
     const uint16_t v = telemetryValidFlags(in, VALIDITY_LIMITS);
-    Serial.print("  validade (telemetria): ATT ");
-    if (v & VAL_ATT) Serial.print("ok");
-    else if (!in.attInitialized) Serial.print("não (filtro não inicializado)");
-    else Serial.printf("não (MPU sem amostra há %lu ms)", (unsigned long)in.attAgeMs);
-    Serial.printf(" | ATT_DEGRADED %s | ALT ", (v & VAL_ATT_DEGRADED) ? "sim" : "não");
-    if (v & VAL_ALT) Serial.print("ok");
-    else if (!in.baroOk) Serial.print("não (sem barômetro)");
-    else if (!in.baroZeroValid) Serial.print("não (sem zero)");
-    else if (!in.altFinite) Serial.print("não (valor inválido)");
-    else Serial.printf("não (leitura de %lu ms atrás)", (unsigned long)in.baroAgeMs);
-    Serial.print(" | HDG ");
-    if (v & VAL_HDG) Serial.print("ok");
-    else if (!(v & VAL_ATT)) Serial.print("não (sem atitude)");
-    else if (!in.magCalibrated) Serial.print("não (magnetômetro sem calibração)");
-    else Serial.print("não (filtro da proa não inicializado)");
-    Serial.print(" | HDG_GYRO_ONLY ");
-    if (!(v & VAL_HDG_GYRO_ONLY)) Serial.print("não");
-    else if (in.attDegraded) Serial.print("sim (ATITUDE_DEGRADADA)");
-    else if (in.magAgeMs > VALIDITY_LIMITS.magMaxAgeMs) Serial.print("sim (magnetômetro sem leitura recente)");
-    else Serial.printf("sim (%s)", magStateText());
-    Serial.printf(" | valid = 0x%04X\n", v);
+    logPrint("  validade (telemetria): ATT ");
+    if (v & VAL_ATT) logPrint("ok");
+    else if (!in.attInitialized) logPrint("não (filtro não inicializado)");
+    else logPrintf("não (MPU sem amostra há %lu ms)", (unsigned long)in.attAgeMs);
+    logPrintf(" | ATT_DEGRADED %s | ALT ", (v & VAL_ATT_DEGRADED) ? "sim" : "não");
+    if (v & VAL_ALT) logPrint("ok");
+    else if (!in.baroOk) logPrint("não (sem barômetro)");
+    else if (!in.baroZeroValid) logPrint("não (sem zero)");
+    else if (!in.altFinite) logPrint("não (valor inválido)");
+    else logPrintf("não (leitura de %lu ms atrás)", (unsigned long)in.baroAgeMs);
+    logPrint(" | HDG ");
+    if (v & VAL_HDG) logPrint("ok");
+    else if (!(v & VAL_ATT)) logPrint("não (sem atitude)");
+    else if (!in.magCalibrated) logPrint("não (magnetômetro sem calibração)");
+    else logPrint("não (filtro da proa não inicializado)");
+    logPrint(" | HDG_GYRO_ONLY ");
+    if (!(v & VAL_HDG_GYRO_ONLY)) logPrint("não");
+    else if (in.attDegraded) logPrint("sim (ATITUDE_DEGRADADA)");
+    else if (in.magAgeMs > VALIDITY_LIMITS.magMaxAgeMs) logPrint("sim (magnetômetro sem leitura recente)");
+    else logPrintf("sim (%s)", magStateText());
+    logPrintf(" | valid = 0x%04X\n", v);
 }
 
 static void printStatus() {
     const ValidityInputs validity = validityInputs();   // antes de imprimir (ver printValidity)
-    Serial.println("[A] estado da calibração");
+    logPrintln("[A] estado da calibração");
     if (g_cal.accelValid) {
         const AccelCal &c = g_cal.accel;
-        Serial.printf("  acelerômetro: calibrado (±%d g, %.1f °C) | offset (mg) %+.1f %+.1f %+.1f | "
-                      "escala %+.2f %% %+.2f %% %+.2f %%\n",
-                      g_cal.accelRangeG, g_cal.accelTempC, c.offset.x * 1000, c.offset.y * 1000, c.offset.z * 1000,
-                      (c.scale.x - 1) * 100, (c.scale.y - 1) * 100, (c.scale.z - 1) * 100);
+        logPrintf("  acelerômetro: calibrado (±%d g, %.1f °C) | offset (mg) %+.1f %+.1f %+.1f | "
+                  "escala %+.2f %% %+.2f %% %+.2f %%\n",
+                  g_cal.accelRangeG, g_cal.accelTempC, c.offset.x * 1000, c.offset.y * 1000, c.offset.z * 1000,
+                  (c.scale.x - 1) * 100, (c.scale.y - 1) * 100, (c.scale.z - 1) * 100);
     } else {
-        Serial.println("  acelerômetro: NÃO calibrado (sem dados na NVS para esta faixa): use 6");
+        logPrintln("  acelerômetro: NÃO calibrado (sem dados na NVS para esta faixa): use 6");
     }
     if (g_level.valid)
-        Serial.printf("  montagem: calibrada | módulo em roll %+.2f° pitch %+.2f° em relação à caixa (%.1f °C)\n",
-                      g_level.mountRollDeg, g_level.mountPitchDeg, g_level.tempC);
+        logPrintf("  montagem: calibrada | módulo em roll %+.2f° pitch %+.2f° em relação à caixa (%.1f °C)\n",
+                  g_level.mountRollDeg, g_level.mountPitchDeg, g_level.tempC);
     else
-        Serial.println("  montagem: NÃO calibrada (eixos nominais): use z");
+        logPrintln("  montagem: NÃO calibrada (eixos nominais): use z");
     if (g_att.initialized())
-        Serial.printf("  atitude: roll %+.2f° pitch %+.2f°%s\n", g_att.rollDeg(), g_att.pitchDeg(),
-                      g_att.degraded() ? " (DEGRADADA: giroscópio saturou)" : "");
+        logPrintf("  atitude: roll %+.2f° pitch %+.2f°%s\n", g_att.rollDeg(), g_att.pitchDeg(),
+                  g_att.degraded() ? " (DEGRADADA: giroscópio saturou)" : "");
     else
-        Serial.println("  atitude: aguardando referência (caixa parada, |a| perto de 1 g)");
-    Serial.printf("  giroscópio: %s | bias %+.3f %+.3f %+.3f °/s | calibrado a %.1f °C\n",
-                  g_gyroDefinitive ? "DEFINITIVO (deste boot)"
-                                   : (g_cal.gyroValid ? "PROVISÓRIO (bias salvo de antes)" : "PROVISÓRIO (sem bias salvo)"),
-                  g_gyroBias.x, g_gyroBias.y, g_gyroBias.z, g_gyroBiasTempC);
+        logPrintln("  atitude: aguardando referência (caixa parada, |a| perto de 1 g)");
+    logPrintf("  giroscópio: %s | bias %+.3f %+.3f %+.3f °/s | calibrado a %.1f °C\n",
+              g_gyroDefinitive ? "DEFINITIVO (deste boot)"
+                               : (g_cal.gyroValid ? "PROVISÓRIO (bias salvo de antes)" : "PROVISÓRIO (sem bias salvo)"),
+              g_gyroBias.x, g_gyroBias.y, g_gyroBias.z, g_gyroBiasTempC);
 
     if (g_baroRefValid)
-        Serial.printf("  altitude: zero p0 = %.2f hPa a %.1f °C%s\n", g_baroRefHpa, g_baroRefTempC,
-                      g_bzState != BaroZeroState::Off ? " (novo zero em andamento)" : "");
+        logPrintf("  altitude: zero p0 = %.2f hPa a %.1f °C%s\n", g_baroRefHpa, g_baroRefTempC,
+                  g_bzState != BaroZeroState::Off ? " (novo zero em andamento)" : "");
     else
-        Serial.printf("  altitude: %s\n", g_bzState != BaroZeroState::Off ? "zero em andamento" : "sem zero");
+        logPrintf("  altitude: %s\n", g_bzState != BaroZeroState::Off ? "zero em andamento" : "sem zero");
     printBaroSummary();
 
     if (g_magCal.valid) {
         const MagCal &mc = g_magCal.cal;
-        Serial.printf("  magnetômetro: calibrado | offset %+.1f %+.1f %+.1f µT | raio %.1f µT | resíduo %.1f %% | "
-                      "%d setores\n",
-                      mc.offset.x, mc.offset.y, mc.offset.z, mc.radiusUt, g_magCal.residPct, g_magCal.sectors);
-        Serial.printf("  magnetômetro: W = [%+.3f %+.3f %+.3f; %+.3f %+.3f %+.3f; %+.3f %+.3f %+.3f]\n", mc.w.m[0][0],
-                      mc.w.m[0][1], mc.w.m[0][2], mc.w.m[1][0], mc.w.m[1][1], mc.w.m[1][2], mc.w.m[2][0],
-                      mc.w.m[2][1], mc.w.m[2][2]);
+        logPrintf("  magnetômetro: calibrado | offset %+.1f %+.1f %+.1f µT | raio %.1f µT | resíduo %.1f %% | "
+                  "%d setores\n",
+                  mc.offset.x, mc.offset.y, mc.offset.z, mc.radiusUt, g_magCal.residPct, g_magCal.sectors);
+        logPrintf("  magnetômetro: W = [%+.3f %+.3f %+.3f; %+.3f %+.3f %+.3f; %+.3f %+.3f %+.3f]\n", mc.w.m[0][0],
+                  mc.w.m[0][1], mc.w.m[0][2], mc.w.m[1][0], mc.w.m[1][1], mc.w.m[1][2], mc.w.m[2][0],
+                  mc.w.m[2][1], mc.w.m[2][2]);
     } else {
-        Serial.println("  magnetômetro: NÃO calibrado (offset zero, escala 1, sem detecção de distúrbio): use m");
+        logPrintln("  magnetômetro: NÃO calibrado (offset zero, escala 1, sem detecção de distúrbio): use m");
     }
-    Serial.printf("  magnetômetro: ±%.1f Ga, %.0f Hz, média de %d, leitura a %d Hz\n", MAG_RANGE_MGA / 1000.0f,
-                  MAG_OUTPUT_HZ, MAG_AVG_SAMPLES, MAG_READ_HZ);
+    logPrintf("  magnetômetro: ±%.1f Ga, %.0f Hz, média de %d, leitura a %d Hz\n", MAG_RANGE_MGA / 1000.0f,
+              MAG_OUTPUT_HZ, MAG_AVG_SAMPLES, MAG_READ_HZ);
     printMagSummary();
     printValidity(validity);
 
     const uint32_t n = g_lastWin.samples;
     if (n == 0) {
-        Serial.println("  último 1 s: nenhuma leitura válida");
+        logPrintln("  último 1 s: nenhuma leitura válida");
         return;
     }
     const Vec3 aRaw = {(float)(g_lastWin.sum[0] / n), (float)(g_lastWin.sum[1] / n), (float)(g_lastWin.sum[2] / n)};
@@ -1197,22 +1197,22 @@ static void printStatus() {
     const Vec3 aCor = g_cal.accelValid ? applyAccelCal(g_cal.accel, aRaw) : aRaw;
     const Vec3 gCor = applyGyroBias(gRaw, g_gyroBias);
     const float tNow = g_lastWin.tempSum / n;
-    Serial.printf("  pulsos do INT: no último 1 s, perdidos %lu e descartados %lu | fila cheia %lu desde o boot\n",
-                  (unsigned long)g_lastWin.lost, (unsigned long)g_lastWin.stale, (unsigned long)g_intOverflow);
-    Serial.printf("  último 1 s (%lu amostras, %.1f °C):\n", (unsigned long)n, tNow);
-    Serial.printf("    a bruto     %+.4f %+.4f %+.4f g  |a| %.4f\n", aRaw.x, aRaw.y, aRaw.z, norm(aRaw));
-    Serial.printf("    a corrigido %+.4f %+.4f %+.4f g  |a| %.4f\n", aCor.x, aCor.y, aCor.z, norm(aCor));
-    Serial.printf("    g bruto     %+.3f %+.3f %+.3f °/s\n", gRaw.x, gRaw.y, gRaw.z);
-    Serial.printf("    g corrigido %+.3f %+.3f %+.3f °/s\n", gCor.x, gCor.y, gCor.z);
+    logPrintf("  pulsos do INT: no último 1 s, perdidos %lu e descartados %lu | fila cheia %lu desde o boot\n",
+              (unsigned long)g_lastWin.lost, (unsigned long)g_lastWin.stale, (unsigned long)g_intOverflow);
+    logPrintf("  último 1 s (%lu amostras, %.1f °C):\n", (unsigned long)n, tNow);
+    logPrintf("    a bruto     %+.4f %+.4f %+.4f g  |a| %.4f\n", aRaw.x, aRaw.y, aRaw.z, norm(aRaw));
+    logPrintf("    a corrigido %+.4f %+.4f %+.4f g  |a| %.4f\n", aCor.x, aCor.y, aCor.z, norm(aCor));
+    logPrintf("    g bruto     %+.3f %+.3f %+.3f °/s\n", gRaw.x, gRaw.y, gRaw.z);
+    logPrintf("    g corrigido %+.3f %+.3f %+.3f °/s\n", gCor.x, gCor.y, gCor.z);
     if (tempDrifted(g_gyroBiasTempC, tNow, CAL_TEMP_WARN_C) && (g_gyroDefinitive || g_cal.gyroValid))
-        Serial.printf("  AVISO: temperatura a mais de %.1f °C da calibração do giroscópio: recalibre com g\n",
-                      CAL_TEMP_WARN_C);
+        logPrintf("  AVISO: temperatura a mais de %.1f °C da calibração do giroscópio: recalibre com g\n",
+                  CAL_TEMP_WARN_C);
 }
 
 static void printHelp() {
-    Serial.println("[A] comandos: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem | "
-                   "m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa | "
-                   "0 = zerar altitude | r = resumo por segundo");
+    logPrintln("[A] comandos: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem | "
+               "m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa | "
+               "0 = zerar altitude | r = resumo por segundo");
 }
 
 static void handleSerial() {
@@ -1222,18 +1222,18 @@ static void handleSerial() {
         switch (g_mode) {
         case CalMode::SixWait:
             if (ch == '\r' || ch == '\n') {
-                Serial.printf("[cal] medindo %d ms, não toque na caixa...\n", CAL_WINDOW_MS);
+                logPrintf("[cal] medindo %d ms, não toque na caixa...\n", CAL_WINDOW_MS);
                 g_mode = CalMode::SixMeasure;
                 startCalWindow();
             } else if (ch == 'x') {
-                Serial.println("[cal] seis posições canceladas");
+                logPrintln("[cal] seis posições canceladas");
                 endSix();
             }
             continue;
         case CalMode::SixMeasure:
             if (ch == 'x') {
                 g_cw.active = false;
-                Serial.println("[cal] seis posições canceladas");
+                logPrintln("[cal] seis posições canceladas");
                 endSix();
             }
             continue;   // Enter extra (\n do CR+LF) e outras teclas são ignorados durante a medida
@@ -1246,37 +1246,37 @@ static void handleSerial() {
                     g_cal.accelRangeG = MPU_ACCEL_RANGE_G;
                     g_cal.accelValid = true;
                     fusionReset();   // a referência do acelerômetro mudou
-                    Serial.println("[cal] calibração do acelerômetro gravada na NVS");
+                    logPrintln("[cal] calibração do acelerômetro gravada na NVS");
                     // A montagem foi medida com o acelerômetro corrigido pela calibração anterior. O registro
                     // fica na NVS, mas não bate mais com a calibração e é ignorado também nos próximos boots.
                     if (g_level.valid) {
                         g_level = LevelData();
-                        Serial.println("[mont] montagem descartada: foi medida com a calibração anterior do "
-                                       "acelerômetro. Refaça com z");
+                        logPrintln("[mont] montagem descartada: foi medida com a calibração anterior do "
+                                   "acelerômetro. Refaça com z");
                     }
                 } else {
-                    Serial.println("[cal] FALHA ao gravar na NVS; calibração anterior mantida");
+                    logPrintln("[cal] FALHA ao gravar na NVS; calibração anterior mantida");
                 }
                 endSix();
             } else if (ch == 'x') {
-                Serial.println("[cal] resultado descartado; calibração anterior mantida");
+                logPrintln("[cal] resultado descartado; calibração anterior mantida");
                 endSix();
             }
             continue;
         case CalMode::LevelWait:
             if (ch == '\r' || ch == '\n') {
-                Serial.printf("[mont] medindo %d ms, não toque na caixa...\n", CAL_WINDOW_MS);
+                logPrintf("[mont] medindo %d ms, não toque na caixa...\n", CAL_WINDOW_MS);
                 g_mode = CalMode::LevelMeasure;
                 startCalWindow();
             } else if (ch == 'x') {
-                Serial.println("[mont] calibração de montagem cancelada");
+                logPrintln("[mont] calibração de montagem cancelada");
                 g_mode = CalMode::None;
             }
             continue;
         case CalMode::LevelMeasure:
             if (ch == 'x') {
                 g_cw.active = false;
-                Serial.println("[mont] calibração de montagem cancelada");
+                logPrintln("[mont] calibração de montagem cancelada");
                 g_mode = CalMode::None;
             }
             continue;
@@ -1293,13 +1293,13 @@ static void handleSerial() {
                 if (levelStoreSave(d)) {
                     g_level = d;
                     fusionReset();   // a rotação de montagem mudou
-                    Serial.println("[mont] calibração de montagem gravada na NVS");
+                    logPrintln("[mont] calibração de montagem gravada na NVS");
                 } else {
-                    Serial.println("[mont] FALHA ao gravar na NVS; montagem anterior mantida");
+                    logPrintln("[mont] FALHA ao gravar na NVS; montagem anterior mantida");
                 }
                 g_mode = CalMode::None;
             } else if (ch == 'x') {
-                Serial.println("[mont] resultado descartado; montagem anterior mantida");
+                logPrintln("[mont] resultado descartado; montagem anterior mantida");
                 g_mode = CalMode::None;
             }
             continue;
@@ -1310,21 +1310,21 @@ static void handleSerial() {
         case 'c': printStatus(); break;
         case 'r':
             g_summaryOn = !g_summaryOn;
-            Serial.printf("[A] resumo por segundo %s\n", g_summaryOn ? "ligado" : "desligado");
+            logPrintf("[A] resumo por segundo %s\n", g_summaryOn ? "ligado" : "desligado");
             break;
         case 'g': startGyroCal(CalMode::GyroCmd); break;
         case 'z':
             if (g_mode != CalMode::None)
-                Serial.println("[mont] espere a calibração em andamento terminar");
+                logPrintln("[mont] espere a calibração em andamento terminar");
             else if (!g_cal.accelValid)
-                Serial.println("[mont] acelerômetro sem calibração: faça antes as seis posições (6)");
+                logPrintln("[mont] acelerômetro sem calibração: faça antes as seis posições (6)");
             else if (!g_gyroDefinitive)
-                Serial.println("[mont] bias do giroscópio ainda provisório: espere a calibração (ou use g)");
+                logPrintln("[mont] bias do giroscópio ainda provisório: espere a calibração (ou use g)");
             else {
                 g_levelIdx = 0;
                 g_levelTempSum = 0;
-                Serial.printf("[mont] calibração de montagem: duas medidas de %d ms, a segunda com a caixa girada "
-                              "180°\n", CAL_WINDOW_MS);
+                logPrintf("[mont] calibração de montagem: duas medidas de %d ms, a segunda com a caixa girada "
+                          "180°\n", CAL_WINDOW_MS);
                 promptLevel();
             }
             break;
@@ -1332,34 +1332,34 @@ static void handleSerial() {
             const bool on = !g_as.on;
             g_as = AttStream();
             g_as.on = on;
-            g_as.nextUs = micros();
+            g_as.print.start(micros());
             g_gyroOnly.reset();   // o diagnóstico só de giroscópio recomeça da atitude atual
-            Serial.printf("[att] fluxo de atitude %s (%d Hz): filtro | só acelerômetro | só giroscópio desde o a\n",
-                          on ? "ligado" : "desligado", ATT_PRINT_HZ);
+            logPrintf("[att] fluxo de atitude %s (%d Hz): filtro | só acelerômetro | só giroscópio desde o a\n",
+                      on ? "ligado" : "desligado", ATT_PRINT_HZ);
             break;
         }
         case 'b':
             g_bsOn = !g_bsOn;
-            g_bsNextUs = micros();
-            Serial.printf("[baro] fluxo de altitude %s (%d Hz)\n", g_bsOn ? "ligado" : "desligado", BARO_PRINT_HZ);
+            g_bsPrint.start(micros());
+            logPrintf("[baro] fluxo de altitude %s (%d Hz)\n", g_bsOn ? "ligado" : "desligado", BARO_PRINT_HZ);
             break;
         case 'm': magCalStart(); break;
         case 'p':
             g_psOn = !g_psOn;
-            g_psNextUs = micros();
-            Serial.printf("[mag] fluxo de proa %s (%d Hz): filtrada | magnetômetro compensada | deitada | |m| | "
-                          "inclinação | roll pitch | estado\n", g_psOn ? "ligado" : "desligado", MAG_PRINT_HZ);
+            g_psPrint.start(micros());
+            logPrintf("[mag] fluxo de proa %s (%d Hz): filtrada | magnetômetro compensada | deitada | |m| | "
+                      "inclinação | roll pitch | estado\n", g_psOn ? "ligado" : "desligado", MAG_PRINT_HZ);
             break;
         case '0':
-            if (!g_baroReady) Serial.println("[baro] barômetro indisponível: sem altitude");
-            else if (g_bzState == BaroZeroState::Settling) Serial.println("[baro] zero já em andamento");
+            if (!g_baroReady) logPrintln("[baro] barômetro indisponível: sem altitude");
+            else if (g_bzState == BaroZeroState::Settling) logPrintln("[baro] zero já em andamento");
             else baroZeroStart(false);
             break;
         case '6':
             g_cw.active = false;
             g_sixIdx = 0;
             g_sixTempSum = 0;
-            Serial.println("[cal] seis posições: cada medida leva 2 s com a caixa apoiada e parada");
+            logPrintln("[cal] seis posições: cada medida leva 2 s com a caixa apoiada e parada");
             promptSixPose();
             break;
         case 'h':
@@ -1376,44 +1376,44 @@ void setup() {
     Serial.begin(115200);
     delay(500);
     pinMode(PIN_LED_STATUS, OUTPUT);
-    Serial.printf("[A] boot — compilado em %s — TelemetryPacket = %u bytes (main provisório: MPU6050 e "
-                  "calibração)\n", BUILD_STAMP, (unsigned)sizeof(TelemetryPacket));
+    logPrintf("[A] boot — compilado em %s — TelemetryPacket = %u bytes (main provisório: MPU6050 e "
+              "calibração)\n", BUILD_STAMP, (unsigned)sizeof(TelemetryPacket));
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_FREQ_HZ);
     Wire.setTimeOut(I2C_TIMEOUT_MS);   // vale para o barramento inteiro e sobrevive a Wire.end()/begin()
     g_intQueue = xQueueCreate(MPU_INT_QUEUE_LEN, sizeof(uint32_t));
     if (g_intQueue == nullptr) {   // a ISR do INT usa a fila: sem ela não há como seguir
-        Serial.println("[A] ERRO: sem memória para a fila do INT; reiniciando em 1 s");
-        Serial.flush();
+        logPrintln("[A] ERRO: sem memória para a fila do INT; reiniciando em 1 s");
+        logFlush();
         delay(1000);
         ESP.restart();
     }
 
     imuStoreLoad(g_cal, MPU_ACCEL_RANGE_G, CAL_STORE_ACC_OFFSET_MAX_G, CAL_STORE_GYRO_BIAS_MAX_DPS);
     if (g_cal.accelRejected)
-        Serial.println("[A] NVS: calibração do acelerômetro com valores impossíveis, ignorada. Refaça com 6");
-    if (g_cal.gyroRejected) Serial.println("[A] NVS: bias do giroscópio com valores impossíveis, ignorado");
+        logPrintln("[A] NVS: calibração do acelerômetro com valores impossíveis, ignorada. Refaça com 6");
+    if (g_cal.gyroRejected) logPrintln("[A] NVS: bias do giroscópio com valores impossíveis, ignorado");
     if (g_cal.gyroValid) {
         g_gyroBias = g_cal.gyroBias;   // provisório até a janela deste boot ser aceita
         g_gyroBiasTempC = g_cal.gyroTempC;
     }
     levelStoreLoad(g_level, LEVEL_MAX_TILT_DEG);
-    if (g_level.rejected) Serial.println("[A] NVS: calibração de montagem com valores impossíveis, ignorada. Refaça com z");
+    if (g_level.rejected) logPrintln("[A] NVS: calibração de montagem com valores impossíveis, ignorada. Refaça com z");
     if (g_level.valid && !sameAccelCal(g_level.accelCalValid, g_level.accelCal, g_cal.accelValid, g_cal.accel)) {
         g_level = LevelData();
-        Serial.println("[A] NVS: montagem medida com outra calibração do acelerômetro, ignorada. Refaça com z");
+        logPrintln("[A] NVS: montagem medida com outra calibração do acelerômetro, ignorada. Refaça com z");
     }
     uint8_t magCrb;
     float magLsb;
     if (hmcCrbCode(MAG_RANGE_MGA, magCrb, magLsb)) magStoreLoad(g_magCal, magCrb);
-    if (g_magCal.rejected) Serial.println("[A] NVS: calibração do magnetômetro com valores impossíveis, ignorada");
+    if (g_magCal.rejected) logPrintln("[A] NVS: calibração do magnetômetro com valores impossíveis, ignorada");
     if (g_magCal.otherAxisMap)
-        Serial.println("[A] NVS: calibração do magnetômetro feita com outro mapeamento de eixos, ignorada. Refaça com m");
+        logPrintln("[A] NVS: calibração do magnetômetro feita com outro mapeamento de eixos, ignorada. Refaça com m");
     if (g_magCal.otherGain)
-        Serial.println("[A] NVS: calibração do magnetômetro feita com outro ganho, ignorada. Refaça com m");
-    Serial.printf("[A] NVS: acelerômetro %s | giroscópio %s | montagem %s | magnetômetro %s\n",
-                  g_cal.accelValid ? "calibrado" : "sem calibração", g_cal.gyroValid ? "com bias salvo" : "sem bias salvo",
-                  g_level.valid ? "calibrada" : "sem calibração",
-                  g_magCal.valid ? "calibrado" : "sem calibração (proa com offset zero; use m)");
+        logPrintln("[A] NVS: calibração do magnetômetro feita com outro ganho, ignorada. Refaça com m");
+    logPrintf("[A] NVS: acelerômetro %s | giroscópio %s | montagem %s | magnetômetro %s\n",
+              g_cal.accelValid ? "calibrado" : "sem calibração", g_cal.gyroValid ? "com bias salvo" : "sem bias salvo",
+              g_level.valid ? "calibrada" : "sem calibração",
+              g_magCal.valid ? "calibrado" : "sem calibração (proa com offset zero; use m)");
 
     startMpu();
     startBaro();

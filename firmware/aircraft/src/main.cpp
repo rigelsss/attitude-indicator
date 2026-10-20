@@ -8,7 +8,7 @@
 //           m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa |
 //           0 = zerar altitude | r = resumo por segundo.
 // A lógica está em lib/imu_cal, lib/attitude, lib/baro, lib/mag e lib/sched (puras, testadas com pio test -e native).
-// A saída de texto passa por lib/logger. Refatoração em andamento: docs/refatoracao.md.
+// O barômetro é atendido por lib/baro_service. A saída de texto passa por lib/logger. Refatoração em andamento: docs/refatoracao.md.
 // Na semana 3 este arquivo passa a só inicializar o hardware e criar as tasks (src/tasks/):
 //   sensor_task  (prio 4, core 1) — acordada pela INT do MPU a SAMPLE_RATE_HZ; dona do barramento: lê o
 //                MPU e, intercalados, o BME280 e o HMC5883L; calibração e fusão (roll/pitch/proa).
@@ -26,8 +26,7 @@
 #include "imu_store.h"
 #include "attitude.h"
 #include "level_store.h"
-#include "bme280.h"
-#include "baro.h"
+#include "baro_service.h"
 #include "hmc5883l.h"
 #include "mag.h"
 #include "mag_store.h"
@@ -142,35 +141,16 @@ struct AttStream {
 static AttStream g_as;
 static const uint32_t ATT_PRINT_US = 1000000UL / ATT_PRINT_HZ;
 
-// ---------- Barômetro (lib/bme280, lib/baro, docs/barometro.md) ----------
+// ---------- Barômetro (lib/baro_service, docs/barometro.md) ----------
 
-static Bme280 g_baro;
-static bool g_baroReady = false;          // begin() aceito; depois disso o driver se recupera sozinho
-static Bme280Status g_baroLastStatus = Bme280Status::Ok;   // evita repetir a mesma mensagem a cada tentativa
-static uint32_t g_baroRetryMs = 0;
-static Periodic g_baroSched;              // próxima leitura
-static uint32_t g_baroLastRecoveries = 0;
-static BaroSample g_baroLast;             // última leitura válida
-static bool g_baroHave = false;
-
-// Zero da altitude: espera o filtro IIR do chip assentar e tira a média de uma janela parada
-enum class BaroZeroState : uint8_t { Off, Settling, Measuring };
-static BaroZeroState g_bzState = BaroZeroState::Off;
-static uint32_t g_bzUntilMs = 0;          // fim da espera (Settling)
-static uint32_t g_bzStartMs = 0;          // início da janela (Measuring)
-static ScalarStats g_bzPress, g_bzTemp;
-static bool g_baroRefValid = false;       // há um zero: altitude disponível
-static float g_baroRefHpa = 0;
-static float g_baroRefTempC = 0;
-static bool g_baroTempWarned = false;
-static const uint32_t BARO_PERIOD_US = 1000000UL / BARO_READ_HZ;
-static const uint32_t BARO_ZERO_MIN_SAMPLES =
-    (uint32_t)BARO_ZERO_WINDOW_MS * BARO_READ_HZ / 1000 * BARO_ZERO_MIN_SAMPLES_PCT / 100;
-
-// Fluxo de altitude (comando b)
-static bool g_bsOn = false;
-static Periodic g_bsPrint;
-static const uint32_t BARO_PRINT_US = 1000000UL / BARO_PRINT_HZ;
+static const BaroServiceConfig BARO_CFG = {
+    {&Wire, ADDR_BME280, BARO_OSRS_T, BARO_OSRS_P, BARO_IIR_COEF, BARO_STANDBY_US, BARO_MAX_FAIL_STREAK},
+    {BARO_SETTLE_MS, BARO_ZERO_WINDOW_MS,
+     (uint32_t)BARO_ZERO_WINDOW_MS * BARO_READ_HZ / 1000 * BARO_ZERO_MIN_SAMPLES_PCT / 100, BARO_ZERO_MAX_STD_PA,
+     BARO_REF_MIN_HPA, BARO_REF_MAX_HPA},
+    BARO_READ_HZ, BARO_RETRY_MS, BARO_FAIL_RETRY_MS, BARO_TEMP_WARN_C, BARO_PRINT_HZ,
+};
+static BaroService g_baroSvc(BARO_CFG);
 
 // ---------- Magnetômetro (lib/hmc5883l, lib/mag, lib/mag_store, docs/magnetometro.md) ----------
 
@@ -215,148 +195,6 @@ static const MagFitLimits MAG_FIT_LIMITS = {MAG_CAL_MIN_RADIUS_UT, MAG_CAL_MAX_R
 static bool g_psOn = false;
 static Periodic g_psPrint;
 static const uint32_t MAG_PRINT_US = 1000000UL / MAG_PRINT_HZ;
-
-static void baroZeroStart(bool settle) {
-    g_bzState = settle ? BaroZeroState::Settling : BaroZeroState::Measuring;
-    g_bzUntilMs = millis() + BARO_SETTLE_MS;
-    g_bzStartMs = millis();
-    g_bzPress.reset();
-    g_bzTemp.reset();
-    if (settle)
-        logPrintf("[baro] zero da altitude: aguardando %d ms o filtro do chip e depois %d ms com a caixa "
-                  "parada...\n", BARO_SETTLE_MS, BARO_ZERO_WINDOW_MS);
-    else
-        logPrintf("[baro] zero da altitude: medindo %d ms, mantenha a caixa parada...\n", BARO_ZERO_WINDOW_MS);
-}
-
-static void baroZeroSample(const BaroSample &b) {
-    if (g_bzState == BaroZeroState::Off) return;
-    if (g_bzState == BaroZeroState::Settling) {
-        if ((int32_t)(b.tMs - g_bzUntilMs) < 0) return;
-        g_bzState = BaroZeroState::Measuring;
-        g_bzStartMs = b.tMs;
-        g_bzPress.reset();
-        g_bzTemp.reset();
-    }
-    g_bzPress.add(b.pressHpa * 100.0);   // Pa: o limite de desvio está em Pa
-    g_bzTemp.add(b.tempC);
-    if (b.tMs - g_bzStartMs < BARO_ZERO_WINDOW_MS) return;
-
-    const BaroZeroResult r = evaluateZeroWindow(g_bzPress, g_bzTemp, BARO_ZERO_MIN_SAMPLES, BARO_ZERO_MAX_STD_PA,
-                                                BARO_REF_MIN_HPA, BARO_REF_MAX_HPA);
-    if (r.status == BaroZeroCheck::Ok) {
-        g_baroRefValid = true;
-        g_baroRefHpa = r.refHpa;
-        g_baroRefTempC = r.tempC;
-        g_baroTempWarned = false;
-        g_bzState = BaroZeroState::Off;
-        logPrintf("[baro] zero aceito: p0 = %.2f hPa | desvio %.2f Pa | %lu leituras | %.1f °C\n", r.refHpa,
-                  r.stdPa, (unsigned long)g_bzPress.count(), r.tempC);
-        return;
-    }
-    if (r.status == BaroZeroCheck::Unstable)
-        logPrintf("[baro] zero recusado: desvio %.2f Pa acima de %.1f Pa (caixa mexida ou ar agitado); "
-                  "medindo de novo\n", r.stdPa, BARO_ZERO_MAX_STD_PA);
-    else if (r.status == BaroZeroCheck::Invalid)
-        logPrintln("[baro] zero recusado: leitura inválida (não finita) na janela; medindo de novo");
-    else if (r.status == BaroZeroCheck::OutOfRange)
-        logPrintf("[baro] zero recusado: p0 = %.2f hPa fora de %.0f–%.0f hPa (leitura absurda); medindo de novo\n",
-                  r.refHpa, BARO_REF_MIN_HPA, BARO_REF_MAX_HPA);
-    else
-        logPrintf("[baro] zero recusado: %lu leituras, mínimo %lu; medindo de novo\n",
-                  (unsigned long)g_bzPress.count(), (unsigned long)BARO_ZERO_MIN_SAMPLES);
-    g_bzStartMs = b.tMs;
-    g_bzPress.reset();
-    g_bzTemp.reset();
-}
-
-static void startBaro() {
-    const Bme280Config cfg = {&Wire, ADDR_BME280, BARO_OSRS_T, BARO_OSRS_P, BARO_IIR_COEF, BARO_STANDBY_US,
-                              BARO_MAX_FAIL_STREAK};
-    const Bme280Status st = g_baro.begin(cfg);
-    if (st != Bme280Status::Ok) {
-        if (st != g_baroLastStatus)
-            logPrintf("[baro] BME280/BMP280: %s (chip_id=0x%02X); sem altitude, nova tentativa a cada %d s\n",
-                      bme280StatusText(st), g_baro.chipId(), BARO_RETRY_MS / 1000);
-        g_baroLastStatus = st;
-        g_baroRetryMs = millis() + BARO_RETRY_MS;
-        return;
-    }
-    g_baroLastStatus = st;
-    g_baroReady = true;
-    g_baroLastRecoveries = g_baro.recoveries();
-    g_baroSched.start(micros());
-    logPrintf("[baro] %s configurado (chip_id=0x%02X): pressão x%d, temperatura x%d, IIR %d, modo normal\n",
-              g_baro.model(), g_baro.chipId(), BARO_OSRS_P, BARO_OSRS_T, BARO_IIR_COEF);
-    baroZeroStart(true);
-}
-
-static void printBaroLine(const BaroSample &b) {
-    const float alt = g_baroRefValid ? baroAltitudeM(b.pressHpa, g_baroRefHpa) : NAN;
-    if (isfinite(alt))
-        logPrintf("[baro] %6.2f °C | %8.2f hPa | alt %+6.2f m | ΔT %+5.2f °C desde o zero\n", b.tempC, b.pressHpa,
-                  alt, b.tempC - g_baroRefTempC);
-    else if (g_baroRefValid)
-        logPrintf("[baro] %6.2f °C | %8.2f hPa | alt: inválida (pressão ou zero fora da faixa)\n", b.tempC,
-                  b.pressHpa);
-    else
-        logPrintf("[baro] %6.2f °C | %8.2f hPa | alt: sem zero\n", b.tempC, b.pressHpa);
-}
-
-// Uma linha no resumo por segundo (r) e no estado (c)
-static void printBaroSummary() {
-    if (!g_baroReady) {
-        logPrintf("    baro: barômetro indisponível (%s)\n", bme280StatusText(g_baroLastStatus));
-        return;
-    }
-    logPrintf("    baro: %s | ", g_baro.ok() ? "ok" : "FALHANDO");
-    const float alt = g_baroHave && g_baroRefValid ? baroAltitudeM(g_baroLast.pressHpa, g_baroRefHpa) : NAN;
-    if (!g_baroHave) logPrint("sem leitura");
-    else if (isfinite(alt))
-        logPrintf("%.2f hPa | alt %+.2f m | %.1f °C (ΔT %+.1f desde o zero)", g_baroLast.pressHpa, alt,
-                  g_baroLast.tempC, g_baroLast.tempC - g_baroRefTempC);
-    else if (g_baroRefValid)
-        logPrintf("%.2f hPa | alt inválida | %.1f °C", g_baroLast.pressHpa, g_baroLast.tempC);
-    else logPrintf("%.2f hPa | sem zero | %.1f °C", g_baroLast.pressHpa, g_baroLast.tempC);
-    logPrintf(" | falhas %lu (seguidas %lu, recuperações %lu)\n", (unsigned long)g_baro.failTotal(),
-              (unsigned long)g_baro.failStreak(), (unsigned long)g_baro.recoveries());
-}
-
-// Chamada logo depois de cada leitura do MPU: a transação do BME280 (~0,3 ms) fica longe do
-// próximo pulso do INT, cujas bordas induzem ruído no SDA/SCL
-static void baroService(uint32_t nowUs) {
-    if (!g_baroReady) {
-        if ((int32_t)(millis() - g_baroRetryMs) >= 0) startBaro();
-        return;
-    }
-    if (!g_baroSched.due(nowUs)) return;
-
-    BaroSample b;
-    const bool ok = g_baro.read(b);
-    // Com o BME280 falhando, tenta só a cada BARO_FAIL_RETRY_MS: cada transação sem resposta imprime um
-    // erro do I2C e atrasa o laço, e o MPU descartava amostras (hardware.md, 12/10/2026)
-    g_baroSched.advance(nowUs, g_baro.ok() ? BARO_PERIOD_US : BARO_FAIL_RETRY_MS * 1000UL);
-    if (g_baro.recoveries() != g_baroLastRecoveries) {
-        g_baroLastRecoveries = g_baro.recoveries();
-        logPrintf("[baro] %s perdeu a configuração (queda de alimentação?): %s\n", g_baro.model(),
-                  g_baro.configured() ? "reconfigurado; o filtro do chip recomeçou"
-                                      : "reconfiguração falhou, nova tentativa a cada leitura");
-        if (g_bzState != BaroZeroState::Off) baroZeroStart(true);
-    }
-    if (!ok) return;
-    g_baroLast = b;
-    g_baroHave = true;
-    baroZeroSample(b);
-    if (g_baroRefValid && !g_baroTempWarned && fabsf(b.tempC - g_baroRefTempC) > BARO_TEMP_WARN_C) {
-        logPrintf("[baro] AVISO: chip a %.1f °C, zero feito a %.1f °C: a altitude deriva ~13 cm/°C. "
-                  "Zere de novo com 0\n", b.tempC, g_baroRefTempC);
-        g_baroTempWarned = true;
-    }
-    if (g_bsOn && g_bsPrint.due(nowUs)) {
-        g_bsPrint.restart(nowUs, BARO_PRINT_US);
-        printBaroLine(b);
-    }
-}
 
 static void fusionReset() {
     g_att.reset();
@@ -741,7 +579,7 @@ static void closeWindowsUntil(uint32_t nowUs) {
         g_magWinReads = 0;
         if (g_summaryOn) {
             printWindow();
-            printBaroSummary();
+            g_baroSvc.printSummary();
             printMagSummary();
         }
         if (g_win.samples > 0) checkTempDrift(g_win.tempSum / g_win.samples);
@@ -1098,10 +936,10 @@ static ValidityInputs validityInputs() {
     in.attInitialized = g_att.initialized();
     in.attDegraded = g_att.degraded();
     in.attAgeMs = g_fusPrevValid ? (micros() - g_fusPrevIntUs) / 1000UL : AGE_NEVER;
-    in.baroOk = g_baroReady && g_baro.ok();
-    in.baroZeroValid = g_baroRefValid;
-    in.altFinite = g_baroHave && g_baroRefValid && isfinite(baroAltitudeM(g_baroLast.pressHpa, g_baroRefHpa));
-    in.baroAgeMs = ageMs(g_baroHave, g_baroLast.tMs);
+    in.baroOk = g_baroSvc.ok();
+    in.baroZeroValid = g_baroSvc.zeroValid();
+    in.altFinite = isfinite(g_baroSvc.altitudeM());
+    in.baroAgeMs = ageMs(g_baroSvc.have(), g_baroSvc.last().tMs);
     in.hdgInitialized = g_hdg.initialized();
     in.magCalibrated = g_magCal.valid;
     in.hdgMagSuspended = g_magStep == HeadingFilter::Mag::Tilted || g_magStep == HeadingFilter::Mag::Disturbed ||
@@ -1164,12 +1002,12 @@ static void printStatus() {
                                : (g_cal.gyroValid ? "PROVISÓRIO (bias salvo de antes)" : "PROVISÓRIO (sem bias salvo)"),
               g_gyroBias.x, g_gyroBias.y, g_gyroBias.z, g_gyroBiasTempC);
 
-    if (g_baroRefValid)
-        logPrintf("  altitude: zero p0 = %.2f hPa a %.1f °C%s\n", g_baroRefHpa, g_baroRefTempC,
-                  g_bzState != BaroZeroState::Off ? " (novo zero em andamento)" : "");
+    if (g_baroSvc.zeroValid())
+        logPrintf("  altitude: zero p0 = %.2f hPa a %.1f °C%s\n", g_baroSvc.zeroRefHpa(),
+                  g_baroSvc.zeroRefTempC(), g_baroSvc.zeroActive() ? " (novo zero em andamento)" : "");
     else
-        logPrintf("  altitude: %s\n", g_bzState != BaroZeroState::Off ? "zero em andamento" : "sem zero");
-    printBaroSummary();
+        logPrintf("  altitude: %s\n", g_baroSvc.zeroActive() ? "zero em andamento" : "sem zero");
+    g_baroSvc.printSummary();
 
     if (g_magCal.valid) {
         const MagCal &mc = g_magCal.cal;
@@ -1338,11 +1176,7 @@ static void handleSerial() {
                       on ? "ligado" : "desligado", ATT_PRINT_HZ);
             break;
         }
-        case 'b':
-            g_bsOn = !g_bsOn;
-            g_bsPrint.start(micros());
-            logPrintf("[baro] fluxo de altitude %s (%d Hz)\n", g_bsOn ? "ligado" : "desligado", BARO_PRINT_HZ);
-            break;
+        case 'b': g_baroSvc.toggleStream(micros()); break;
         case 'm': magCalStart(); break;
         case 'p':
             g_psOn = !g_psOn;
@@ -1350,11 +1184,7 @@ static void handleSerial() {
             logPrintf("[mag] fluxo de proa %s (%d Hz): filtrada | magnetômetro compensada | deitada | |m| | "
                       "inclinação | roll pitch | estado\n", g_psOn ? "ligado" : "desligado", MAG_PRINT_HZ);
             break;
-        case '0':
-            if (!g_baroReady) logPrintln("[baro] barômetro indisponível: sem altitude");
-            else if (g_bzState == BaroZeroState::Settling) logPrintln("[baro] zero já em andamento");
-            else baroZeroStart(false);
-            break;
+        case '0': g_baroSvc.zeroAltitude(); break;
         case '6':
             g_cw.active = false;
             g_sixIdx = 0;
@@ -1416,7 +1246,7 @@ void setup() {
               g_magCal.valid ? "calibrado" : "sem calibração (proa com offset zero; use m)");
 
     startMpu();
-    startBaro();
+    g_baroSvc.begin();
     startMag();
     printHelp();
     startGyroCal(CalMode::GyroBoot);
@@ -1430,7 +1260,7 @@ static bool waitPulse(uint32_t &tInt) {
     for (;;) {
         if (xQueueReceive(g_intQueue, &tInt, pdMS_TO_TICKS(MPU_INT_WAIT_SLICE_MS)) == pdTRUE) return true;
         if (millis() - t0 >= MPU_INT_TIMEOUT_MS) return false;
-        baroService(micros());
+        g_baroSvc.service(micros());
         magService(micros());
     }
 }
@@ -1440,7 +1270,7 @@ void loop() {
     if (!g_mpuReady) {
         // Sem MPU, o barômetro continua sendo atendido; a configuração é tentada a cada MPU_RETRY_MS
         if ((int32_t)(millis() - g_mpuRetryMs) >= 0) startMpu();
-        baroService(micros());
+        g_baroSvc.service(micros());
         magService(micros());
         delay(1);
         return;
@@ -1475,7 +1305,7 @@ void loop() {
     const uint32_t readEndUs = micros();
     uint32_t nextInt;
     const bool newerPulse = xQueuePeek(g_intQueue, &nextInt, 0) == pdTRUE && (int32_t)(nextInt - readEndUs) <= 0;
-    baroService(readEndUs);
+    g_baroSvc.service(readEndUs);
     magService(micros());
 
     // Todos os pulsos contam para a taxa e as perdas; os anteriores ao último ficam sem leitura

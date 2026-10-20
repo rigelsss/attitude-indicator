@@ -183,6 +183,149 @@ static void test_zero_window_out_of_range() {
     TEST_ASSERT_EQUAL(BaroZeroCheck::Ok, evaluateZeroWindow(p, t, 45, 1.5f, 300.0f, 1100.0f).status);
 }
 
+// ---------- Máquina de estado do zero (BaroZero) ----------
+
+static const BaroZeroParams ZP = {2000, 2000, 45, 1.5f, 300.0f, 1100.0f};
+
+struct FeedOut {
+    BaroZero::Event last;   // último evento diferente de None
+    int events;
+    uint32_t tEvent;
+};
+
+// Leituras a 25 Hz (a cada 40 ms) de t0 até t1, inclusive; a pressão alterna ±ampPa em torno de hpa
+static FeedOut feedRange(BaroZero &z, uint32_t t0, uint32_t t1, float hpa, float ampPa) {
+    FeedOut o = {BaroZero::Event::None, 0, 0};
+    int i = 0;
+    for (uint32_t t = t0; (int32_t)(t1 - t) >= 0; t += 40, i++) {
+        const BaroZero::Event e = z.feed(hpa + ((i % 2) ? ampPa : -ampPa) / 100.0f, 24.5f, t);
+        if (e != BaroZero::Event::None) {
+            o.last = e;
+            o.events++;
+            o.tEvent = t;
+        }
+    }
+    return o;
+}
+
+static void test_zero_off_ignores_samples() {
+    BaroZero z(ZP);
+    TEST_ASSERT_TRUE(z.feed(1010.0f, 24.5f, 0) == BaroZero::Event::None);
+    TEST_ASSERT_FALSE(z.active());
+    TEST_ASSERT_FALSE(z.refValid());
+}
+
+// Boot: espera o filtro do chip (2 s) e mede 2 s; janela de 51 leituras, como na bancada
+static void test_zero_settle_then_accept() {
+    BaroZero z(ZP);
+    z.start(true, 1000);
+    TEST_ASSERT_TRUE(z.state() == BaroZero::State::Settling);
+    TEST_ASSERT_EQUAL(0, feedRange(z, 1000, 2960, 1010.17f, 0.3f).events);
+    TEST_ASSERT_TRUE(z.state() == BaroZero::State::Settling);
+    TEST_ASSERT_EQUAL(0, feedRange(z, 3000, 4960, 1010.17f, 0.3f).events);
+    TEST_ASSERT_TRUE(z.state() == BaroZero::State::Measuring);
+    TEST_ASSERT_TRUE(z.feed(1010.17f, 24.5f, 5000) == BaroZero::Event::Accepted);
+    TEST_ASSERT_EQUAL_UINT32(51, z.lastCount());
+    TEST_ASSERT_TRUE(z.lastResult().status == BaroZeroCheck::Ok);
+    TEST_ASSERT_FALSE(z.active());
+    TEST_ASSERT_TRUE(z.refValid());
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 1010.17f, z.refHpa());
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 24.5f, z.refTempC());
+}
+
+// Tecla 0: mede logo, sem a espera
+static void test_zero_without_settle() {
+    BaroZero z(ZP);
+    z.start(false, 0);
+    const FeedOut o = feedRange(z, 0, 2000, 1010.17f, 0.3f);
+    TEST_ASSERT_EQUAL(1, o.events);
+    TEST_ASSERT_TRUE(o.last == BaroZero::Event::Accepted);
+    TEST_ASSERT_EQUAL_UINT32(2000, o.tEvent);
+    TEST_ASSERT_EQUAL_UINT32(51, z.lastCount());
+}
+
+// Recusada, a janela recomeça na última leitura (que não entra na nova janela)
+static void test_zero_unstable_restarts_window() {
+    BaroZero z(ZP);
+    z.start(false, 0);
+    const FeedOut o = feedRange(z, 0, 2000, 1010.17f, 3.0f);
+    TEST_ASSERT_TRUE(o.last == BaroZero::Event::Rejected);
+    TEST_ASSERT_TRUE(z.lastResult().status == BaroZeroCheck::Unstable);
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 3.0f, z.lastResult().stdPa);
+    TEST_ASSERT_TRUE(z.state() == BaroZero::State::Measuring);
+    TEST_ASSERT_FALSE(z.refValid());
+    TEST_ASSERT_EQUAL(0, feedRange(z, 2040, 3960, 1010.17f, 0.3f).events);
+    TEST_ASSERT_TRUE(z.feed(1010.17f, 24.5f, 4000) == BaroZero::Event::Accepted);
+    TEST_ASSERT_EQUAL_UINT32(50, z.lastCount());
+}
+
+static void test_zero_too_few_samples() {
+    BaroZero z(ZP);
+    z.start(false, 0);
+    TEST_ASSERT_TRUE(z.feed(1010.0f, 24.5f, 0) == BaroZero::Event::None);
+    TEST_ASSERT_TRUE(z.feed(1010.0f, 24.5f, 1000) == BaroZero::Event::None);
+    TEST_ASSERT_TRUE(z.feed(1010.0f, 24.5f, 2000) == BaroZero::Event::Rejected);
+    TEST_ASSERT_TRUE(z.lastResult().status == BaroZeroCheck::TooFewSamples);
+    TEST_ASSERT_EQUAL_UINT32(3, z.lastCount());
+}
+
+static void test_zero_invalid_sample() {
+    BaroZero z(ZP);
+    z.start(false, 0);
+    z.feed(NAN, 24.5f, 0);
+    const FeedOut o = feedRange(z, 40, 2000, 1010.17f, 0.3f);
+    TEST_ASSERT_TRUE(o.last == BaroZero::Event::Rejected);
+    TEST_ASSERT_TRUE(z.lastResult().status == BaroZeroCheck::Invalid);
+}
+
+static void test_zero_out_of_range() {
+    BaroZero z(ZP);
+    z.start(false, 0);
+    TEST_ASSERT_TRUE(feedRange(z, 0, 2000, 200.0f, 0.3f).last == BaroZero::Event::Rejected);
+    TEST_ASSERT_TRUE(z.lastResult().status == BaroZeroCheck::OutOfRange);
+    TEST_ASSERT_FALSE(z.refValid());
+}
+
+// Um novo zero não apaga o anterior até ser aceito
+static void test_zero_new_zero_keeps_reference() {
+    BaroZero z(ZP);
+    z.start(false, 0);
+    feedRange(z, 0, 2000, 1010.17f, 0.3f);
+    z.start(false, 3000);
+    TEST_ASSERT_TRUE(z.active());
+    TEST_ASSERT_TRUE(z.refValid());
+    TEST_ASSERT_TRUE(feedRange(z, 3000, 4960, 1009.0f, 3.0f).events == 0);
+    TEST_ASSERT_TRUE(z.feed(1009.0f, 24.5f, 5000) == BaroZero::Event::Rejected);   // instável
+    TEST_ASSERT_TRUE(z.refValid());
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 1010.17f, z.refHpa());
+    TEST_ASSERT_TRUE(feedRange(z, 5040, 7000, 1009.0f, 0.3f).last == BaroZero::Event::Accepted);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 1009.0f, z.refHpa());
+}
+
+// Chip reconfigurado no meio da janela: recomeça com a espera, e as leituras antigas não contam
+static void test_zero_restart_discards_window() {
+    BaroZero z(ZP);
+    z.start(false, 0);
+    feedRange(z, 0, 1000, 1010.17f, 0.3f);
+    z.start(true, 1000);
+    TEST_ASSERT_TRUE(z.state() == BaroZero::State::Settling);
+    TEST_ASSERT_EQUAL(0, feedRange(z, 1040, 4960, 1010.17f, 0.3f).events);
+    TEST_ASSERT_TRUE(z.feed(1010.17f, 24.5f, 5000) == BaroZero::Event::Accepted);
+    TEST_ASSERT_EQUAL_UINT32(51, z.lastCount());
+}
+
+// Virada do millis() (~49,7 dias) durante a espera e a janela
+static void test_zero_millis_wraparound() {
+    BaroZero z(ZP);
+    const uint32_t t0 = 0xFFFFF830u;   // 2000 ms antes da virada: a espera termina em 0
+    z.start(true, t0);
+    const FeedOut o = feedRange(z, t0, 2000, 1010.17f, 0.3f);
+    TEST_ASSERT_EQUAL(1, o.events);
+    TEST_ASSERT_TRUE(o.last == BaroZero::Event::Accepted);
+    TEST_ASSERT_EQUAL_UINT32(2000, o.tEvent);
+    TEST_ASSERT_EQUAL_UINT32(51, z.lastCount());
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parse_calib_little_endian_and_sign);
@@ -201,5 +344,15 @@ int main() {
     RUN_TEST(test_zero_window_unstable);
     RUN_TEST(test_zero_window_rejects_non_finite);
     RUN_TEST(test_zero_window_out_of_range);
+    RUN_TEST(test_zero_off_ignores_samples);
+    RUN_TEST(test_zero_settle_then_accept);
+    RUN_TEST(test_zero_without_settle);
+    RUN_TEST(test_zero_unstable_restarts_window);
+    RUN_TEST(test_zero_too_few_samples);
+    RUN_TEST(test_zero_invalid_sample);
+    RUN_TEST(test_zero_out_of_range);
+    RUN_TEST(test_zero_new_zero_keeps_reference);
+    RUN_TEST(test_zero_restart_discards_window);
+    RUN_TEST(test_zero_millis_wraparound);
     return UNITY_END();
 }

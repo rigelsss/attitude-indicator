@@ -91,3 +91,39 @@ BaroZeroResult evaluateZeroWindow(const ScalarStats &pressPa, const ScalarStats 
     else r.status = BaroZeroCheck::Ok;
     return r;
 }
+
+void BaroZero::start(bool settle, uint32_t nowMs) {
+    state_ = settle ? State::Settling : State::Measuring;
+    untilMs_ = nowMs + p_.settleMs;
+    restartWindow(nowMs);
+}
+
+void BaroZero::restartWindow(uint32_t tMs) {
+    startMs_ = tMs;
+    press_.reset();
+    temp_.reset();
+}
+
+BaroZero::Event BaroZero::feed(float pressHpa, float tempC, uint32_t tMs) {
+    if (state_ == State::Off) return Event::None;
+    if (state_ == State::Settling) {
+        if ((int32_t)(tMs - untilMs_) < 0) return Event::None;
+        state_ = State::Measuring;
+        restartWindow(tMs);
+    }
+    press_.add(pressHpa * 100.0);   // Pa: o limite de desvio está em Pa
+    temp_.add(tempC);
+    if (tMs - startMs_ < p_.windowMs) return Event::None;
+
+    result_ = evaluateZeroWindow(press_, temp_, p_.minSamples, p_.maxStdPa, p_.minHpa, p_.maxHpa);
+    count_ = press_.count();
+    if (result_.status == BaroZeroCheck::Ok) {
+        refValid_ = true;
+        refHpa_ = result_.refHpa;
+        refTempC_ = result_.tempC;
+        state_ = State::Off;
+        return Event::Accepted;
+    }
+    restartWindow(tMs);
+    return Event::Rejected;
+}

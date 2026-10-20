@@ -72,3 +72,50 @@ struct BaroZeroResult {
 // A média tem de ficar em minHpa..maxHpa (faixa de operação do chip) para virar p0.
 BaroZeroResult evaluateZeroWindow(const ScalarStats &pressPa, const ScalarStats &tempC, uint32_t minSamples,
                                   float maxStdPa, float minHpa, float maxHpa);
+
+struct BaroZeroParams {
+    uint32_t settleMs;     // depois de configurar o chip: espera o filtro IIR assentar
+    uint32_t windowMs;     // duração da janela de zero
+    uint32_t minSamples;   // leituras mínimas para a janela valer
+    float    maxStdPa;     // desvio máximo da pressão na janela
+    float    minHpa;       // faixa aceita para p0
+    float    maxHpa;
+};
+
+// Máquina de estado do zero da altitude: espera o filtro do chip (Settling), mede uma janela parada
+// (Measuring) e aceita ou recusa. Recusada, recomeça a janela no instante da última leitura. O zero
+// aceito (p0) fica guardado e continua valendo enquanto um novo zero é medido. Instantes em millis(),
+// dados pelo chamador (virada dos 32 bits tratada).
+class BaroZero {
+public:
+    enum class State : uint8_t { Off, Settling, Measuring };
+    enum class Event : uint8_t { None, Accepted, Rejected };
+
+    explicit BaroZero(const BaroZeroParams &p) : p_(p) {}
+    // settle = true depois de configurar o chip; false no zero pedido com o chip já assentado
+    void start(bool settle, uint32_t nowMs);
+    // Uma leitura válida do chip. Em Accepted e Rejected, lastResult() e lastCount() descrevem a janela.
+    Event feed(float pressHpa, float tempC, uint32_t tMs);
+
+    State state() const { return state_; }
+    bool active() const { return state_ != State::Off; }
+    const BaroZeroResult &lastResult() const { return result_; }
+    uint32_t lastCount() const { return count_; }
+    bool refValid() const { return refValid_; }
+    float refHpa() const { return refHpa_; }
+    float refTempC() const { return refTempC_; }
+
+private:
+    void restartWindow(uint32_t tMs);
+
+    BaroZeroParams p_;
+    State    state_ = State::Off;
+    uint32_t untilMs_ = 0;   // fim da espera (Settling)
+    uint32_t startMs_ = 0;   // início da janela (Measuring)
+    ScalarStats press_, temp_;
+    BaroZeroResult result_ = {BaroZeroCheck::TooFewSamples, 0, 0, 0};
+    uint32_t count_ = 0;
+    bool  refValid_ = false;
+    float refHpa_ = 0;
+    float refTempC_ = 0;
+};

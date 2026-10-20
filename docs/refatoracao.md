@@ -55,7 +55,7 @@ Cada passo termina com: compilar `aircraft`, rodar `pio test -e native`, fazer a
 | 5 | Fusão (`imuToBody` + `FusionCore`) | `a`, inclinações conhecidas, métricas iguais às da base | feito em 20/10 (build: RAM 24 408 B, flash 365 229 B; `test_fusion` com 10 casos; bancada e A/B abaixo; variação de ±50 µs no dt, pendência 5) |
 | 6a | Calibração do giroscópio + coordenador (`GyroCalFlow`, `CalCoordinator`, `cal_service` com a carga da NVS, inclusive a montagem) | `g` parado e balançando, boot balançando, `m` durante a calibração do boot, `z` durante um `g` | feito em 20/10 (build: RAM 24 608 B, flash 366 137 B; `test_cal_flow` com 18 casos; `main.cpp` com 891 linhas; bancada abaixo) |
 | 6b | Seis posições + montagem (`SixPoseFlow`, `MountFlow`, comandos do coordenador, `CalService::handleKey`) | `z` completo com `s` e persistência; `z` com medida recusada; `6`: entrada, uma posição, cancelamento | código em 20/10 (build: RAM 24 832 B, flash 366 665 B; `test_cal_flow` com 23 casos; `main.cpp` com 630 linhas; bancada abaixo) |
-| 7 | Aquisição (`lib/acq`) | `r`, `c`, INT solto, métricas iguais às da base | — |
+| 7 | Aquisição (`lib/acq`: `SampleWindow`, `PulseTracker`, `checkFrame`, `AcqStats`, `SettleGate`) | `r`, `c`, INT solto, métricas iguais às da base | feito em 20/10 (build: RAM 24 840 B, flash 367 013 B; `test_acq` com 13 casos; `main.cpp` com 556 linhas; bancada e A/B abaixo) |
 | 8 | Console (`src/console.cpp`) | roteiro base inteiro, mensagem a mensagem | — |
 
 Os passos 1–7 são os essenciais. Se o prazo apertar, o 8 é quase só mover código. O risco principal é uma regressão de tempo no passo 7, e a mitigação é comparar as métricas com a linha de base.
@@ -315,10 +315,68 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
   - inclinada demais em roll +12°.
 - **Passo 6b fechado.**
 
+**Passo 7 (log `261020-193349`, carimbo `2026-10-20 19:32:03`).**
+
+- **Primeiro boot do log:** aos 11 s, um `[E][Wire.cpp:499] … Error -1`. Logo depois, o BMP280 e o HMC5883L perderam a configuração ao mesmo tempo (`queda de alimentação?`) e foram reconfigurados. Em seguida houve um `POWERON_RESET`. A causa provável é o mau contato na alimentação dos módulos, como em 19/10, ou o cabo USB mexido. O caminho dessas mensagens não é deste passo. O roteiro foi feito no segundo boot.
+- **Roteiro base** (`r` e `a` separados): as mensagens são as mesmas da linha de base.
+  - `r`, 25 janelas: 199–200 Hz, com perdidas, descartadas, falhas e fila cheia em 0.
+  - `a`, 119 linhas:
+    - dt de 5,00–5,01/5,01/5,01 ms;
+    - atraso de 108–121 µs;
+    - custo do filtro médio de 52–59 µs e máximo de 141–184 µs;
+    - ambíguos, descartados e reinícios em 0.
+  - `b`, `p`, `0` e os dois `c` normais, com `pulsos do INT: … perdidos 0 e descartados 0 | fila cheia 0` e `valid = 0x000D`.
+- **`r` e `a` ligados juntos** (antes e depois do INT solto, 189 linhas do `a`): o atraso máximo passou de 200 µs em 4 linhas (201, 222, 247 e 248 µs). As outras ficaram em 108–185 µs, com ambíguos em 0 e dt de 5,00–5,01 ms.
+  - É a carga das duas impressões juntas. A ISR do GPIO divide o nível 1 com a da UART (pendência 5), e o limite de segurança é de 4 000 µs.
+  - Os passos anteriores não registraram o `r` e o `a` ligados juntos, então não há base para comparar. **Decisão pendente:** aceitar, ou fazer um A/B com o build do passo 6b (`10e3332`) nas mesmas condições.
+- **INT solto (GPIO 19), com `r` e `a`:**
+  - **Ao soltar:** três janelas de mau contato (9, 34 e 47 Hz, com descartadas 21 e 33, 12 ambíguos e atraso de até 2 065 µs). Uma lacuna acima de 50 ms reiniciou a fusão (`reinícios 1`).
+  - **Solto:** 9 janelas com `0 Hz | nenhuma leitura válida | falhas 0 (seguidas 0, recuperações 0) | sem pulsos do INT`. O barômetro e o magnetômetro seguiram normais (24–25 leituras/s).
+  - **`c` com o fio solto:** `ATT não (filtro não inicializado)`, `HDG não (sem atitude)`, `valid = 0x0004` e `último 1 s: nenhuma leitura válida`. O guia previa `MPU sem amostra há … ms`, mas a fusão já tinha reiniciado no mau contato, e a validade dá prioridade ao filtro não inicializado. O código está certo; a previsão estava errada.
+  - **Na volta:** `perdidas 2183` na janela do primeiro pulso, ~10,9 s × 200 Hz, como previsto. Depois, uma janela de encaixe (151 Hz, perdidas 51) e, a partir dela, 199–200 Hz com tudo em 0. A fusão voltou em ~0,3 s. Na volta, `reinícios` ficou em 0, porque o filtro já estava não inicializado.
+  - `falhas 0` e `recuperações 0` o tempo todo. O `c` final voltou a `valid = 0x000D`.
+  - **Glitch do primeiro boot:** segundo o autor, ele provavelmente tocou num fio de alimentação ao mexer nos fios.
+
+**Passo 7, teste A/B do atraso com `r` e `a` juntos, rodada A** (logs `261020-195007` e `261020-195242`). Build do passo 6b (`10e3332`), compilado num worktree à parte (carimbo `19:48:27`), caixa parada. Os dois logs são do mesmo build: o upload da rodada B não chegou a rodar.
+
+| Build | Linhas do `a` | ≤ 125 µs | 126–150 µs | 151–200 µs | > 200 µs | Picos |
+|---|---|---|---|---|---|---|
+| 6b, rodada 1 | 835 | 99,5 % | 0 | 0,4 % | 0,1 % | 574 µs |
+| 6b, rodada 2 | 599 | 99,7 % | 0,2 % | 0 | 0,2 % | 390 µs |
+| Passo 7 (log `193349`, fora do mau contato) | 189 | 96,8 % | 0 | 1,1 % | 2,1 % | 201–248 µs |
+| Passo 7, só o `a` (log `193349`) | 119 | 100 % | 0 | 0 | 0 | 121 µs |
+
+- **O 6b também passa de 200 µs** com o `r` e o `a` juntos, e com picos maiores (390 e 574 µs). Então os picos não são uma novidade do passo 7.
+- **A cauda acima de 150 µs foi mais frequente no passo 7** (3,2 % contra 0,4 %). Mas a amostra é pequena (189 linhas), e a sessão foi diferente: o autor estava preparando o teste do INT. **Falta a rodada B** (passo 7, 60 s nas mesmas condições) para decidir.
+- **Rodada B** (log `261020-200224`, build do passo 7, carimbo `20:00:44`, 817 linhas do `a` em ~82 s):
+  - 96,0 % das linhas com atraso até 125 µs, 0,5 % em 126–150 µs, 0,2 % em 151–200 µs e **3,3 % (27 linhas) acima de 200 µs**;
+  - picos de 1 077 a 1 949 µs em 5 segundos seguidos;
+  - ambíguos, descartados e reinícios em 0; o `r` com 199–200 Hz e tudo em 0;
+  - dt com ±50 µs em 14 linhas;
+  - custo do filtro médio de 50–66 µs e máximo de 89–193 µs.
+- **Mecanismo, comum aos dois builds:** todas as linhas acima de 150 µs, nas três rodadas, são a primeira ou a segunda linha do `a` depois de um resumo `r`.
+  - O resumo é formatado no próprio laço (4 linhas do MPU, mais o barômetro e o magnetômetro, ~40 números em ponto flutuante). Isso leva perto de um período de 5 ms, e o pulso seguinte espera o fim da impressão.
+  - Quando a linha do `a` cai no mesmo ciclo, ou perto dele, a espera cresce. A fase entre os dois depende do instante em que o `a` foi ligado e da deriva entre a janela de 1 s, medida pelo relógio, e a cadência do `a`, contada em amostras. Por isso os picos vêm em grupos.
+  - O carimbo do pulso vem da ISR, então a espera da leitura não entra no dt da fusão. A variação de ±50 µs do dt, vista em alguns builds, é outro efeito (pendência 5). O teto de 4 000 µs não foi atingido.
+- **Comparação:** no passo 7, as linhas acima de 200 µs foram mais frequentes (3,3 % contra 0,1–0,2 %). A diferença é grande para ser só acaso, mas o código extraído não tem laços nem esperas. As explicações prováveis são a fase do `a` em relação ao `r` e a posição do código, que já mudou o custo do filtro e o dt de um build para o outro.
+- **dt com ±50 µs de novo, no build do 6b feito no worktree:** 14 de 835 linhas e 8 de 599 entre 4,96 e 5,05 ms. O mesmo código, compilado na pasta principal, deu 5,00–5,01 ms em todas as linhas na bancada do 6b. O custo do filtro também mudou (médio de 38–54 µs, contra 41–44 µs). O caminho de compilação muda as strings de arquivo e a posição do código. Isso reforça a hipótese da pendência 5: o efeito depende da posição do código, e não do código em si.
+- **Decisão (autor, 20/10):**
+  - Fechar o passo 7. O roteiro base, com o `r` e o `a` separados, passou em todos os critérios.
+  - O atraso com o `r` e o `a` juntos fica como observação. O mecanismo é comum aos builds, e não houve ambíguos, descartes nem reinícios nas condições testadas (caixa parada). O efeito com a caixa em movimento não foi medido.
+  - A medida de novo na semana 3 entrou na pendência 2.
+  - O worktree do A/B foi removido.
+- **Correção da revisão (antes do commit): pulso em 0 µs.** O `PulseTracker` usava `lastIntUs_ == 0` para dizer "sem pulso anterior". O defeito já existia no `main.cpp`, não veio da extração.
+  - Como 0 µs é um instante válido na virada do `micros()`, um pulso exatamente em 0 deixaria de servir de referência, e as perdidas até o pulso seguinte não seriam contadas.
+  - Agora há um booleano explícito (`havePrev_`), e um teste novo cobre esse caso.
+  - É a única mudança de comportamento do passo, e só nesse caso: a chance é de cerca de 1 em 5 000 por virada (~71 min). A bancada acima não precisa ser refeita.
+- **Passo 7 fechado.**
+
 ## Pendências (fora da refatoração)
 
 1. **Teclas ignoradas na calibração do magnetômetro.** Na coleta do `m` (até 180 s), o firmware ignora as teclas sem dizer nada, e o terminal parece travado. A revisão que vem depois, que só aceita `s`, `x` e `d`, também. Proposta: ao ignorar uma tecla, imprimir uma linha curta, por exemplo `[mag] calibração em andamento: x cancela`, no máximo uma vez por segundo. Fica para depois do passo 4, num commit à parte, porque muda o comportamento. Vista em 20/10, log `261020-133830`.
 2. **Log de erro do núcleo parando o laço.** Com um sensor falhando e uma impressão longa em curso (o resumo `r`, o `c`), cada `[E][Wire.cpp]` pode parar o laço por ~50 ms. Isso descarta 10 amostras e reinicia a fusão a cada tentativa, quando a fase coincide. Já estava previsto para a semana 3 ([plano.md](plano.md): serial numa task de baixa prioridade e revisão do nível de log do núcleo). Agora há a medida do efeito na fusão. Decidir na migração: baixar o `CORE_DEBUG_LEVEL` ou redirecionar o log do núcleo para a fila do `lib/logger`. Vista em 20/10, log `261020-134704`.
+   - **Formatação no laço de aquisição** (passo 7, A/B de 20/10): com o `r` e o `a` ligados juntos, o pulso seguinte a um resumo `r` espera a formatação dele (~40 números em ponto flutuante, perto de um período de 5 ms). O atraso pulso → leitura chegou a 1 949 µs, com 0,1–3,3 % das linhas acima de 200 µs, conforme o build e a fase. Não houve ambíguos, descartes nem reinícios nas condições testadas (caixa parada). A espera da leitura não entra no dt, que vem do carimbo da ISR, mas o dt tem a variação de ±50 µs da pendência 5 em alguns builds.
+   - **Na migração, com a serial na task de baixa prioridade:** repetir ~80 s com o `r` e o `a` juntos e a caixa parada (como no log `261020-200224`). Critério: atraso máximo abaixo de ~200 µs em todas as linhas.
 3. **Cobertura da calibração completada pelo ruído.** Com a caixa parada, o centro provisório (mín./máx.) fica no meio da nuvem de pontos, e o ruído espalha as direções pelos setores. Em 20/10, a coleta chegou a 24/24 em 46 s sem girar a caixa. O resultado é recusado no fim, mas o guia `faltam:` e o fim antecipado confundem. Proposta: só contar a cobertura quando a amplitude (máx. − mín.) passar de uma fração do raio esperado em pelo menos dois eixos, por exemplo `MAG_CAL_MIN_SPAN_UT` no `config.h`. Muda o comportamento, então fica fora da refatoração. Vista no log `261020-144205`.
 4. **`s` de uma calibração aceita do magnetômetro, sem conferência na bancada.** A gravação na NVS, o uso imediato da calibração nova, o reinício da proa e a **persistência depois de um reinício** (boot com `NVS: … magnetômetro calibrado` e o `c` com o offset e a W novos) ficaram sem conferir na refatoração. Os testes novos cobrem só o núcleo puro (`MagCalibrator`), não essa integração com a NVS e o filtro da proa. Conferir na próxima calibração real (modelo final), com os passos 8–12 do roteiro completo do passo 3+4. Registrada em 20/10/2026.
 5. **Carimbo do pulso do MPU não determinístico.** O instante marcado pela ISR do INT pode atrasar ~50 µs, e isso depende do build (passo 5, teste A/B). As causas prováveis são a ISR do GPIO no mesmo nível da ISR da UART e o despachante do Arduino na flash. Na semana 3, quando a INT passar a acionar a `sensor_task`:

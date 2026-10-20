@@ -950,6 +950,18 @@ O passo 5 não mexe na ISR. A hipótese é que o carimbo `micros()` da ISR do GP
 
 Também neste dia, com um calço mais alto, a meia diferença entre lados opostos deu 21,97° de roll e 9,53° de pitch, contra ~20–21° e ~9–10° no inclinômetro do celular. O ponto médio entre os lados repetiu a caixa nivelada (log `261020-150426`).
 
+### Atraso do pulso com o `r` e o `a` juntos (20/10/2026)
+
+A/B do passo 7 da refatoração (logs `261020-195007`, `195242` e `200224`), com a caixa parada e o `r` e o `a` ligados juntos por ~80 s.
+
+- **O atraso pulso → leitura sobe logo depois de cada resumo `r`.** O resumo é formatado no laço de aquisição e leva perto de um período de 5 ms, então o pulso seguinte espera.
+  - Build do passo 6b: 0,1–0,2 % das linhas acima de 200 µs, com pico de 574 µs.
+  - Build do passo 7: 3,3 % das linhas acima de 200 µs, com pico de 1 949 µs.
+  - Nos dois, com a caixa parada: 0 ambíguos, descartes e reinícios. A espera da leitura não entra no dt, porque o instante do pulso vem da ISR. O dt tem a variação de ±50 µs de alguns builds (pendência 5), e os dois builds a mostraram nestas rodadas.
+  - Com o `a` sozinho, o atraso fica em 108–121 µs.
+- **O mesmo código do 6b, compilado em outra pasta (um worktree), teve dt com ±50 µs** em ~1,5 % das linhas. Compilado na pasta principal, não teve. Isso reforça a dependência da posição do código ("Carimbo do pulso do INT dependente do build", acima).
+- Volta a ser medido na semana 3, com a serial numa task própria ([refatoracao.md](refatoracao.md), pendência 2).
+
 ### `z` refeito na montagem final (20/10/2026)
 
 Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo `2026-10-20 18:53:13`). A caixa foi encostada pelo nariz e, girada 180°, pela cauda, na mesma referência.

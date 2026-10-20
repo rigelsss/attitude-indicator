@@ -5,7 +5,7 @@ Estratégia da leitura do BME280 e da altitude relativa no ESP A. Os valores fic
 ## Cadeia de processamento
 
 1. **Driver (`lib/bme280`):** acesso direto aos registradores, sem biblioteca externa.
-   - **Aceita o BME280 (chip_id 0x60) e o BMP280 (0x58)** desde 14/10/2026. Os dois têm os mesmos coeficientes de temperatura e pressão (0x88), reset, status e rajada a partir de 0xF4. O BMP280 não tem umidade nem o registrador `ctrl_hum` (0xF2), cuja escrita é pulada. Os códigos 110 e 111 da espera entre medições (`t_sb`) também mudam: 10 e 20 ms no BME280, 2 e 4 s no BMP280 (tabela 11 do datasheet do BMP280). O driver confere o `BARO_STANDBY_US` contra o modelo detectado e devolve `BadParam` se ele não existir naquele chip. O valor em uso, 0,5 ms, é igual nos dois. A serial mostra o modelo detectado. O BME280 da bancada foi danificado num curto em 14/10, e o substituto é um BMP280 ([hardware.md](hardware.md), "Montagem final na caixa"). O diagnóstico (`b` do `i2cscan`) também aceita o BMP280 e mostra a umidade como `--`.
+   - **Aceita o BME280 (chip_id 0x60) e o BMP280 (0x58)** desde 14/10/2026. Os dois têm os mesmos coeficientes de temperatura e pressão (0x88), reset, status e rajada a partir de 0xF4. O BMP280 não tem umidade nem o registrador `ctrl_hum` (0xF2), cuja escrita é pulada. Os códigos 110 e 111 da espera entre medições (`t_sb`) também mudam: 10 e 20 ms no BME280, 2 e 4 s no BMP280 (tabela 11 do datasheet do BMP280). O driver confere o `BARO_STANDBY_US` contra o modelo detectado e devolve `BadParam` se ele não existir naquele chip. O valor em uso, 0,5 ms, é igual nos dois. A serial mostra o modelo detectado. O BME280 da bancada foi danificado num curto em 14/10, e o substituto é um BMP280, em uso desde 19/10 ([hardware.md](hardware.md), "Montagem final na caixa" e "BMP280 no firmware de voo"). O diagnóstico (`b` do `i2cscan`) também aceita o BMP280 e mostra a umidade como `--`.
    - **Ligação:** CSB e SDO soltos (os resistores do módulo fixam o modo I2C e o endereço 0x76).
    - **No `begin()`:** soft reset, cópia dos coeficientes de fábrica e configuração, conferida na releitura.
    - **A cada leitura:** uma rajada de 9 bytes a partir de `ctrl_meas` (0xF4). Ela traz a configuração e os dados brutos de pressão e temperatura na mesma transação.
@@ -53,9 +53,10 @@ Desempenho segundo o datasheet:
 - **Configuração conferida em toda leitura:**
   - se o BME280 perder a alimentação, ele volta em sleep com a configuração padrão, e sem a conferência os dados ficariam congelados sem ninguém perceber;
   - quando a releitura não bate, o driver reconfigura o chip e conta uma recuperação;
-  - a reconfiguração leva alguns milissegundos e pode atrasar uma leitura do MPU. Isso só acontece numa recuperação.
+  - a reconfiguração leva alguns milissegundos e pode atrasar uma leitura do MPU. Isso só acontece numa recuperação;
+  - **desde 19/10/2026, a recuperação também conta como falha**, mesmo quando a reconfiguração dá certo. Antes, um chip que reiniciava sem parar (VCC sem contato, alimentado pelos pull-ups do I2C) era reconfigurado a 25 Hz sem nunca derrubar `ok()`. Isso ocupava o barramento e fazia o MPU perder pulsos ([hardware.md](hardware.md), "BMP280 no firmware de voo"). Agora, depois de 5 recuperações seguidas sem amostra válida, o firmware passa a tentar 1 vez por segundo. Uma queda isolada não derruba `ok()`.
 - **Falhas:**
-  - contam como falha: transação sem resposta, reconfiguração que falhou, compensação inválida (coeficientes inconsistentes) e "não medido" depois da tolerância inicial. A tolerância vale duas medições no tempo máximo do datasheet mais a espera entre elas (~87 ms no perfil atual);
+  - contam como falha: transação sem resposta, configuração perdida (recuperação), reconfiguração que falhou, compensação inválida (coeficientes inconsistentes) e "não medido" depois da tolerância inicial. A tolerância vale duas medições no tempo máximo do datasheet mais a espera entre elas (~87 ms no perfil atual);
   - a sequência de falhas só é zerada por uma **amostra válida**. Reconfigurar não basta: depois de uma recuperação, `ok()` só volta na primeira amostra boa;
   - se uma configuração falhar no meio, por exemplo só na releitura final, a leitura seguinte refaz a configuração em vez de seguir com o estado incerto. Esses caminhos (releitura falhando, "não medido" persistente e compensação inválida) não dá para provocar com segurança no hardware: estão verificados só pela leitura do código;
   - depois de `BARO_MAX_FAIL_STREAK` falhas seguidas, `ok()` fica falso, o que equivale a `ST_BARO_OK` desligado;
@@ -81,6 +82,8 @@ Decisões:
 - **O zero não é gravado na NVS.** A pressão ambiente muda de uma sessão para outra, então um p₀ salvo não serviria para nada.
 - **Se o chip for reconfigurado depois do zero, o p₀ continua o mesmo.** A altitude continua relativa ao mesmo ponto, e o filtro recomeça da medição atual.
 - **O limite de 1,5 Pa ainda é provisório.** Ele vale ~7 vezes o ruído do datasheet, para tolerar pequenas variações da sala. Vai ser revisto com o ruído medido na bancada.
+  - Com o BMP280 (19/10/2026), os zeros com a caixa parada deram de 0,27 a 1,36 Pa. Com a caixa subindo e descendo ~30 cm, deram de 1,77 a 2,53 Pa, e uma janela foi aceita com 1,50 Pa. A margem é pequena, porque o filtro IIR atenua o movimento rápido, mas a caixa mexida foi recusada na maioria das vezes. O limite fica como está no protótipo e é revisto no modelo final.
+- **Oscilação lenta da pressão do ambiente (19/10/2026):** com a caixa parada, a altitude oscila ±0,2–0,5 m em ciclos de segundos, sem tendência em 10 min e com o ruído rápido em ~1,7 cm. Ela não vem do sensor e não tem correção no firmware. O zero mede 2 s, então pode cair num pico dessa oscilação: daí os ~±0,3 m de incerteza da altitude relativa na bancada.
 
 ## Deriva térmica
 
@@ -102,6 +105,8 @@ O datasheet especifica um coeficiente térmico do offset da pressão (TCOP) de �
 - **`c`:** mostra o p₀ e a temperatura do zero, mais a mesma linha do `r`.
 
 ## Roteiro de validação na bancada
+
+Executado com o BME280 em 12/10/2026 e com o BMP280 em 19/10/2026: todos os passos passaram ([hardware.md](hardware.md)). Depois da correção da recuperação (19/10), os passos 1 e 6 foram repetidos com o mesmo resultado.
 
 Pré-requisito: protótipo com o MPU, o BME280 e o GY-273 no barramento, e boot com a caixa parada.
 

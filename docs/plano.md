@@ -37,6 +37,11 @@ Itens de uma revisão externa (numeração dela), distribuídos pela etapa em qu
   - 6 (`m` liberado durante a calibração do giroscópio do boot; `z` continua bloqueado), 9 (buffer da serial de 1 para 4 kB: o `c` tem ~1,4 kB), 10 (`MAG_DECLINATION_DEG` no `config.h` do B e `"decl"` no JSON, aplicada só na exibição) e 12 (comentário do TCOP e pinos `PIN_I2C1_SDA`/`SCL` 32 e 33 no `config.h` do A): **feitos** em 15/10;
   - 5 (reinício da fusão): tema da semana 2, mas não bloqueia nada. Pode ir até a semana 6, antes da montagem no modelo;
   - 17 (sincronizar o plano): esta seção.
+- **19/10/2026, BMP280:**
+  - o BMP280 substituiu o BME280 e passou no roteiro completo do [barometro.md](barometro.md) (resultados no [hardware.md](hardware.md), "BMP280 no firmware de voo");
+  - o mau contato no VCC causou brownouts e um laço de reconfiguração, que revelou uma falha do driver. A falha foi corrigida no `lib/bme280`: a recuperação agora conta como falha;
+  - correção conferida na bancada no mesmo dia (boot normal e SDA solto, sem mudança de comportamento).
+  - **Depois disso:** decidir sobre a refatoração do `main.cpp` provisório (seção "Decisões para a semana 3"), que é pré-requisito das tasks da semana 3.
 - **Semana 3 (tasks e rádio):** 7 (perdas pelo `seq`), 8 (camada única de comandos), 11 (callback de envio do ESP-NOW) e a primeira parte do 3 (filtrar o remetente pelo `PEER_MAC` no callback de recepção do A).
 - **Semana 4 (TFT):** 1 (sprite e heap) e 13 (GPIO 5 como CS do TFT).
 - **Semana 5 (web e comandos):** a segunda parte do 3 (validar o `arg` do `CMD_SET_RATE_HZ`), 15 (senha do AP) e a lógica dos estados do ACK (aceito, concluído, recusado).

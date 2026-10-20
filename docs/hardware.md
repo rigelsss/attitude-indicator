@@ -33,7 +33,7 @@ Para sair do monitor, use `Ctrl+C`; não é preciso desconectar a placa. Para vo
 | Componente | Módulo | Endereço no `config.h` | Observado | ID lido |
 |---|---|---|---|---|
 | IMU | MPU6050 (GY-521) | 0x68 | 0x68 (09/10) | WHO_AM_I = 0x68 |
-| Barômetro | BME280 | 0x76 | 0x76 (11/10); **ausente desde 14/10** (danificado num curto, ver "Montagem final na caixa") | chip_id = 0x60 (BME280 legítimo, não BMP280). Substituto: BMP280 (chip_id 0x58), previsto para 17/10 |
+| Barômetro | BMP280 (desde 19/10; antes BME280) | 0x76 | 0x76 (19/10). O BME280 (0x76 em 11/10) foi danificado num curto em 14/10 (ver "Montagem final na caixa") | chip_id = 0x58 (BMP280, sem umidade). O BME280 anterior tinha chip_id 0x60 |
 | Magnetômetro | GY-273 com HMC5883L | 0x1E | 0x1E (11/10) | "H43" (HMC5883L legítimo, não o clone QMC5883L) |
 | OLED de status | SSD1306 0,91" 128x32 | 0x3C | ausente (09/10) | não tem ID |
 
@@ -64,6 +64,7 @@ Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e 
 | 14/10/2026 | A | **Montagem final** na caixa de papelão (28 × 13 × 10 cm): MPU, GY-273 e BME280 numa mini protoboard no canto da caixa, ESP32 e powerbank na outra metade; jumpers macho-macho com no máximo dois conectores, sem emendas; 3V3 | 100 e 400 kHz | Dois curtos na montagem; o BME280 deixou de responder. MPU e HMC5883L intactos: `t` com 3 040 e 10 460 leituras, 0 falhas; autoteste OK; eixos do MPU confirmados (X asa direita, Y nariz, Z para cima) | MPU ~4° inclinado em roll em relação à caixa, aceito. Ver "Montagem final na caixa" |
 | 14/10/2026 | A | Montagem final, firmware `aircraft` com o magnetômetro; calibração `m` (90, 120 e 180 s) | 400 kHz | 25 leituras/s, 0 falhas. Nenhuma calibração aceita: no ar, saltos de 19 µT; na mesa, 24/24 setores, mas resíduo de 7,1 %; o ajuste do firmware bateu com o `mag_fit.py` (diferença < 0,001 µT) | Bancada perto do notebook com gradiente de ~5 µT em 10 cm; cadeira giratória com apoio de 23 cm uniforme. Falta uma extensão USB. Ver "Calibração do magnetômetro: tentativas de 14/10/2026" |
 | 15/10/2026 | A | Idem, calibração `m` na cadeira giratória a ~1,5 m do notebook, com extensão USB | 400 kHz | 24/24 setores em 100–120 s, raio 25,9 µT, mas resíduo de 4,6 % com o ajuste de 6 parâmetros; com o elipsoide completo (9 parâmetros), 0,63 % | Lugar adequado; o resíduo vinha de um acoplamento y–z não modelado. Firmware passou para o elipsoide completo. Ver "Calibração do magnetômetro: tentativas de 15/10/2026" |
+| 19/10/2026 | A | Montagem final, com o **BMP280** no lugar do BME280; CSB e SDO soltos; 3V3 | 100 e 400 kHz | Scan com 0x1E, 0x68 e 0x76 (chip_id 0x58); autoteste do HMC OK. Firmware `aircraft`: ruído de 1,7 cm entre amostras, subida de ~1 m medida como 0,9–1,1 m, zero recusa a caixa mexida, MPU sem perdas nem descartes, SDA solto e boot sem o barômetro sem afetar a atitude, sem deriva térmica em 8,5 min | Brownouts e um laço de reconfiguração do BMP280 por mau contato no fio de VCC, que sumiram depois de o fio ser ajustado. O laço revelou uma falha do driver, corrigida no mesmo dia. Ver "BMP280 no firmware de voo" |
 
 Na coluna "Ligação", anote como os módulos estavam ligados (protoboard ou soldados, comprimento dos fios, alimentação em 3V3). Ela ajuda a explicar falhas intermitentes.
 
@@ -666,6 +667,7 @@ O modelo final passa a ser uma caixa de papelão (caixa de sapato, 28 × 13 × 1
 - **Cada fileira de 5 furos com um único pino de módulo.**
 - **Antes de ligar a alimentação, medir a resistência entre 3V3 e GND:** centenas de Ω ou mais. A ~2 kΩ foi o valor normal com os três módulos.
 - Os módulos expostos a um curto devem ser reconferidos: scan, autoteste do HMC (`x`) e eixos do MPU (`l`).
+- **Ao mexer num fio com a placa ligada (19/10/2026), não esbarrar no VCC nem no GND dos módulos.** Um VCC com mau contato causou brownouts no ESP e deixou o BMP280 reiniciando sem parar ("BMP280 no firmware de voo").
 
 **Diagnóstico na montagem final** (log `device-monitor-261014-184539.log`, sem o BME280):
 
@@ -862,6 +864,49 @@ Logs `261015-214828` (firmware antigo: a gravação não tinha acontecido) e `26
 - **Buffer de 1 kB (antigo):** cada `c` (~1,4 kB) deixou o laço parado ~55 ms, com `descartados 11 | reinícios 1` no fluxo `a`: **o `c` reiniciava a fusão.**
 - **Buffer de 4 kB (novo):** 6 `c` com o `a` ligado. Em 5 deles, `descartados 0 | reinícios 0`. Em 1, `descartados 13 | reinícios 1`: nesse instante, a nova tentativa do barômetro ausente (a cada 5 s) imprimiu o erro do núcleo (`[E][Wire.cpp:499] requestFrom()`) no meio da saída do `c`. Esse log do núcleo não passa pelo buffer do `Serial` e esperou a transmissão em curso, parando o laço ~65 ms. Sem o `c`, o mesmo erro não causa descarte. Com o BMP280 ligado, a tentativa deixa de existir. Nas tasks (semana 3), a serial fica numa task de baixa prioridade.
 - **`m` durante a calibração do giroscópio do boot:** com a caixa balançando, o giroscópio recusou janelas, e o `m` começou a coleta normalmente (antes: "espere a calibração em andamento terminar"). O `x` cancelou ("calibração anterior mantida"). O `z` continuou bloqueado. Com a caixa parada, o giroscópio calibrou e o magnetômetro seguiu com a mesma calibração.
+
+### BMP280 no firmware de voo (19/10/2026)
+
+O BMP280 substituiu o BME280 danificado em 14/10. Ele foi ligado na mesma posição, com CSB e SDO soltos. O firmware é o de 15/10 (carimbo `2026-10-19 20:44:58`), sem mudanças para o BMP280, que o driver já aceitava. A caixa ficou na mesa durante os testes. Logs `261019-204245` (diagnóstico) e `261019-204547` a `261019-211638` (firmware de voo).
+
+**Diagnóstico (`i2cscan`):** 0x1E "H43", 0x68 WHO_AM_I 0x68 e **0x76 chip_id 0x58 (BMP280: sem umidade)**. No `b`, 26,2 °C, 1010,0 hPa e umidade `--`. A altura oscilou entre +0,09 e +0,87 m, o esperado para medições forçadas com oversampling x1 e sem filtro. O autoteste do HMC (`x`) passou nos três eixos (114–123 µT).
+
+**Firmware de voo:**
+
+| Teste | Resultado |
+|---|---|
+| Boot | `BMP280 configurado (chip_id=0x58)`, `zero aceito` em ~4 s com desvio de 0,27 a 1,36 Pa, `ALT ok` e `valid = 0x000D`. Com isso, o `ALT` ligado, pendente desde 15/10, está conferido |
+| Ruído parado, ambiente quieto (35 s) | **1,7 cm** entre amostras seguidas, igual ao BME280 (1,6 cm). Oscilação lenta, de vários segundos: desvio de 8,9 cm, entre −0,19 e +0,28 m, com a temperatura constante |
+| Subida de ~1 m (à mão, sem trena) | De ~+0,15 m para +1,0–1,3 m, e de volta a ~+0,2 m: degrau de 0,9–1,1 m |
+| `0` com a caixa subindo e descendo ~30 cm | Recusado 5 vezes (1,77 a 2,53 Pa) e aceito parado. A margem é pequena: o filtro IIR atenua o movimento rápido, e uma janela foi aceita com 1,50 Pa, no limite |
+| `r` com e sem o `b` | Perdidas, descartadas, falhas e fila cheia em 0 |
+| SDA do BMP280 solto (~30 s) e recolocado | `FALHANDO`, com as falhas subindo 1 por segundo depois das 5 primeiras; `ALT não (sem barômetro)`, `valid = 0x0009`; atitude e proa normais; **0 descartes no MPU**. Ao recolocar, `baro: ok` sem reconfiguração |
+| Boot com o SDA solto | `sem resposta no endereço I2C`, nova tentativa a cada 5 s; giroscópio calibrado e atitude normal (0 descartes, 0 reinícios). Ao recolocar o SDA, `configurado` e `zero aceito`. Na segunda tentativa: um atraso de 3,9 ms numa leitura do MPU, sem descarte. A primeira tentativa entrou no laço descrito abaixo |
+| Deriva, 8,5 min parada | O chip esfriou de 27,0 para 26,6 °C, sem o aviso de temperatura. Média por minuto entre −0,24 e +0,11 m, **sem tendência**. Desvio total de 0,16 m, com picos de −0,53 e +0,40 m. 0 falhas e 0 recuperações |
+
+- **A oscilação lenta é atribuída à pressão do ambiente.** O ruído rápido é igual ao do BME280, a temperatura ficou constante e a média não deriva com o tempo. Ela diminuiu com a janela e a porta fechadas. Na bancada, a altitude relativa vale com ~±0,3 m em 10 min.
+
+**Brownout por mau contato no VCC:** com a caixa sendo movida, o ESP resetou várias vezes com `Brownout detector was triggered`. Numa das vezes, o log parou no meio do boot, a USB caiu e o monitor travou. O autor ajustou o fio de VCC, e depois disso houve ~10 min de fluxo sem nenhum brownout.
+
+**Laço de reconfiguração do BMP280 (logs `210112` e `211203`):**
+- Ao recolocar o SDA na primeira tentativa do boot sem o barômetro, o HMC5883L também perdeu a configuração. Isso indica uma perturbação na alimentação dos módulos naquele instante.
+- Em seguida, o BMP280 foi configurado e a releitura conferiu os registradores, mas na leitura seguinte ele já estava sem a configuração. Isso se repetiu **54+ vezes**, sem nenhuma amostra e sem o zero terminar.
+- No boot seguinte, com 43 inícios de boot cortados antes (alimentação da placa indo e voltando), o laço recomeçou logo depois do `BMP280 configurado`.
+- Interpretação: o chip **reiniciava sozinho** a cada poucos ms, provavelmente com o VCC sem contato e alimentado só pelos pull-ups do I2C. É o mesmo mecanismo de 12/10. Com o fio ajustado, a sessão seguinte saiu limpa.
+
+**Falha do driver revelada pelo laço, corrigida em 19/10/2026:**
+- Cada reinício era tratado como uma recuperação bem-sucedida e não contava como falha. Então `ok()` continuava verdadeiro, e o `main.cpp` seguia com um reset completo (espera, status, coeficientes e escritas) a 25 Hz, em vez de passar a tentar a cada `BARO_FAIL_RETRY_MS`.
+- Efeitos: `fila cheia 185` (pulsos do INT perdidos) e a calibração do giroscópio recusada por `janela incompleta (199 amostras)`.
+- Correção em `lib/bme280`: a configuração perdida passa a contar como falha, mesmo quando a reconfiguração dá certo. Uma queda isolada continua sem derrubar `ok()`, porque a primeira amostra válida zera a sequência. Um chip que reinicia sem parar derruba `ok()` depois de `BARO_MAX_FAIL_STREAK` (5) recuperações, e o firmware passa a tentar 1 vez por segundo.
+- **Conferido na bancada (log `261019-213533`, carimbo `2026-10-19 21:34:51`):**
+  - boot com `zero aceito` (0,44 Pa) e `recuperações 0`;
+  - SDA solto: `FALHANDO`, falhas subindo 1 por segundo, `valid = 0x0009` e 0 perdidos ou descartados;
+  - SDA recolocado: `baro: ok`, `recuperações 0` e `ALT ok`.
+
+  Igual ao comportamento de antes da correção. No encaixe do SDA, dois `Error 263` (timeout do I2C) seguidos travaram o barramento por ~100 ms e deram `fila cheia 22`. Isso vem do contato oscilando durante o encaixe com a placa ligada, e não da correção: não houve recuperação.
+- O cenário do chip reiniciando não foi reproduzido de propósito, para não repetir o latch-up de 12/10. Ele fica verificado só pela leitura do código.
+
+**Blocos ilegíveis:** três linhas dos logs começam com 64 caracteres ilegíveis. Isso é um bloco USB corrompido no PC (64 bytes é o tamanho do pacote), e não um erro do firmware.
 
 ## Orientação de montagem do MPU6050
 

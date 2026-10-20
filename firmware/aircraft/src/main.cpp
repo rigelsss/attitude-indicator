@@ -7,9 +7,10 @@
 //   serial: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem |
 //           m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa |
 //           0 = zerar altitude | r = resumo por segundo.
-// A lógica está em lib/imu_cal, lib/attitude, lib/fusion, lib/baro, lib/mag e lib/sched (puras, testadas com
-// pio test -e native).
-// O barômetro e o magnetômetro são atendidos por lib/baro_service e lib/mag_service.
+// A lógica está em lib/imu_cal, lib/cal_flow, lib/attitude, lib/fusion, lib/baro, lib/mag e lib/sched (puras,
+// testadas com pio test -e native).
+// A calibração do giroscópio e a carga da NVS ficam em lib/cal_service; o barômetro e o magnetômetro são
+// atendidos por lib/baro_service e lib/mag_service.
 // A saída de texto passa por lib/logger. Refatoração em andamento: docs/refatoracao.md.
 // Na semana 3 este arquivo passa a só inicializar o hardware e criar as tasks (src/tasks/):
 //   sensor_task  (prio 4, core 1) — acordada pela INT do MPU a SAMPLE_RATE_HZ; dona do barramento: lê o
@@ -25,10 +26,9 @@
 #include "telemetry.h"
 #include "mpu6050.h"
 #include "imu_cal.h"
-#include "imu_store.h"
 #include "attitude.h"
 #include "fusion.h"
-#include "level_store.h"
+#include "cal_service.h"
 #include "baro_service.h"
 #include "mag_service.h"
 #include "telemetry_flags.h"
@@ -69,29 +69,24 @@ static Window g_lastWin;          // última janela completa: base do comando c
 static bool g_summaryOn = false;  // resumo por segundo (comando r)
 static uint32_t g_lastIntUs = 0;
 
-// ---------- Estado da calibração ----------
+// ---------- Calibração (lib/cal_service, lib/cal_flow, docs/calibracao.md) ----------
 
-static ImuCalData g_cal;                  // o que está na NVS (e em uso para o acelerômetro)
-static Vec3 g_gyroBias{0, 0, 0};          // bias em uso
-static float g_gyroBiasTempC = 0;
-static bool g_gyroDefinitive = false;     // bias aceito neste boot (equivale a ST_GYRO_CAL)
-static bool g_tempWarned = false;
-static BiasConfirmer g_biasConfirm;       // bias só é aceito com duas janelas consistentes
-static float g_candTempC = 0;             // temperatura da janela candidata
+static const uint32_t CAL_EXPECTED_SAMPLES = (uint32_t)CAL_WINDOW_MS * SAMPLE_RATE_HZ / 1000;
+static const uint32_t CAL_MIN_SAMPLES = CAL_EXPECTED_SAMPLES * CAL_MIN_SAMPLES_PCT / 100;
+static const PoseLimits POSE_LIMITS = {CAL_POSE_MIN_G, CAL_POSE_MAX_G};
 
-enum class CalMode : uint8_t {
-    None, GyroBoot, GyroCmd, SixWait, SixMeasure, SixReview, LevelWait, LevelMeasure, LevelReview
+static const CalServiceConfig CAL_CFG = {
+    {CAL_WINDOW_MS * 1000UL,
+     {CAL_MIN_SAMPLES,
+      {CAL_REST_GYRO_MAX_STD_DPS, CAL_REST_ACC_MIN_G, CAL_REST_ACC_MAX_G},
+      {CAL_REST_GYRO_MAX_STD_DPS, CAL_REST_ACC_RAW_MIN_G, CAL_REST_ACC_RAW_MAX_G},
+      CAL_BIAS_MAX_DELTA_DPS, CAL_BIAS_MAX_TILT_DEG}},
+    MPU_ACCEL_RANGE_G, CAL_STORE_ACC_OFFSET_MAX_G, CAL_STORE_GYRO_BIAS_MAX_DPS, LEVEL_MAX_TILT_DEG, CAL_TEMP_WARN_C,
 };
-static CalMode g_mode = CalMode::None;
+static CalService g_calSvc(CAL_CFG);
+// Seis posições e montagem: modo e janela no coordenador; os fluxos ficam aqui até o passo 6b
+static CalCoordinator &g_calFlow = g_calSvc.coord();
 
-// Janela de calibração em andamento (giroscópio ou uma das seis posições)
-struct CalWindow {
-    bool        active = false;
-    uint32_t    startUs = 0;
-    WindowStats gyro, accRaw, accCorr;
-    float       tempSum = 0;
-};
-static CalWindow g_cw;
 // Após configurar o MPU, a calibração descarta amostras até g_settleUntilUs. O estado explícito
 // evita comparar o prazo depois de vencido: a diferença em int32_t volta a ficar negativa ~36 min
 // depois, e todas as amostras passariam a ser descartadas.
@@ -103,10 +98,6 @@ static int g_sixIdx = 0;
 static Vec3 g_sixMeans[POSE_COUNT];
 static float g_sixTempSum = 0;
 static AccelCal g_sixResult;
-
-static const uint32_t CAL_EXPECTED_SAMPLES = (uint32_t)CAL_WINDOW_MS * SAMPLE_RATE_HZ / 1000;
-static const uint32_t CAL_MIN_SAMPLES = CAL_EXPECTED_SAMPLES * CAL_MIN_SAMPLES_PCT / 100;
-static const PoseLimits POSE_LIMITS = {CAL_POSE_MIN_G, CAL_POSE_MAX_G};
 
 // Calibração de montagem (comando z): duas medidas, a segunda com a caixa girada 180° na mesa
 static int g_levelIdx = 0;
@@ -124,7 +115,6 @@ static const HeadingParams HEADING_PARAMS = {MAG_HEADING_TAU_S, MAG_MAX_PITCH_DE
 // Atitude, diagnóstico só de giroscópio e proa (predição aqui, correção pelo serviço do magnetômetro)
 static FusionCore g_fusion(FUSION_PARAMS, HEADING_PARAMS);
 static const AttitudeFilter &g_att = g_fusion.att();
-static LevelData g_level;                // rotação de montagem em uso (identidade sem calibração)
 
 // Fluxo de atitude (comando a): estatística da aquisição entre duas linhas; a do filtro fica em
 // g_fusion.stats()
@@ -255,16 +245,6 @@ static void printWindow() {
               att[0].stddev(), att[1].mean(), att[1].stddev(), (unsigned long)att[0].count());
 }
 
-// Aviso único quando o chip se afasta da temperatura da calibração do giroscópio
-static void checkTempDrift(float nowC) {
-    if (!g_gyroDefinitive || g_tempWarned) return;
-    if (tempDrifted(g_gyroBiasTempC, nowC, CAL_TEMP_WARN_C)) {
-        logPrintf("[cal] AVISO: chip a %.1f °C, calibração do giroscópio feita a %.1f °C. Recalibre com g\n",
-                  nowC, g_gyroBiasTempC);
-        g_tempWarned = true;
-    }
-}
-
 // Fecha (imprime) todas as janelas que terminaram antes de nowUs e abre a seguinte sem lacuna.
 // Diferença com sinal: um instante anterior ao início da janela dá negativo (e não um intervalo
 // enorme), e a virada do micros() a cada ~71 min continua tratada.
@@ -276,7 +256,7 @@ static void closeWindowsUntil(uint32_t nowUs) {
             g_baroSvc.printSummary();
             g_magSvc.printSummary();
         }
-        if (g_win.samples > 0) checkTempDrift(g_win.tempSum / g_win.samples);
+        if (g_win.samples > 0) g_calSvc.checkTempDrift(g_win.tempSum / g_win.samples);
         digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS));
         g_lastWin = g_win;
         const uint32_t next = g_win.startUs + WINDOW_US;
@@ -299,106 +279,28 @@ static void notePulse(uint32_t tInt) {
     g_lastIntUs = tInt;
 }
 
-// ---------- Calibração ----------
-
-static const char *restText(RestCheck r) {
-    switch (r) {
-    case RestCheck::Ok:            return "ok";
-    case RestCheck::TooFewSamples: return "janela incompleta";
-    case RestCheck::Moving:        return "placa em movimento";
-    case RestCheck::AccOutOfRange: return "|a| fora da faixa de repouso";
-    case RestCheck::Invalid:       return "leitura inválida (não finita) na janela";
-    }
-    return "?";
-}
-
-static void startCalWindow() {
-    g_cw = CalWindow();
-    g_cw.active = true;
-    g_cw.startUs = micros();
-}
-
-static void startGyroCal(CalMode mode) {
-    g_mode = mode;
-    g_biasConfirm.reset();
-    logPrintf("[cal] giroscópio: mantenha a placa parada (duas janelas de %d ms)...\n", CAL_WINDOW_MS);
-    startCalWindow();
-}
+// ---------- Calibração: seis posições (passa para o lib/cal_flow no passo 6b) ----------
 
 static void promptSixPose() {
     logPrintf("[cal] posição %d/%d: %s. Posicione a caixa, solte e aperte Enter (x cancela)\n", g_sixIdx + 1,
               POSE_COUNT, poseName((Pose)g_sixIdx));
-    g_mode = CalMode::SixWait;
+    g_calFlow.setMode(CalMode::SixWait);
 }
 
 // Depois das seis posições (gravando ou não), retoma a calibração do giroscópio se ela ainda falta
-static void endSix() {
-    if (!g_gyroDefinitive) startGyroCal(CalMode::GyroBoot);
-    else g_mode = CalMode::None;
-}
-
-static void finishGyroWindow() {
-    // Sem calibração do acelerômetro, |a| ≈ 1,10 g em repouso: vale uma faixa larga, que ainda recusa
-    // um vetor nulo (sem direção da gravidade para comparar entre as janelas)
-    const RestLimits lim = g_cal.accelValid
-                               ? RestLimits{CAL_REST_GYRO_MAX_STD_DPS, CAL_REST_ACC_MIN_G, CAL_REST_ACC_MAX_G}
-                               : RestLimits{CAL_REST_GYRO_MAX_STD_DPS, CAL_REST_ACC_RAW_MIN_G, CAL_REST_ACC_RAW_MAX_G};
-    const GyroBiasResult r = evaluateGyroWindow(g_cw.gyro, g_cw.accCorr, CAL_MIN_SAMPLES, lim);
-    const float tempC = g_cw.tempSum / fmaxf(1, g_cw.gyro.count());
-    const BiasConfirmer::Result res = g_biasConfirm.feed(r, CAL_BIAS_MAX_DELTA_DPS, CAL_BIAS_MAX_TILT_DEG);
-
-    if (res == BiasConfirmer::Result::Accepted) {
-        const Vec3 b = g_biasConfirm.bias();
-        const float t = (g_candTempC + tempC) / 2;
-        g_gyroBias = b;
-        g_gyroBiasTempC = t;
-        g_gyroDefinitive = true;
-        g_tempWarned = false;
-        const bool saved = imuStoreSaveGyro(b, t);
-        if (saved) {
-            g_cal.gyroBias = b;
-            g_cal.gyroTempC = t;
-            g_cal.gyroValid = true;
-        }
-        logPrintf("[cal] giroscópio calibrado: bias %+.3f %+.3f %+.3f °/s a %.1f °C (diferença entre "
-                  "janelas %.3f °/s e %.3f° na gravidade, desvio máx. %.3f °/s)%s\n",
-                  b.x, b.y, b.z, t, g_biasConfirm.lastDelta(), g_biasConfirm.lastTilt(), r.gyroMaxStd,
-                  saved ? "" : " | FALHA ao gravar na NVS");
-        g_mode = CalMode::None;
-        return;
-    }
-    if (res == BiasConfirmer::Result::Candidate || res == BiasConfirmer::Result::Inconsistent) {
-        if (res == BiasConfirmer::Result::Inconsistent)
-            logPrintf("[cal] giroscópio: entre janelas, bias mudou %.3f °/s (limite %.3f) e gravidade %.3f° "
-                      "(limite %.2f): caixa se acomodando ou girando; confirmando de novo\n",
-                      g_biasConfirm.lastDelta(), CAL_BIAS_MAX_DELTA_DPS, g_biasConfirm.lastTilt(),
-                      CAL_BIAS_MAX_TILT_DEG);
-        g_candTempC = tempC;
-        startCalWindow();   // a janela que acabou é a candidata; a próxima confirma ou não
-        return;
-    }
-
-    logPrintf("[cal] giroscópio recusado: %s (desvio máx. %.3f °/s, |a| %.3f g, %lu amostras)\n",
-              restText(r.status), r.gyroMaxStd, r.accNorm, (unsigned long)g_cw.gyro.count());
-    if (g_mode == CalMode::GyroBoot) {
-        startGyroCal(CalMode::GyroBoot);   // tenta de novo, sem bloquear; o bias provisório segue em uso
-    } else {
-        logPrintln("[cal] mantido o bias anterior");
-        g_mode = CalMode::None;
-        if (!g_gyroDefinitive) startGyroCal(CalMode::GyroBoot);
-    }
-}
+static void endSix() { g_calSvc.endSix(); }
 
 static void finishSixWindow() {
+    const CalWindow &cw = g_calFlow.window();
     const Pose pose = (Pose)g_sixIdx;
-    const Vec3 m = g_cw.accRaw.mean();
-    if (g_cw.accRaw.count() < CAL_MIN_SAMPLES) {
-        logPrintf("[cal] janela incompleta (%lu amostras): repita\n", (unsigned long)g_cw.accRaw.count());
+    const Vec3 m = cw.accRaw.mean();
+    if (cw.accRaw.count() < CAL_MIN_SAMPLES) {
+        logPrintf("[cal] janela incompleta (%lu amostras): repita\n", (unsigned long)cw.accRaw.count());
         promptSixPose();
         return;
     }
-    if (g_cw.gyro.maxStddev() >= CAL_REST_GYRO_MAX_STD_DPS) {
-        logPrintf("[cal] a caixa se mexeu (desvio do giroscópio %.3f °/s): repita\n", g_cw.gyro.maxStddev());
+    if (cw.gyro.maxStddev() >= CAL_REST_GYRO_MAX_STD_DPS) {
+        logPrintf("[cal] a caixa se mexeu (desvio do giroscópio %.3f °/s): repita\n", cw.gyro.maxStddev());
         promptSixPose();
         return;
     }
@@ -410,7 +312,7 @@ static void finishSixWindow() {
         return;
     }
     g_sixMeans[g_sixIdx] = m;
-    g_sixTempSum += g_cw.tempSum / g_cw.accRaw.count();
+    g_sixTempSum += cw.tempSum / cw.accRaw.count();
     logPrintf("[cal] ok: %+.4f %+.4f %+.4f g\n", m.x, m.y, m.z);
     if (++g_sixIdx < POSE_COUNT) {
         promptSixPose();
@@ -442,7 +344,7 @@ static void finishSixWindow() {
         return;
     }
     logPrintln("[cal] validação ok (|a| entre 0,98 e 1,02 g). s = gravar na NVS | x = descartar");
-    g_mode = CalMode::SixReview;
+    g_calFlow.setMode(CalMode::SixReview);
 }
 
 // ---------- Calibração de montagem (z) ----------
@@ -455,7 +357,7 @@ static void promptLevel() {
     };
     logPrintf("[mont] posição %d/2: %s. Solte a caixa e aperte Enter (x cancela)\n", g_levelIdx + 1,
               STEP[g_levelIdx]);
-    g_mode = CalMode::LevelWait;
+    g_calFlow.setMode(CalMode::LevelWait);
 }
 
 static const char *levelRestText(LevelRest r) {
@@ -471,19 +373,21 @@ static const char *levelRestText(LevelRest r) {
 }
 
 static void finishLevelWindow() {
+    const CalWindow &cw = g_calFlow.window();
+    const Vec3 &bias = g_calSvc.gyroBias();
     const RestLimits lim = {CAL_REST_GYRO_MAX_STD_DPS, CAL_REST_ACC_MIN_G, CAL_REST_ACC_MAX_G};
-    const LevelRest r = checkLevelWindow(g_cw.gyro, g_gyroBias, g_cw.accCorr, CAL_MIN_SAMPLES, lim,
+    const LevelRest r = checkLevelWindow(cw.gyro, bias, cw.accCorr, CAL_MIN_SAMPLES, lim,
                                          LEVEL_REST_GYRO_MAX_MEAN_DPS);
     if (r != LevelRest::Ok) {
-        const Vec3 gm = applyGyroBias(g_cw.gyro.mean(), g_gyroBias);
+        const Vec3 gm = applyGyroBias(cw.gyro.mean(), bias);
         logPrintf("[mont] medida recusada: %s (desvio máx. %.3f °/s, giro médio %+.3f %+.3f %+.3f °/s, "
                   "|a| %.3f g): repita\n",
-                  levelRestText(r), g_cw.gyro.maxStddev(), gm.x, gm.y, gm.z, norm(g_cw.accCorr.mean()));
+                  levelRestText(r), cw.gyro.maxStddev(), gm.x, gm.y, gm.z, norm(cw.accCorr.mean()));
         promptLevel();
         return;
     }
-    g_levelF[g_levelIdx] = chipToBody(g_cw.accCorr.mean());
-    g_levelTempSum += g_cw.tempSum / g_cw.accCorr.count();
+    g_levelF[g_levelIdx] = chipToBody(cw.accCorr.mean());
+    g_levelTempSum += cw.tempSum / cw.accCorr.count();
     const Angles a = accelRollPitch(g_levelF[g_levelIdx]);
     logPrintf("[mont] ok: roll %+.2f° pitch %+.2f° (sem correção de montagem)\n", a.rollDeg, a.pitchDeg);
     if (++g_levelIdx < 2) {
@@ -494,7 +398,7 @@ static void finishLevelWindow() {
     const MountCheck mc = mountFromTwoPoses(g_levelF[0], g_levelF[1], LEVEL_MAX_TILT_DEG, g_levelResult);
     if (mc == MountCheck::BadInput) {
         logPrintln("[mont] medidas incoerentes (a mesma face estava apoiada nas duas?): calibração descartada");
-        g_mode = CalMode::None;
+        g_calFlow.setMode(CalMode::None);
         return;
     }
     const MountResult &m = g_levelResult;
@@ -505,34 +409,21 @@ static void finishLevelWindow() {
         logPrintf("[mont] acima de %.0f°: calibração descartada. Confira se a caixa estava em pé (sem virar), a mesa e "
                   "a fixação do módulo\n",
                   LEVEL_MAX_TILT_DEG);
-        g_mode = CalMode::None;
+        g_calFlow.setMode(CalMode::None);
         return;
     }
     logPrintln("[mont] s = gravar na NVS | x = descartar");
-    g_mode = CalMode::LevelReview;
+    g_calFlow.setMode(CalMode::LevelReview);
 }
 
-static void finishCalWindow() {
-    g_cw.active = false;
-    switch (g_mode) {
-    case CalMode::GyroBoot:
-    case CalMode::GyroCmd:      finishGyroWindow(); break;
-    case CalMode::SixMeasure:   finishSixWindow(); break;
-    case CalMode::LevelMeasure: finishLevelWindow(); break;
-    default:                    break;
-    }
-}
-
-// Alimenta a janela de calibração com uma amostra válida (já fora do descarte de partida)
+// Alimenta a janela de calibração com uma amostra válida (já fora do descarte de partida). O
+// giroscópio é tratado no serviço; as seis posições e a montagem, aqui (até o passo 6b).
 static void calSample(const ImuSample &s) {
-    if (!g_cw.active) return;
-
-    const Vec3 a = {s.ax, s.ay, s.az};
-    g_cw.gyro.add({s.gx, s.gy, s.gz});
-    g_cw.accRaw.add(a);
-    g_cw.accCorr.add(g_cal.accelValid ? applyAccelCal(g_cal.accel, a) : a);
-    g_cw.tempSum += s.tempC;
-    if ((uint32_t)(s.tUs - g_cw.startUs) >= CAL_WINDOW_MS * 1000UL) finishCalWindow();
+    switch (g_calSvc.sample(s)) {
+    case CalCoordinator::Done::Six:   finishSixWindow(); break;
+    case CalCoordinator::Done::Level: finishLevelWindow(); break;
+    default:                          break;
+    }
 }
 
 // Reconfiguração do MPU (recuperação em read() ou em checkAlive()): o transitório de partida é
@@ -542,8 +433,7 @@ static void checkRecovery() {
     g_lastRecoveries = g_mpu.recoveries();
     xQueueReset(g_intQueue);   // pulsos enfileirados são de antes da reconfiguração
     beginSettle();
-    g_biasConfirm.reset();     // a candidata é de antes da reconfiguração
-    if (g_cw.active) startCalWindow();
+    g_calSvc.onMpuReconfigured();   // a candidata é de antes da reconfiguração; a janela recomeça
     fusionReset();
 }
 
@@ -575,8 +465,9 @@ static void printAttitudeLine(const Vec3 &acc, float tempC) {
 // rotação de montagem → filtro. intUs: instante do pulso de "data ready" desta amostra, que já
 // passou pela validade temporal no loop().
 static void fusionSample(const ImuSample &s, uint32_t intUs) {
-    const BodyImu b = imuToBody({s.ax, s.ay, s.az}, {s.gx, s.gy, s.gz}, g_cal.accelValid, g_cal.accel, g_gyroBias,
-                                g_level.r);
+    const ImuCalData &cal = g_calSvc.imuCal();
+    const BodyImu b = imuToBody({s.ax, s.ay, s.az}, {s.gx, s.gy, s.gz}, cal.accelValid, cal.accel, g_calSvc.gyroBias(),
+                                g_calSvc.level().r);
     const ImuFlags flags = {s.accelSaturated, s.gyroSaturated};
     g_fusion.update(b.acc, b.gyro, flags, intUs, g_magSvc.calibrating());
     if (g_att.initialized()) {
@@ -647,19 +538,24 @@ static void printValidity(const ValidityInputs &in) {
 
 static void printStatus() {
     const ValidityInputs validity = validityInputs();   // antes de imprimir (ver printValidity)
+    const ImuCalData &cal = g_calSvc.imuCal();
+    const LevelData &level = g_calSvc.level();
+    const Vec3 &bias = g_calSvc.gyroBias();
+    const float biasTempC = g_calSvc.gyroBiasTempC();
+    const bool definitive = g_calSvc.gyroDefinitive();
     logPrintln("[A] estado da calibração");
-    if (g_cal.accelValid) {
-        const AccelCal &c = g_cal.accel;
+    if (cal.accelValid) {
+        const AccelCal &c = cal.accel;
         logPrintf("  acelerômetro: calibrado (±%d g, %.1f °C) | offset (mg) %+.1f %+.1f %+.1f | "
                   "escala %+.2f %% %+.2f %% %+.2f %%\n",
-                  g_cal.accelRangeG, g_cal.accelTempC, c.offset.x * 1000, c.offset.y * 1000, c.offset.z * 1000,
+                  cal.accelRangeG, cal.accelTempC, c.offset.x * 1000, c.offset.y * 1000, c.offset.z * 1000,
                   (c.scale.x - 1) * 100, (c.scale.y - 1) * 100, (c.scale.z - 1) * 100);
     } else {
         logPrintln("  acelerômetro: NÃO calibrado (sem dados na NVS para esta faixa): use 6");
     }
-    if (g_level.valid)
+    if (level.valid)
         logPrintf("  montagem: calibrada | módulo em roll %+.2f° pitch %+.2f° em relação à caixa (%.1f °C)\n",
-                  g_level.mountRollDeg, g_level.mountPitchDeg, g_level.tempC);
+                  level.mountRollDeg, level.mountPitchDeg, level.tempC);
     else
         logPrintln("  montagem: NÃO calibrada (eixos nominais): use z");
     if (g_att.initialized())
@@ -668,9 +564,9 @@ static void printStatus() {
     else
         logPrintln("  atitude: aguardando referência (caixa parada, |a| perto de 1 g)");
     logPrintf("  giroscópio: %s | bias %+.3f %+.3f %+.3f °/s | calibrado a %.1f °C\n",
-              g_gyroDefinitive ? "DEFINITIVO (deste boot)"
-                               : (g_cal.gyroValid ? "PROVISÓRIO (bias salvo de antes)" : "PROVISÓRIO (sem bias salvo)"),
-              g_gyroBias.x, g_gyroBias.y, g_gyroBias.z, g_gyroBiasTempC);
+              definitive ? "DEFINITIVO (deste boot)"
+                               : (cal.gyroValid ? "PROVISÓRIO (bias salvo de antes)" : "PROVISÓRIO (sem bias salvo)"),
+              bias.x, bias.y, bias.z, biasTempC);
 
     if (g_baroSvc.zeroValid())
         logPrintf("  altitude: zero p0 = %.2f hPa a %.1f °C%s\n", g_baroSvc.zeroRefHpa(),
@@ -703,8 +599,8 @@ static void printStatus() {
     }
     const Vec3 aRaw = {(float)(g_lastWin.sum[0] / n), (float)(g_lastWin.sum[1] / n), (float)(g_lastWin.sum[2] / n)};
     const Vec3 gRaw = {(float)(g_lastWin.sum[3] / n), (float)(g_lastWin.sum[4] / n), (float)(g_lastWin.sum[5] / n)};
-    const Vec3 aCor = g_cal.accelValid ? applyAccelCal(g_cal.accel, aRaw) : aRaw;
-    const Vec3 gCor = applyGyroBias(gRaw, g_gyroBias);
+    const Vec3 aCor = cal.accelValid ? applyAccelCal(cal.accel, aRaw) : aRaw;
+    const Vec3 gCor = applyGyroBias(gRaw, bias);
     const float tNow = g_lastWin.tempSum / n;
     logPrintf("  pulsos do INT: no último 1 s, perdidos %lu e descartados %lu | fila cheia %lu desde o boot\n",
               (unsigned long)g_lastWin.lost, (unsigned long)g_lastWin.stale, (unsigned long)g_intOverflow);
@@ -713,7 +609,7 @@ static void printStatus() {
     logPrintf("    a corrigido %+.4f %+.4f %+.4f g  |a| %.4f\n", aCor.x, aCor.y, aCor.z, norm(aCor));
     logPrintf("    g bruto     %+.3f %+.3f %+.3f °/s\n", gRaw.x, gRaw.y, gRaw.z);
     logPrintf("    g corrigido %+.3f %+.3f %+.3f °/s\n", gCor.x, gCor.y, gCor.z);
-    if (tempDrifted(g_gyroBiasTempC, tNow, CAL_TEMP_WARN_C) && (g_gyroDefinitive || g_cal.gyroValid))
+    if (tempDrifted(biasTempC, tNow, CAL_TEMP_WARN_C) && (definitive || cal.gyroValid))
         logPrintf("  AVISO: temperatura a mais de %.1f °C da calibração do giroscópio: recalibre com g\n",
                   CAL_TEMP_WARN_C);
 }
@@ -731,12 +627,12 @@ static void handleSerial() {
         // d parou o laço por alguns segundos: a referência de tempo da fusão não vale mais
         if (mk == MagKey::HandledLoopStalled) fusionReset();
         if (mk != MagKey::NotHandled) continue;
-        switch (g_mode) {
+        switch (g_calSvc.mode()) {
         case CalMode::SixWait:
             if (ch == '\r' || ch == '\n') {
                 logPrintf("[cal] medindo %d ms, não toque na caixa...\n", CAL_WINDOW_MS);
-                g_mode = CalMode::SixMeasure;
-                startCalWindow();
+                g_calFlow.setMode(CalMode::SixMeasure);
+                g_calFlow.startWindow(micros());
             } else if (ch == 'x') {
                 logPrintln("[cal] seis posições canceladas");
                 endSix();
@@ -744,7 +640,7 @@ static void handleSerial() {
             continue;
         case CalMode::SixMeasure:
             if (ch == 'x') {
-                g_cw.active = false;
+                g_calFlow.cancelWindow();
                 logPrintln("[cal] seis posições canceladas");
                 endSix();
             }
@@ -752,17 +648,13 @@ static void handleSerial() {
         case CalMode::SixReview:
             if (ch == 's') {
                 const float tempC = g_sixTempSum / POSE_COUNT;
-                if (imuStoreSaveAccel(g_sixResult, tempC, MPU_ACCEL_RANGE_G)) {
-                    g_cal.accel = g_sixResult;
-                    g_cal.accelTempC = tempC;
-                    g_cal.accelRangeG = MPU_ACCEL_RANGE_G;
-                    g_cal.accelValid = true;
+                if (g_calSvc.saveAccel(g_sixResult, tempC)) {
                     fusionReset();   // a referência do acelerômetro mudou
                     logPrintln("[cal] calibração do acelerômetro gravada na NVS");
                     // A montagem foi medida com o acelerômetro corrigido pela calibração anterior. O registro
                     // fica na NVS, mas não bate mais com a calibração e é ignorado também nos próximos boots.
-                    if (g_level.valid) {
-                        g_level = LevelData();
+                    if (g_calSvc.level().valid) {
+                        g_calSvc.clearLevel();
                         logPrintln("[mont] montagem descartada: foi medida com a calibração anterior do "
                                    "acelerômetro. Refaça com z");
                     }
@@ -778,41 +670,41 @@ static void handleSerial() {
         case CalMode::LevelWait:
             if (ch == '\r' || ch == '\n') {
                 logPrintf("[mont] medindo %d ms, não toque na caixa...\n", CAL_WINDOW_MS);
-                g_mode = CalMode::LevelMeasure;
-                startCalWindow();
+                g_calFlow.setMode(CalMode::LevelMeasure);
+                g_calFlow.startWindow(micros());
             } else if (ch == 'x') {
                 logPrintln("[mont] calibração de montagem cancelada");
-                g_mode = CalMode::None;
+                g_calFlow.setMode(CalMode::None);
             }
             continue;
         case CalMode::LevelMeasure:
             if (ch == 'x') {
-                g_cw.active = false;
+                g_calFlow.cancelWindow();
                 logPrintln("[mont] calibração de montagem cancelada");
-                g_mode = CalMode::None;
+                g_calFlow.setMode(CalMode::None);
             }
             continue;
         case CalMode::LevelReview:
             if (ch == 's') {
+                const ImuCalData &cal = g_calSvc.imuCal();
                 LevelData d;
                 d.valid = true;
                 d.r = g_levelResult.r;
                 d.mountRollDeg = g_levelResult.mountRollDeg;
                 d.mountPitchDeg = g_levelResult.mountPitchDeg;
                 d.tempC = g_levelTempSum / 2;
-                d.accelCalValid = g_cal.accelValid;   // as medidas usaram o acelerômetro com esta calibração
-                d.accelCal = g_cal.accel;
-                if (levelStoreSave(d)) {
-                    g_level = d;
+                d.accelCalValid = cal.accelValid;   // as medidas usaram o acelerômetro com esta calibração
+                d.accelCal = cal.accel;
+                if (g_calSvc.saveLevel(d)) {
                     fusionReset();   // a rotação de montagem mudou
                     logPrintln("[mont] calibração de montagem gravada na NVS");
                 } else {
                     logPrintln("[mont] FALHA ao gravar na NVS; montagem anterior mantida");
                 }
-                g_mode = CalMode::None;
+                g_calFlow.setMode(CalMode::None);
             } else if (ch == 'x') {
                 logPrintln("[mont] resultado descartado; montagem anterior mantida");
-                g_mode = CalMode::None;
+                g_calFlow.setMode(CalMode::None);
             }
             continue;
         default:
@@ -824,20 +716,25 @@ static void handleSerial() {
             g_summaryOn = !g_summaryOn;
             logPrintf("[A] resumo por segundo %s\n", g_summaryOn ? "ligado" : "desligado");
             break;
-        case 'g': startGyroCal(CalMode::GyroCmd); break;
+        case 'g': g_calSvc.startGyro(GyroCalKind::Cmd); break;
         case 'z':
-            if (g_mode != CalMode::None)
+            switch (g_calSvc.checkMount()) {
+            case MountStart::Busy:
                 logPrintln("[mont] espere a calibração em andamento terminar");
-            else if (!g_cal.accelValid)
+                break;
+            case MountStart::NoAccel:
                 logPrintln("[mont] acelerômetro sem calibração: faça antes as seis posições (6)");
-            else if (!g_gyroDefinitive)
+                break;
+            case MountStart::GyroProvisional:
                 logPrintln("[mont] bias do giroscópio ainda provisório: espere a calibração (ou use g)");
-            else {
+                break;
+            case MountStart::Ok:
                 g_levelIdx = 0;
                 g_levelTempSum = 0;
                 logPrintf("[mont] calibração de montagem: duas medidas de %d ms, a segunda com a caixa girada "
                           "180°\n", CAL_WINDOW_MS);
                 promptLevel();
+                break;
             }
             break;
         case 'a': {
@@ -852,11 +749,11 @@ static void handleSerial() {
             break;
         }
         case 'b': g_baroSvc.toggleStream(micros()); break;
-        case 'm': g_magSvc.startCalibration(g_mode != CalMode::None && g_mode != CalMode::GyroBoot); break;
+        case 'm': g_magSvc.startCalibration(!g_calSvc.magAllowed()); break;
         case 'p': g_magSvc.toggleStream(micros()); break;
         case '0': g_baroSvc.zeroAltitude(); break;
         case '6':
-            g_cw.active = false;
+            g_calFlow.cancelWindow();
             g_sixIdx = 0;
             g_sixTempSum = 0;
             logPrintln("[cal] seis posições: cada medida leva 2 s com a caixa apoiada e parada");
@@ -888,32 +785,16 @@ void setup() {
         ESP.restart();
     }
 
-    imuStoreLoad(g_cal, MPU_ACCEL_RANGE_G, CAL_STORE_ACC_OFFSET_MAX_G, CAL_STORE_GYRO_BIAS_MAX_DPS);
-    if (g_cal.accelRejected)
-        logPrintln("[A] NVS: calibração do acelerômetro com valores impossíveis, ignorada. Refaça com 6");
-    if (g_cal.gyroRejected) logPrintln("[A] NVS: bias do giroscópio com valores impossíveis, ignorado");
-    if (g_cal.gyroValid) {
-        g_gyroBias = g_cal.gyroBias;   // provisório até a janela deste boot ser aceita
-        g_gyroBiasTempC = g_cal.gyroTempC;
-    }
-    levelStoreLoad(g_level, LEVEL_MAX_TILT_DEG);
-    if (g_level.rejected) logPrintln("[A] NVS: calibração de montagem com valores impossíveis, ignorada. Refaça com z");
-    if (g_level.valid && !sameAccelCal(g_level.accelCalValid, g_level.accelCal, g_cal.accelValid, g_cal.accel)) {
-        g_level = LevelData();
-        logPrintln("[A] NVS: montagem medida com outra calibração do acelerômetro, ignorada. Refaça com z");
-    }
+    g_calSvc.loadFromNvs();
     g_magSvc.loadCalibration();
-    logPrintf("[A] NVS: acelerômetro %s | giroscópio %s | montagem %s | magnetômetro %s\n",
-              g_cal.accelValid ? "calibrado" : "sem calibração", g_cal.gyroValid ? "com bias salvo" : "sem bias salvo",
-              g_level.valid ? "calibrada" : "sem calibração",
-              g_magSvc.calData().valid ? "calibrado" : "sem calibração (proa com offset zero; use m)");
+    g_calSvc.printNvsSummary(g_magSvc.calData().valid);
 
     g_fusion.setClock(clockUs);
     startMpu();
     g_baroSvc.begin();
     g_magSvc.begin();
     printHelp();
-    startGyroCal(CalMode::GyroBoot);
+    g_calSvc.startGyro(GyroCalKind::Boot);
 }
 
 // Espera o próximo pulso do INT por até MPU_INT_TIMEOUT_MS, em fatias de MPU_INT_WAIT_SLICE_MS.
@@ -986,7 +867,7 @@ void loop() {
     // Descarte de partida: a comparação só acontece durante ele (no máximo CAL_MPU_SETTLE_MS), longe da virada
     if (g_settling) {
         if ((int32_t)(s.tUs - g_settleUntilUs) < 0) {
-            if (g_cw.active) g_cw.startUs = s.tUs;   // a janela só começa a contar depois do descarte
+            g_calSvc.holdWindowStart(s.tUs);   // a janela só começa a contar depois do descarte
             return;
         }
         g_settling = false;

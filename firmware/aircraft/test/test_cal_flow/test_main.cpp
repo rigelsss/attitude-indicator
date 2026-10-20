@@ -9,7 +9,9 @@ void tearDown() {}
 
 // Mesmos valores do config.h: janela de 2 s a 200 Hz, mínimo de 90 % (360 amostras)
 static const GyroCalParams GP = {360, {0.15f, 0.95f, 1.05f}, {0.15f, 0.7f, 1.5f}, 0.03f, 0.1f};
-static const CalCoordinatorParams CP = {2000000, GP};
+static const SixPoseParams SP = {360, 0.15f, {0.8f, 1.2f}, 0.98f, 1.02f};
+static const MountParams MP = {360, {0.15f, 0.95f, 1.05f}, 0.2f, 10.0f};
+static const CalCoordinatorParams CP = {2000000, GP, SP, MP};
 static const uint32_t PERIOD_US = 5000;
 
 static const Vec3 BIAS = {0.5f, -0.3f, 0.1f};
@@ -274,13 +276,15 @@ static void test_mpu_reconfigured_without_window() {
     TEST_ASSERT_EQUAL(CalCoordinator::Done::None, c.feed(BIAS, LEVEL_G, LEVEL_G, 25.0f, 5000000, true));
 }
 
-// Bloqueios: m liberado na calibração do boot e bloqueado no g; z com os pré-requisitos, nesta ordem
+// Bloqueios: m liberado na calibração do boot e bloqueado no g e no 6; z com os pré-requisitos, nesta ordem
 static void test_blocking_rules() {
     CalCoordinator c(CP);
     uint32_t t = 0;
     TEST_ASSERT_TRUE(c.magAllowed());
     TEST_ASSERT_EQUAL(MountStart::NoAccel, c.checkMount(false));
     TEST_ASSERT_EQUAL(MountStart::GyroProvisional, c.checkMount(true));
+    TEST_ASSERT_EQUAL(MountStart::GyroProvisional, c.startMount(true));
+    TEST_ASSERT_EQUAL(CalMode::None, c.mode());
     c.startGyro(GyroCalKind::Boot, t);
     TEST_ASSERT_TRUE(c.magAllowed());
     TEST_ASSERT_EQUAL(MountStart::Busy, c.checkMount(true));
@@ -290,46 +294,270 @@ static void test_blocking_rules() {
     TEST_ASSERT_EQUAL(MountStart::NoAccel, c.checkMount(false));
     c.startGyro(GyroCalKind::Cmd, t);
     TEST_ASSERT_FALSE(c.magAllowed());
-    TEST_ASSERT_EQUAL(MountStart::Busy, c.checkMount(true));
-    c.setMode(CalMode::SixWait);
+    TEST_ASSERT_EQUAL(MountStart::Busy, c.startMount(true));
+    TEST_ASSERT_EQUAL(CalMode::GyroCmd, c.mode());
+    c.startSix();
     TEST_ASSERT_FALSE(c.magAllowed());
+    TEST_ASSERT_EQUAL(MountStart::Busy, c.checkMount(true));
 }
 
-// Fim das seis posições: retoma a calibração do boot só se ainda não há bias deste boot
-static void test_end_six() {
+// ---------- Seis posições e montagem ----------
+
+static void calibrateGyro(CalCoordinator &c, uint32_t &t) {
+    c.startGyro(GyroCalKind::Boot, t);
+    feedWindow(c, t, BIAS, LEVEL_G);
+    feedWindow(c, t, BIAS, LEVEL_G);
+    TEST_ASSERT_TRUE(c.gyro().definitive());
+}
+
+// Enter na espera e uma janela de medida (como o serviço: a janela abre depois da mensagem)
+static CalCoordinator::Done measure(CalCoordinator &c, uint32_t &t, const Vec3 &gyro, const Vec3 &acc,
+                                    bool moving = false) {
+    TEST_ASSERT_TRUE(c.confirm());
+    TEST_ASSERT_FALSE(c.window().active);
+    c.startPendingWindow(t);
+    return feedWindow(c, t, gyro, acc, true, moving);
+}
+
+// Média ideal de cada posição nos eixos do chip (ZUp, ZDown, XUp, XDown, YUp, YDown): o eixo da
+// posição com scale·(±1 g) mais offset; tiltDeg inclina a gravidade para o eixo seguinte
+static Vec3 poseMean(int pose, const Vec3 &offset, float scale = 1.0f, float tiltDeg = 0) {
+    static const int AXIS[POSE_COUNT] = {2, 2, 0, 0, 1, 1};
+    const float sign = (pose % 2 == 0) ? 1.0f : -1.0f;
+    const float a = tiltDeg * (float)M_PI / 180;
+    float v[3] = {0, 0, 0};
+    v[AXIS[pose]] = sign * scale * cosf(a);
+    v[(AXIS[pose] + 1) % 3] = sinf(a);
+    return {v[0] + offset.x, v[1] + offset.y, v[2] + offset.z};
+}
+
+static const Vec3 ACC_OFFSET = {0.02f, -0.01f, 0.10f};
+
+// Seis posições boas: cada uma aceita e a próxima pedida; depois da sexta, offset e escala recuperados
+static void test_six_ready_to_save() {
+    CalCoordinator c(CP);
+    uint32_t t = 0;
+    c.startSix();
+    TEST_ASSERT_EQUAL(CalMode::SixWait, c.mode());
+    for (int i = 0; i < POSE_COUNT; i++) {
+        TEST_ASSERT_EQUAL_INT(i, c.six().index());
+        TEST_ASSERT_EQUAL(CalCoordinator::Done::Six, measure(c, t, BIAS, poseMean(i, ACC_OFFSET, 1.01f)));
+        if (i < POSE_COUNT - 1) {
+            TEST_ASSERT_EQUAL(SixPoseFlow::Event::PoseOk, c.lastSixEvent());
+            TEST_ASSERT_EQUAL(CalMode::SixWait, c.mode());
+        }
+    }
+    TEST_ASSERT_EQUAL(SixPoseFlow::Event::ReadyToSave, c.lastSixEvent());
+    TEST_ASSERT_EQUAL(CalMode::SixReview, c.mode());
+    const AccelCal &r = c.six().result();
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, ACC_OFFSET.x, r.offset.x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, ACC_OFFSET.y, r.offset.y);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, ACC_OFFSET.z, r.offset.z);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.01f, r.scale.x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.01f, r.scale.z);
+    for (int i = 0; i < POSE_COUNT; i++) {
+        TEST_ASSERT_TRUE(c.six().normOk(i));
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.0f, c.six().poseNorm(i));
+    }
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 25.0f, c.six().tempC());
+    TEST_ASSERT_FALSE(c.confirm());   // Enter na revisão não mede de novo
+    // s ou x: sem bias deste boot, a calibração do boot recomeça
+    c.exitFlow();
+    TEST_ASSERT_EQUAL(CalMode::GyroBoot, c.mode());
+    TEST_ASSERT_TRUE(c.gyroRestartPending());
+}
+
+// Posição recusada (incompleta, caixa mexida, outro eixo, inclinada demais): pedida de novo
+static void test_six_rejected_pose_repeats() {
+    CalCoordinator c(CP);
+    uint32_t t = 0;
+    c.startSix();
+    // Amostras a cada 10 ms: 200 na janela, abaixo do mínimo
+    TEST_ASSERT_TRUE(c.confirm());
+    c.startPendingWindow(t);
+    CalCoordinator::Done d = CalCoordinator::Done::None;
+    while (d == CalCoordinator::Done::None) {
+        t += 2 * PERIOD_US;
+        d = c.feed(BIAS, LEVEL_G, LEVEL_G, 25.0f, t, true);
+    }
+    TEST_ASSERT_EQUAL(SixPoseFlow::Event::Incomplete, c.lastSixEvent());
+    TEST_ASSERT_EQUAL_UINT32(200, c.six().lastCount());
+    TEST_ASSERT_EQUAL(CalMode::SixWait, c.mode());
+
+    measure(c, t, BIAS, LEVEL_G, true);
+    TEST_ASSERT_EQUAL(SixPoseFlow::Event::Moved, c.lastSixEvent());
+    TEST_ASSERT_TRUE(c.six().lastGyroStd() > 0.9f);
+
+    measure(c, t, BIAS, poseMean((int)Pose::XUp, {0, 0, 0}));   // pedida a ZUp
+    TEST_ASSERT_EQUAL(SixPoseFlow::Event::WrongPose, c.lastSixEvent());
+    TEST_ASSERT_EQUAL(PoseCheck::WrongAxis, c.six().lastPoseCheck());
+
+    measure(c, t, BIAS, {0, 0, 0.7f});
+    TEST_ASSERT_EQUAL(SixPoseFlow::Event::WrongPose, c.lastSixEvent());
+    TEST_ASSERT_EQUAL(PoseCheck::WeakAxis, c.six().lastPoseCheck());
+    TEST_ASSERT_EQUAL_INT(0, c.six().index());
+    TEST_ASSERT_EQUAL(CalMode::SixWait, c.mode());
+
+    measure(c, t, BIAS, LEVEL_G);
+    TEST_ASSERT_EQUAL(SixPoseFlow::Event::PoseOk, c.lastSixEvent());
+    TEST_ASSERT_EQUAL_INT(1, c.six().index());
+}
+
+// Posições inclinadas 20°: passam pela conferência de cada posição, mas a validação reprova
+static void test_six_validation_fail() {
+    CalCoordinator c(CP);
+    uint32_t t = 0;
+    calibrateGyro(c, t);
+    c.startSix();
+    for (int i = 0; i < POSE_COUNT; i++) measure(c, t, BIAS, poseMean(i, {0, 0, 0}, 1.0f, 20.0f));
+    TEST_ASSERT_EQUAL(SixPoseFlow::Event::ValidationFail, c.lastSixEvent());
+    TEST_ASSERT_FALSE(c.six().normOk(0));
+    TEST_ASSERT_TRUE(c.six().poseNorm(0) > 1.02f);
+    // Com bias deste boot, volta a None sem recomeçar o giroscópio
+    TEST_ASSERT_EQUAL(CalMode::None, c.mode());
+    TEST_ASSERT_FALSE(c.windowPending());
+}
+
+// 6 interrompe o giroscópio; Enter só na espera; x em qualquer etapa
+static void test_six_confirm_and_cancel() {
     CalCoordinator c(CP);
     uint32_t t = 0;
     c.startGyro(GyroCalKind::Boot, t);
-    c.cancelWindow();
-    c.setMode(CalMode::SixReview);
-    TEST_ASSERT_TRUE(c.endSix());
+    c.startSix();
+    TEST_ASSERT_FALSE(c.window().active);   // a janela do giroscópio foi interrompida
+    TEST_ASSERT_FALSE(c.windowPending());
+    TEST_ASSERT_TRUE(c.confirm());
+    TEST_ASSERT_EQUAL(CalMode::SixMeasure, c.mode());
+    c.startPendingWindow(t);
+    TEST_ASSERT_TRUE(c.window().active);
+    TEST_ASSERT_FALSE(c.confirm());   // Enter extra durante a medida é ignorado
+    TEST_ASSERT_TRUE(c.window().active);
+    // x durante a medida, sem bias deste boot: a calibração do boot recomeça depois da mensagem
+    c.exitFlow();
     TEST_ASSERT_EQUAL(CalMode::GyroBoot, c.mode());
-    TEST_ASSERT_FALSE(c.window().active);   // abre depois da mensagem
-    TEST_ASSERT_TRUE(c.windowPending());
+    TEST_ASSERT_FALSE(c.window().active);
+    TEST_ASSERT_TRUE(c.gyroRestartPending());
     c.startPendingWindow(t);
     TEST_ASSERT_TRUE(c.window().active);
     feedWindow(c, t, BIAS, LEVEL_G);
     feedWindow(c, t, BIAS, LEVEL_G);
-    c.setMode(CalMode::SixReview);
-    TEST_ASSERT_FALSE(c.endSix());
+    TEST_ASSERT_TRUE(c.gyro().definitive());
+    // x na espera, com bias deste boot: volta a None
+    c.startSix();
+    c.exitFlow();
     TEST_ASSERT_EQUAL(CalMode::None, c.mode());
     TEST_ASSERT_FALSE(c.windowPending());
-    c.startPendingWindow(t);
-    TEST_ASSERT_FALSE(c.window().active);
+    // exitFlow fora das seis posições e da montagem não faz nada
+    c.startGyro(GyroCalKind::Cmd, t);
+    c.exitFlow();
+    TEST_ASSERT_EQUAL(CalMode::GyroCmd, c.mode());
+    TEST_ASSERT_TRUE(c.window().active);
 }
 
-// Janela das seis posições e da montagem: o fim é devolvido sem passar pelo giroscópio
-static void test_six_and_level_windows() {
+// Acelerômetro nos eixos do chip com a caixa em roll φ e pitch θ (sem desalinhamento). A força
+// específica nos eixos da caixa é (sin θ, −sin φ·cos θ, −cos φ·cos θ), e chipToBody(c) = (c.y, c.x, −c.z).
+static Vec3 chipTilted(float rollDeg, float pitchDeg) {
+    const float r = rollDeg * (float)M_PI / 180, p = pitchDeg * (float)M_PI / 180;
+    return {-sinf(r) * cosf(p), sinf(p), cosf(r) * cosf(p)};
+}
+
+// Caixa girada 180° no plano da mesa: x e y da caixa trocam de sinal, e no chip também
+static Vec3 turned180(const Vec3 &chip) { return {-chip.x, -chip.y, chip.z}; }
+
+// Duas medidas boas: módulo em roll −3° e pitch +2° (igual nas duas) com a mesa nivelada; depois,
+// mesa em roll +1,5° e pitch −2° (troca de sinal entre as duas) com o módulo alinhado
+static void test_mount_ready_to_save() {
     CalCoordinator c(CP);
     uint32_t t = 0;
-    c.setMode(CalMode::SixMeasure);
-    c.startWindow(t);
-    TEST_ASSERT_EQUAL(CalCoordinator::Done::Six, feedWindow(c, t, BIAS, LEVEL_G));
+    calibrateGyro(c, t);
+    TEST_ASSERT_EQUAL(MountStart::Ok, c.startMount(true));
+    TEST_ASSERT_EQUAL(CalMode::LevelWait, c.mode());
+    TEST_ASSERT_EQUAL_INT(0, c.mount().index());
+    TEST_ASSERT_EQUAL(CalCoordinator::Done::Level, measure(c, t, BIAS, chipTilted(-3.0f, 2.0f)));
+    TEST_ASSERT_EQUAL(MountFlow::Event::PoseOk, c.lastMountEvent());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -3.0f, c.mount().lastAngles().rollDeg);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 2.0f, c.mount().lastAngles().pitchDeg);
+    TEST_ASSERT_EQUAL_INT(1, c.mount().index());
+    TEST_ASSERT_EQUAL(CalMode::LevelWait, c.mode());
+    measure(c, t, BIAS, chipTilted(-3.0f, 2.0f));
+    TEST_ASSERT_EQUAL(MountFlow::Event::ReadyToSave, c.lastMountEvent());
+    TEST_ASSERT_EQUAL(CalMode::LevelReview, c.mode());
+    const MountResult &r = c.mount().result();
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -3.0f, r.mountRollDeg);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 2.0f, r.mountPitchDeg);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, r.tableRollDeg);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, r.tablePitchDeg);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 25.0f, c.mount().tempC());
+    c.exitFlow();
+    TEST_ASSERT_EQUAL(CalMode::None, c.mode());
+    TEST_ASSERT_FALSE(c.windowPending());
+
+    c.startMount(true);
+    const Vec3 table = chipTilted(1.5f, -2.0f);
+    measure(c, t, BIAS, table);
+    measure(c, t, BIAS, turned180(table));
+    TEST_ASSERT_EQUAL(MountFlow::Event::ReadyToSave, c.lastMountEvent());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, c.mount().result().mountRollDeg);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, c.mount().result().mountPitchDeg);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.5f, c.mount().result().tableRollDeg);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -2.0f, c.mount().result().tablePitchDeg);
+}
+
+// Medida recusada (movimento, rotação lenta): pedida de novo; incoerentes e inclinadas: descartadas
+static void test_mount_rejections() {
+    CalCoordinator c(CP);
+    uint32_t t = 0;
+    calibrateGyro(c, t);
+    c.startMount(true);
+    measure(c, t, BIAS, LEVEL_G, true);
+    TEST_ASSERT_EQUAL(MountFlow::Event::Rejected, c.lastMountEvent());
+    TEST_ASSERT_EQUAL(LevelRest::Moving, c.mount().lastRest());
+    TEST_ASSERT_EQUAL(CalMode::LevelWait, c.mode());
+    measure(c, t, {BIAS.x + 0.5f, BIAS.y, BIAS.z}, LEVEL_G);   // 0,5 °/s constante: rotação lenta
+    TEST_ASSERT_EQUAL(MountFlow::Event::Rejected, c.lastMountEvent());
+    TEST_ASSERT_EQUAL(LevelRest::Rotating, c.mount().lastRest());
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.5f, c.mount().lastGyroMean().x);
+    TEST_ASSERT_EQUAL_INT(0, c.mount().index());
+
+    // A caixa de cabeça para baixo na segunda: as duas medidas não são da mesma face
+    measure(c, t, BIAS, LEVEL_G);
+    measure(c, t, BIAS, {0, 0, -1.0f});
+    TEST_ASSERT_EQUAL(MountFlow::Event::BadInput, c.lastMountEvent());
+    TEST_ASSERT_EQUAL(CalMode::None, c.mode());
+
+    c.startMount(true);
+    measure(c, t, BIAS, chipTilted(12.0f, 0));
+    measure(c, t, BIAS, chipTilted(12.0f, 0));
+    TEST_ASSERT_EQUAL(MountFlow::Event::TooTilted, c.lastMountEvent());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.0f, c.mount().result().mountRollDeg);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, c.mount().result().mountPitchDeg);
+    TEST_ASSERT_EQUAL(CalMode::None, c.mode());
+}
+
+// x na espera, na medida e na revisão: volta a None, sem janela
+static void test_mount_cancel() {
+    CalCoordinator c(CP);
+    uint32_t t = 0;
+    calibrateGyro(c, t);
+    c.startMount(true);
+    c.exitFlow();
+    TEST_ASSERT_EQUAL(CalMode::None, c.mode());
+    c.startMount(true);
+    TEST_ASSERT_TRUE(c.confirm());
+    c.startPendingWindow(t);
+    TEST_ASSERT_FALSE(c.confirm());
+    c.exitFlow();
+    TEST_ASSERT_EQUAL(CalMode::None, c.mode());
     TEST_ASSERT_FALSE(c.window().active);
-    TEST_ASSERT_EQUAL_UINT32(400, c.window().accRaw.count());
-    c.setMode(CalMode::LevelMeasure);
-    c.startWindow(t);
-    TEST_ASSERT_EQUAL(CalCoordinator::Done::Level, feedWindow(c, t, BIAS, LEVEL_G));
+    TEST_ASSERT_FALSE(c.windowPending());
+    c.startMount(true);
+    measure(c, t, BIAS, LEVEL_G);
+    measure(c, t, BIAS, LEVEL_G);
+    TEST_ASSERT_EQUAL(CalMode::LevelReview, c.mode());
+    TEST_ASSERT_FALSE(c.confirm());
+    c.exitFlow();
+    TEST_ASSERT_EQUAL(CalMode::None, c.mode());
+    TEST_ASSERT_FALSE(c.windowPending());
 }
 
 // A janela fecha pelo instante da amostra, também na virada do micros(); o descarte de partida adia o início
@@ -366,8 +594,13 @@ int main() {
     RUN_TEST(test_mpu_reconfigured_restarts_window);
     RUN_TEST(test_mpu_reconfigured_without_window);
     RUN_TEST(test_blocking_rules);
-    RUN_TEST(test_end_six);
-    RUN_TEST(test_six_and_level_windows);
+    RUN_TEST(test_six_ready_to_save);
+    RUN_TEST(test_six_rejected_pose_repeats);
+    RUN_TEST(test_six_validation_fail);
+    RUN_TEST(test_six_confirm_and_cancel);
+    RUN_TEST(test_mount_ready_to_save);
+    RUN_TEST(test_mount_rejections);
+    RUN_TEST(test_mount_cancel);
     RUN_TEST(test_window_wraparound_and_hold);
     return UNITY_END();
 }

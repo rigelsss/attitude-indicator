@@ -10,7 +10,7 @@ Tirar do `main.cpp` as máquinas de estado e os serviços, **sem mudar o comport
 
 - **R1. Duas camadas por módulo.**
   - **Núcleo puro** em `lib/`, sem `Arduino.h`: uma máquina de estado que recebe o instante como parâmetro e devolve um resultado ou evento, com getters para o estado. Não imprime, não lê o relógio e não acessa a NVS. É testado com `pio test -e native`.
-  - **Serviço Arduino** em `lib/`: é dono do driver, chama o núcleo, grava na NVS e imprime.
+  - **Serviço Arduino** em `lib/`: é dono do driver, chama o núcleo, grava na NVS e imprime. Recebe os valores do `config.h` numa struct de configuração (ex.: `BaroServiceConfig`), montada no `main.cpp`, como os drivers já fazem. As libs não incluem o `config.h`: no build delas, um `config.h` do SDK (mbedtls, bt) vem antes do nosso no caminho de includes.
 - **R2. Mensagens por um ponto único, o `logPrintf()`/`logPrint()`/`logPrintln()` (`lib/logger`).** O nome não é `logf()` porque `logf()` é o logaritmo do `math.h`. Os serviços imprimem as mesmas mensagens de hoje. Na semana 3, só o `lib/logger` muda: passa a enfileirar para a task da serial, e os serviços ficam como estão.
 - **R3. O laço de aquisição fica no `main.cpp` até a semana 3.** Ele faz: espera do pulso → leitura do MPU → barômetro e magnetômetro → contabilidade → calibração e fusão. É, quase literalmente, o corpo da futura `sensor_task`. O `main.cpp` continua marcado como provisório.
 - **R4. Comandos como métodos dos serviços.** Exemplos: `startSix()`, `confirm()`, `cancel()`, `save()`, `zeroAltitude()`. O console só traduz teclas em chamadas. Isso prepara a camada única de comandos (item 8 da revisão de 15/10). Os `CMD_*` não são implementados agora.
@@ -49,7 +49,7 @@ Cada passo termina com: compilar `aircraft`, rodar `pio test -e native`, fazer a
 |---|---|---|---|
 | 0 | Linha de base: log de referência, RAM/flash e métricas do `a` | roteiro base (abaixo) | feito em 20/10 |
 | 1 | `lib/logger` + `lib/sched` | roteiro base | feito em 20/10 (build: RAM 24 136 B, flash 363 485 B; `test_sched` com 7 casos; bancada abaixo) |
-| 2 | Barômetro (`BaroZero` + `baro_service`) | zero do boot, `0`, `b`, SDA do BMP280 solto | — |
+| 2 | Barômetro (`BaroZero` + `baro_service`) | zero do boot, `0`, `b`, SDA do BMP280 solto | feito em 20/10 (build: RAM 24 248 B, flash 363 941 B; 10 casos novos no `test_baro`; bancada abaixo) |
 | 3 | Magnetômetro sem calibração (agenda, proa, distúrbio) | `p`, ímã perto do módulo | — |
 | 4 | Calibração `m` (`MagCalibrator`) | `m` completo, `d`, `x` e `s` | — |
 | 5 | Fusão (`imuToBody` + `FusionCore`) | `a`, inclinações conhecidas, métricas iguais às da base | — |
@@ -118,3 +118,48 @@ O último `c` do roteiro (passo 8) ficou fora do log. O formato do `c` está reg
   - O código do filtro não mudou. O que mudou foi a posição do código na flash, e o custo medido inclui as faltas no cache da flash, principalmente na primeira amostra depois de uma impressão.
   - **Critério a partir deste passo:** custo médio de até ~75 µs e máximo de até ~200 µs. Esses valores ficam muito abaixo do período de 5 ms. O padrão de alternância não conta como critério.
 
+
+**Passo 2, primeira sessão (log `261020-133830`, carimbo `2026-10-20 13:37:47`).** O roteiro base (1–11) foi completo; os testes do barômetro, só em parte.
+
+- **Roteiro base:** as mensagens são as mesmas da linha de base.
+  - `r`: 199–200 Hz, com perdidas, descartadas, falhas e fila cheia em 0 nas 82 linhas, inclusive com a caixa em movimento.
+  - `a`: atraso de 113–120 µs; custo médio de 52–74 µs e máximo de 109–208 µs; ambíguos, descartados e reinícios em 0.
+  - `b` e `p` a 10 Hz. Zero do boot aceito com 0,75 Pa, e `0` aceito com 0,43 Pa.
+- **Zero com a caixa mexendo (passo 12):** de 8 pedidos de `0`, 2 foram recusados (1,58 e 1,77 Pa, "medindo de novo") e depois aceitos. Os outros foram aceitos com 0,65–1,40 Pa. A margem é pequena, como em 19/10: o filtro IIR do chip atenua o movimento. O `c` mostrou `(novo zero em andamento)`. Um zero foi aceito com 50 leituras, ainda acima do mínimo de 45.
+- **"Terminal parou de responder":** depois do passo 12, chegaram as teclas `p`, `c` e `m`. O `m` iniciou a calibração do magnetômetro, e durante a coleta (até 180 s) todas as teclas, menos o `x`, são ignoradas. O mesmo vale na revisão que vem depois, que só aceita `s`, `x` e `d`. Esse comportamento é o de antes da refatoração, não uma regressão. Os passos 13–17 (SDA solto) ficaram para outra sessão.
+- **Distúrbio magnético alternando:** com a caixa sendo manuseada, o |m| ficou em 28–31 µT, em torno do limite de 29,6 µT (raio de 25,7 µT + 15 %). As mensagens `DISTÚRBIO`/`distúrbio terminou` se alternaram várias vezes. Também é o comportamento de antes: o limite não tem histerese.
+
+**Passo 2, segunda sessão (log `261020-134704`, mesmo carimbo).** SDA do BMP280 solto com o resumo `r` ligado. O SDA não foi recolocado durante o log.
+
+- **Barômetro:** se comportou como esperado. Saíram as 5 falhas a 25 Hz, `FALHANDO` e depois 1 tentativa por segundo (falhas de 4 a 87). O `c` deu `ALT não (sem barômetro)` e `valid = 0x0009`, e não houve recuperação.
+- **Magnetômetro:** perdeu a configuração uma vez, provavelmente pelo fio solto mexendo no barramento. Ficou `FALHANDO` por ~1 s e voltou a `ok` com `recuperações 1`. É o mesmo mecanismo de 19/10.
+- **MPU: `descartadas 10` em quase toda janela de 1 s**, e `1` nas outras. A atitude ficou com 170 de 200 amostras por janela: a fusão reiniciou a cada segundo, porque a lacuna de ~55 ms passa do `FUSION_MAX_DT_MS` (50) e o filtro espera 20 amostras para recomeçar.
+  - **Causa:** a tentativa do barômetro gera o log de erro do núcleo (`[E][Wire.cpp:499]`, com `CORE_DEBUG_LEVEL=3`). Esse log não passa pelo buffer do `Serial` e espera a transmissão do resumo em curso (~600 bytes, ~52 ms). É o mecanismo registrado em 15/10 (hardware.md, "Buffer da serial").
+  - **Por que não é regressão do passo 2:**
+    - Os dois períodos são de 1 s: o da tentativa (fase contínua, igual à de antes) e o da janela do resumo. Por isso a fase entre eles quase não muda, e o resultado depende de onde a falha começou.
+    - Neste log, a tentativa cai logo depois da primeira linha do resumo, em `xx676–xx681` ms.
+    - Em 19/10 (log `261019-210112`, firmware antigo, resumo ligado e barômetro falhando), ela caía logo antes do resumo, e houve 0 descartes.
+    - Os testes de 19/10 com o SDA solto (`213533`) usaram só o `c`, sem o `r`.
+- **Proa:** foi de ~102° para ~73°, porque a caixa foi girada ao mexer no fio.
+- **Falta:** recolocar o SDA (`baro: ok` sem reconfiguração) e o `c` final.
+
+**Passo 2, terceira sessão (log `261020-135408`, mesmo carimbo).** Boot com o SDA do BMP280 solto e o resumo `r` ligado. O comportamento foi igual ao de 19/10:
+
+- `sem resposta no endereço I2C`, com nova tentativa a cada 5 s (11 tentativas, de 0,7 a 60,8 s);
+- giroscópio calibrado;
+- `altitude: sem zero` e `valid = 0x0009`;
+- `r` com perdidas, falhas e fila cheia em 0, e 1 descarte isolado em 30 janelas. Com uma tentativa a cada 5 s, a colisão com o resumo é rara.
+
+O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou sem contato.
+
+**Passo 2, fechamento (logs `140055` a `141053`).**
+
+- **De ~13:48 a 14:05, o BMP280 não respondeu em nenhum boot**, nem com o SDA encaixado (log `140247`). Aos 25,1 s houve o `Error 263` do encaixe, e depois 16 tentativas com `Error -1`.
+- **O diagnóstico das 14:08 (log `140827`) encontrou o 0x76 (BMP280) de novo**, com o 0x1E e o 0x68.
+- **Firmware de voo regravado (carimbo `2026-10-20 14:08:56`, log `141053`):** dois boots com `BMP280 configurado` e `zero aceito` (0,32 Pa). O `c` deu `ALT ok` e `valid = 0x000D`.
+- **Conclusão:** a volta do chip não foi vista ao vivo, mas o caminho que falta (nova tentativa a cada 5 s → configuração → zero) usa a mesma rotina do boot, conferida aqui. O ritmo das tentativas foi conferido nos logs anteriores. **Passo 2 fechado.**
+
+## Pendências (fora da refatoração)
+
+1. **Teclas ignoradas na calibração do magnetômetro.** Na coleta do `m` (até 180 s), o firmware ignora as teclas sem dizer nada, e o terminal parece travado. A revisão que vem depois, que só aceita `s`, `x` e `d`, também. Proposta: ao ignorar uma tecla, imprimir uma linha curta, por exemplo `[mag] calibração em andamento: x cancela`, no máximo uma vez por segundo. Fica para depois do passo 4, num commit à parte, porque muda o comportamento. Vista em 20/10, log `261020-133830`.
+2. **Log de erro do núcleo parando o laço.** Com um sensor falhando e uma impressão longa em curso (o resumo `r`, o `c`), cada `[E][Wire.cpp]` pode parar o laço por ~50 ms. Isso descarta 10 amostras e reinicia a fusão a cada tentativa, quando a fase coincide. Já estava previsto para a semana 3 ([plano.md](plano.md): serial numa task de baixa prioridade e revisão do nível de log do núcleo). Agora há a medida do efeito na fusão. Decidir na migração: baixar o `CORE_DEBUG_LEVEL` ou redirecionar o log do núcleo para a fila do `lib/logger`. Vista em 20/10, log `261020-134704`.

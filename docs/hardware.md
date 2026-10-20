@@ -921,6 +921,24 @@ Log `261020-130702`, firmware `af389ba` (carimbo `2026-10-20 13:06:22`). A caixa
 - **Magnetômetro:** 25 leituras por segundo e proa estável em 102,2° (±0,1°).
 - **Barômetro:** altitude entre −0,31 e −0,05 m em ~6 s.
 
+### Barômetro falhando com o resumo ligado (20/10/2026)
+
+Log `261020-134704`, firmware da refatoração, passo 2 (carimbo `2026-10-20 13:37:47`). O SDA do BMP280 ficou solto por ~50 s com o `r` ligado.
+
+- **MPU:**
+  - `descartadas 10` em quase toda janela de 1 s, e `1` nas outras;
+  - atitude com 170 de 200 amostras: **a fusão reiniciou a cada segundo**, porque a lacuna de ~55 ms passa do `FUSION_MAX_DT_MS` (50);
+  - perdidas e fila cheia em 0.
+- **Causa:** é o mecanismo de 15/10 ("Buffer da serial"). O log de erro do núcleo (`[E][Wire.cpp:499]`) de cada tentativa do barômetro, 1 por segundo, espera a transmissão do resumo em curso (~600 bytes, ~52 ms).
+- **Depende da fase entre as duas coisas, que têm o mesmo período de 1 s:**
+  - neste log, a tentativa caía logo depois da primeira linha do resumo;
+  - em 19/10 (log `261019-210112`, firmware antigo), caía logo antes, e houve 0 descartes.
+- **Magnetômetro:** perdeu a configuração uma vez com o fio solto e voltou em ~1 s (`recuperações 1`).
+- **Tratamento:** fica para a semana 3 (pendência 2 do [refatoracao.md](refatoracao.md)).
+- **Depois do teste, o BMP280 ficou mudo de ~13:48 a 14:05 (logs `135408` a `140511`)**, mesmo com o SDA encaixado. Aos 25,1 s do log `140247` houve o `Error 263` do encaixe, e depois só `Error -1` por 80 s.
+  - Às 14:08, o diagnóstico (`140827`) achou o 0x76 de novo, e o firmware de voo voltou a configurar o chip (`141053`).
+  - O EN não desliga os módulos. Se um sensor parar de responder depois de mexer nos fios com a placa ligada, **tire o USB por 5 s** antes de procurar outro defeito.
+
 ## Orientação de montagem do MPU6050
 
 ### Montagem final (14/10/2026, em uso)

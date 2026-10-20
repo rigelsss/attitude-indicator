@@ -50,8 +50,9 @@ public:
     // configurar) ou quando o chip perdeu a configuração; nesse caso ele é reconfigurado aqui
     // (queda de alimentação: o BME280 volta em sleep e os dados parariam de mudar). Uma
     // configuração que falhou é refeita na chamada seguinte. Conta como falha: transação sem
-    // resposta, reconfiguração que falhou, compensação inválida e "não medido" depois da
-    // tolerância inicial. A sequência de falhas só termina com uma amostra válida.
+    // resposta, configuração perdida (mesmo quando a reconfiguração dá certo), reconfiguração que
+    // falhou, compensação inválida e "não medido" depois da tolerância inicial. A sequência de
+    // falhas só termina com uma amostra válida.
     bool read(BaroSample &out);
 
     bool     ok() const { return configured_ && failStreak_ < cfg_.maxFailStreak; }

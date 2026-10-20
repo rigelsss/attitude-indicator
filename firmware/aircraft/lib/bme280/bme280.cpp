@@ -154,9 +154,14 @@ bool Bme280::read(BaroSample &out) {
         return false;
     }
     if (b[0] != ctrlMeas_ || (b[1] & CONFIG_MASK) != config_) {
-        // O chip responde, mas sem a configuração: reiniciou (queda de alimentação) e está em sleep
+        // O chip responde, mas sem a configuração: reiniciou (queda de alimentação) e está em sleep.
+        // A recuperação também conta como falha: um chip que reinicia sem parar (VCC sem contato,
+        // alimentado só pelos pull-ups do I2C) derruba ok() depois de maxFailStreak recuperações, e
+        // quem usa o driver passa a espaçar as tentativas, em vez de um reset completo a cada leitura.
+        // Uma queda isolada não derruba ok(): a primeira amostra válida zera a sequência.
         recoveries_++;
-        if (reconfigure() != Bme280Status::Ok) handleFail();
+        handleFail();
+        reconfigure();
         return false;
     }
     int32_t adcP, adcT;

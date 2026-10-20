@@ -56,7 +56,7 @@ Cada passo termina com: compilar `aircraft`, rodar `pio test -e native`, fazer a
 | 6a | Calibração do giroscópio + coordenador (`GyroCalFlow`, `CalCoordinator`, `cal_service` com a carga da NVS, inclusive a montagem) | `g` parado e balançando, boot balançando, `m` durante a calibração do boot, `z` durante um `g` | feito em 20/10 (build: RAM 24 608 B, flash 366 137 B; `test_cal_flow` com 18 casos; `main.cpp` com 891 linhas; bancada abaixo) |
 | 6b | Seis posições + montagem (`SixPoseFlow`, `MountFlow`, comandos do coordenador, `CalService::handleKey`) | `z` completo com `s` e persistência; `z` com medida recusada; `6`: entrada, uma posição, cancelamento | código em 20/10 (build: RAM 24 832 B, flash 366 665 B; `test_cal_flow` com 23 casos; `main.cpp` com 630 linhas; bancada abaixo) |
 | 7 | Aquisição (`lib/acq`: `SampleWindow`, `PulseTracker`, `checkFrame`, `AcqStats`, `SettleGate`) | `r`, `c`, INT solto, métricas iguais às da base | feito em 20/10 (build: RAM 24 840 B, flash 367 013 B; `test_acq` com 13 casos; `main.cpp` com 556 linhas; bancada e A/B abaixo) |
-| 8 | Console (`src/console.cpp`) | roteiro base inteiro, mensagem a mensagem | — |
+| 8 | Console (`src/console.cpp`: teclas, `c`, `r`, `a`, ajuda; `validityInputs()` fica no `main.cpp`) | roteiro base inteiro, mensagem a mensagem (texto pelo `tools/log_templates.py`, ordem lendo o log) | código em 20/10 (build: RAM 24 880 B, flash 367 413 B; sem lógica pura nova; `main.cpp` com 341 linhas); feito em 20/10 (bancada abaixo) |
 
 Os passos 1–7 são os essenciais. Se o prazo apertar, o 8 é quase só mover código. O risco principal é uma regressão de tempo no passo 7, e a mitigação é comparar as métricas com a linha de base.
 
@@ -371,6 +371,33 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
   - É a única mudança de comportamento do passo, e só nesse caso: a chance é de cerca de 1 em 5 000 por virada (~71 min). A bancada acima não precisa ser refeita.
 - **Passo 7 fechado.**
 
+**Passo 8 (log `261020-202749`, carimbo `2026-10-20 20:26:53`).** Roteiro base e as teclas que ele não cobre, numa sessão só, com a caixa parada.
+
+- **Mensagens** (`python tools/log_templates.py` com os logs `181722`, `185947` e `193349` como base):
+  - Só uma linha aparece só no novo: uma de progresso do `m` cuja lista `faltam:` não tinha aparecido antes. O texto é o mesmo; só o conteúdo varia.
+  - As 20 linhas só na base são de situações que não se repetiram: INT solto, recusas, o glitch de alimentação do passo 7, a gravação do `z` e o `DISTÚRBIO`.
+  - **Alcance:** o script compara conjuntos de modelos de linha. Ele confirma o texto, mas não a ordem das linhas nem a frequência de um modelo que existe dos dois lados. A ordem foi conferida lendo, no log, a sequência de cada tecla abaixo e a do boot, que é a mesma da linha de base.
+- **Teclas:**
+  - `h` e `?`: a ajuda;
+  - `q`: nada;
+  - `g`: calibrado;
+  - `6`: Enter, `[cal] ok` e `x` com `seis posições canceladas`;
+  - `z`: uma medida aceita e `x` com `calibração de montagem cancelada`;
+  - `m` e `x`, duas vezes: `calibração cancelada; calibração anterior mantida`.
+- **`r`, 19 janelas:** 199–200 Hz, com perdidas, descartadas, falhas e fila cheia em 0, e o magnetômetro com 24–26 leituras/s.
+- **`a`, 181 linhas:**
+  - dt de 5,00–5,01/5,01/5,01 ms, sem a variação de ±50 µs;
+  - custo do filtro médio de 42–51 µs e máximo de 93–161 µs;
+  - ambíguos, descartados e reinícios em 0.
+- **`b`, `p` e `0`:** 49 linhas `[baro]` e 74 `[mag]` a 10 Hz, todas no estado `ok`. Zero aceito com 0,38 Pa. Os dois `c` com `valid = 0x000D`.
+- **Atraso com o `a` sozinho: 102–197 µs, dentro do critério (~200 µs), mas mais alto que nos passos 6b e 7.**
+  - Neste build, 29 % das linhas ficaram até 125 µs, 23 % em 126–150 µs e 48 % acima de 150 µs.
+  - Nos passos 6b e 7, nas mesmas condições, 1 de 232 linhas passou de 125 µs.
+  - É o mesmo padrão do passo 3+4, que teve ~105 µs ou 153–173 µs conforme a linha, atribuído à falta no cache da flash depois das impressões, com a posição do código mudando a cada build. Foi esse padrão que deu origem ao critério de ~200 µs.
+  - Neste passo, a impressão do `a` foi para o `console.cpp`. Isso muda a posição do código do laço e da impressão.
+  - **A margem ficou pequena** (pico de 197 µs). Na semana 3, com a ISR do INT em IRAM (pendência 5) e a serial fora do laço (pendência 2), o atraso deve ser medido de novo. Se continuar perto de 200 µs, investigar.
+- **Passo 8 fechado. Refatoração concluída:** os passos 0–8 estão feitos, e o `main.cpp` provisório tem 341 linhas (eram ~1 450 em 15/10 e 1 010 no início do passo 6a).
+
 ## Pendências (fora da refatoração)
 
 1. **Teclas ignoradas na calibração do magnetômetro.** Na coleta do `m` (até 180 s), o firmware ignora as teclas sem dizer nada, e o terminal parece travado. A revisão que vem depois, que só aceita `s`, `x` e `d`, também. Proposta: ao ignorar uma tecla, imprimir uma linha curta, por exemplo `[mag] calibração em andamento: x cancela`, no máximo uma vez por segundo. Fica para depois do passo 4, num commit à parte, porque muda o comportamento. Vista em 20/10, log `261020-133830`.
@@ -390,4 +417,8 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
    - o reinício da fusão: ele não tem mensagem própria e não conta em `reinícios` do `a`, e o filtro volta em ~100 ms (20 amostras). Com o `a` ligado durante o `s`, a linha `[att] aguardando referência` pode aparecer ou não. O critério é a atitude parada no `a` e no `c`, logo depois, já coerente com a calibração nova, sem convergir devagar a partir do valor antigo;
    - a persistência depois do reboot: o `c` com o offset e a escala novos e a linha `NVS: … montagem sem calibração`;
    - em seguida, refazer o `z`.
+   Registrada em 20/10/2026.
+7. **Console chamando os serviços direto.** Hoje o `Console` roda no `loop()`, junto com a aquisição, e chama os serviços e o `FusionCore` direto: calibrações, zero, fluxos e o reinício da fusão. Ele também lê o estado deles para o `c`, o `r` e o `a`. Na semana 3, com o console na task da serial e a aquisição na `sensor_task`, isso vira acesso entre tasks sem proteção. Na migração:
+   - os comandos passam por uma fila para a `sensor_task`, que é a camada única de comandos (item 8 da revisão de 15/10, que também recebe os `CMD_*` do B);
+   - o `c`, o `r` e o `a` leem uma cópia do estado publicada pela `sensor_task`, com fila ou mutex, em vez das referências do `ConsoleDeps`.
    Registrada em 20/10/2026.

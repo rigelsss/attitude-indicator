@@ -43,6 +43,7 @@ Itens de uma revisão externa (numeração dela), distribuídos pela etapa em qu
   - correção conferida na bancada no mesmo dia (boot normal e SDA solto, sem mudança de comportamento).
   - **Depois disso:** decidir sobre a refatoração do `main.cpp` provisório (seção "Decisões para a semana 3"), que é pré-requisito das tasks da semana 3.
 - **20/10/2026, refatoração retomada:** plano aprovado e andamento em [refatoracao.md](refatoracao.md) (passos 0–8, um módulo por vez). As tasks da semana 3 começam depois dela.
+- **20/10/2026, refatoração concluída:** os passos 0–8 foram validados na bancada, e o `main.cpp` provisório tem 341 linhas: inicialização, ISR e laço de aquisição. A lógica está em `lib/`, e o console em `src/console.cpp`. Para a migração, as pendências 2, 5 e 7 do [refatoracao.md](refatoracao.md) tratam da serial fora do laço, da ISR do INT em IRAM e do console acessando os serviços entre tasks.
 - **Semana 3 (tasks e rádio):** 7 (perdas pelo `seq`), 8 (camada única de comandos), 11 (callback de envio do ESP-NOW) e a primeira parte do 3 (filtrar o remetente pelo `PEER_MAC` no callback de recepção do A).
 - **Semana 4 (TFT):** 1 (sprite e heap) e 13 (GPIO 5 como CS do TFT).
 - **Semana 5 (web e comandos):** a segunda parte do 3 (validar o `arg` do `CMD_SET_RATE_HZ`), 15 (senha do AP) e a lógica dos estados do ACK (aceito, concluído, recusado).

@@ -15,7 +15,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - `docs/fusao.md`: filtro complementar (roll/pitch), calibração de montagem (`z`), limites e roteiro de validação.
 - `docs/barometro.md`: BME280 (perfil "indoor navigation"), altitude relativa, zero (`0`) e roteiro de validação.
 - `docs/magnetometro.md`: HMC5883L, mapeamento de eixos, calibração (`m`), proa compensada e filtro da proa, roteiro de validação.
-- `docs/refatoracao.md`: refatoração do `main.cpp` provisório (pré-requisito das tasks): módulos, ordem de extração, linha de base e andamento.
+- `docs/refatoracao.md`: refatoração do `main.cpp` provisório (concluída em 20/10/2026): módulos, linha de base e critérios de tempo da bancada, resultados por passo e pendências para a migração às tasks.
 - Antes de concluir uma etapa, atualize o doc afetado (procedimento de uso, resultados, decisões).
 
 ## Regras de código
@@ -44,6 +44,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - Página web no B: `pio run -e ground -t uploadfs`
 - Testes de lógica: `pio test -e native`
 - Conferência da calibração do magnetômetro (log com a tecla `d`): `python tools/mag_fit.py` (requer numpy)
+- Comparar o texto das mensagens de um log novo com o de logs de base (números trocados por `#`; não confere a ordem): `python tools/log_templates.py logs/base.log [mais bases] [--novo logs/novo.log]`
 
 ## Placas
 - Placa A (avião): MAC 1C:69:20:A4:E9:44, ESP32-D0WD-V3 rev 3.1, COM7

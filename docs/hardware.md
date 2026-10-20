@@ -960,6 +960,7 @@ A/B do passo 7 da refatoração (logs `261020-195007`, `195242` e `200224`), com
   - Nos dois, com a caixa parada: 0 ambíguos, descartes e reinícios. A espera da leitura não entra no dt, porque o instante do pulso vem da ISR. O dt tem a variação de ±50 µs de alguns builds (pendência 5), e os dois builds a mostraram nestas rodadas.
   - Com o `a` sozinho, o atraso fica em 108–121 µs.
 - **O mesmo código do 6b, compilado em outra pasta (um worktree), teve dt com ±50 µs** em ~1,5 % das linhas. Compilado na pasta principal, não teve. Isso reforça a dependência da posição do código ("Carimbo do pulso do INT dependente do build", acima).
+- **Passo 8 (log `261020-202749`), com o `a` sozinho:** atraso de 102–197 µs, com 48 % das linhas acima de 150 µs. Nos passos 6b e 7, 1 de 232 linhas passou de 125 µs. É o padrão por build já visto no passo 3+4 (cache da flash), dentro do critério de ~200 µs, mas com pouca margem.
 - Volta a ser medido na semana 3, com a serial numa task própria ([refatoracao.md](refatoracao.md), pendência 2).
 
 ### `z` refeito na montagem final (20/10/2026)

@@ -15,6 +15,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - `docs/fusao.md`: filtro complementar (roll/pitch), calibração de montagem (`z`), limites e roteiro de validação.
 - `docs/barometro.md`: BME280 (perfil "indoor navigation"), altitude relativa, zero (`0`) e roteiro de validação.
 - `docs/magnetometro.md`: HMC5883L, mapeamento de eixos, calibração (`m`), proa compensada e filtro da proa, roteiro de validação.
+- `docs/refatoracao.md`: refatoração do `main.cpp` provisório (pré-requisito das tasks): módulos, ordem de extração, linha de base e andamento.
 - Antes de concluir uma etapa, atualize o doc afetado (procedimento de uso, resultados, decisões).
 
 ## Regras de código

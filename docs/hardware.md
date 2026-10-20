@@ -908,6 +908,19 @@ O BMP280 substituiu o BME280 danificado em 14/10. Ele foi ligado na mesma posiç
 
 **Blocos ilegíveis:** três linhas dos logs começam com 64 caracteres ilegíveis. Isso é um bloco USB corrompido no PC (64 bytes é o tamanho do pacote), e não um erro do firmware.
 
+### Linha de base antes da refatoração (20/10/2026)
+
+Log `261020-130702`, firmware `af389ba` (carimbo `2026-10-20 13:06:22`). A caixa ficou parada na mesa durante todo o roteiro base do [refatoracao.md](refatoracao.md). As métricas completas estão lá.
+
+- **Primeiro boot do log:** o giroscópio recusou duas janelas por movimento (desvio de 0,49 e 2,06 °/s), por causa do manuseio antes do reset pelo EN. No segundo boot, calibrou na primeira tentativa.
+- **Com tudo ligado:**
+  - 199–200 Hz, sem nenhuma perda, descarte, falha ou fila cheia;
+  - dt de 5,01 ms;
+  - atraso máximo de 110–125 µs;
+  - filtro com custo médio de 60–73 µs e máximo de 85–193 µs.
+- **Magnetômetro:** 25 leituras por segundo e proa estável em 102,2° (±0,1°).
+- **Barômetro:** altitude entre −0,31 e −0,05 m em ~6 s.
+
 ## Orientação de montagem do MPU6050
 
 ### Montagem final (14/10/2026, em uso)

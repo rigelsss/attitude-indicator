@@ -50,8 +50,7 @@ Cada passo termina com: compilar `aircraft`, rodar `pio test -e native`, fazer a
 | 0 | Linha de base: log de referência, RAM/flash e métricas do `a` | roteiro base (abaixo) | feito em 20/10 |
 | 1 | `lib/logger` + `lib/sched` | roteiro base | feito em 20/10 (build: RAM 24 136 B, flash 363 485 B; `test_sched` com 7 casos; bancada abaixo) |
 | 2 | Barômetro (`BaroZero` + `baro_service`) | zero do boot, `0`, `b`, SDA do BMP280 solto | feito em 20/10 (build: RAM 24 248 B, flash 363 941 B; 10 casos novos no `test_baro`; bancada abaixo) |
-| 3 | Magnetômetro sem calibração (agenda, proa, distúrbio) | `p`, ímã perto do módulo | — |
-| 4 | Calibração `m` (`MagCalibrator`) | `m` completo, `d`, `x` e `s` | — |
+| 3+4 | Magnetômetro: `MagCalibrator` + `mag_service` (agenda, proa, distúrbio, calibração `m`). Juntos em 20/10: a leitura entrega os pontos à coleta, e separar exigiria um gancho provisório | roteiro base; `p` com ímã perto do módulo; `m` cancelado com `x`; `m` completo com `d` e `s` | feito em 20/10 (build: RAM 24 384 B, flash 364 769 B; 7 casos novos no `test_mag`; bancada abaixo; `s` de uma calibração aceita não conferido) |
 | 5 | Fusão (`imuToBody` + `FusionCore`) | `a`, inclinações conhecidas, métricas iguais às da base | — |
 | 6a | Calibração do giroscópio + coordenador | `g`, calibração do boot, `m` durante a calibração do boot | — |
 | 6b | Seis posições + montagem | `z` completo; `6`: entrada, uma posição, cancelamento | — |
@@ -159,7 +158,39 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
 - **Firmware de voo regravado (carimbo `2026-10-20 14:08:56`, log `141053`):** dois boots com `BMP280 configurado` e `zero aceito` (0,32 Pa). O `c` deu `ALT ok` e `valid = 0x000D`.
 - **Conclusão:** a volta do chip não foi vista ao vivo, mas o caminho que falta (nova tentativa a cada 5 s → configuração → zero) usa a mesma rotina do boot, conferida aqui. O ritmo das tentativas foi conferido nos logs anteriores. **Passo 2 fechado.**
 
+**Passo 3+4, primeira sessão (log `261020-143421`, carimbo `2026-10-20 14:33:39`).** Passos 1–7 do roteiro: base, distúrbio e `m` cancelado.
+
+- **Roteiro base:** as mensagens são as mesmas da linha de base.
+  - `r`: 199–200 Hz, com perdidas, descartadas, falhas e fila cheia em 0, e o magnetômetro com 24–26 leituras/s.
+  - `a`, 87 linhas:
+    - custo do filtro médio de 29–35 µs e máximo de 53–137 µs, mais baixo que na linha de base;
+    - ambíguos, descartados e reinícios em 0;
+    - **atraso pulso → leitura bimodal:** ~105 µs em 28 linhas e 153–173 µs em 59, alternando de uma linha para a outra. Na linha de base, ficava em 110–125 µs.
+  - **Sobre o atraso:** o caminho da leitura do MPU não mudou neste passo. O padrão de alternância é o mesmo que o custo do filtro mostrou na linha de base. A hipótese é falta no cache da flash depois das impressões, com a posição do código mudando a cada build. O efeito é desprezível: o limite de segurança é de 4 000 µs (`FUSION_MAX_INT_LAG_US`), e não houve ambíguos. **Critério daqui em diante:** atraso máximo abaixo de ~200 µs, com 0 ambíguos.
+  - `b` e `p` a 10 Hz. Zero do boot com 0,32 Pa, e `0` com 0,56 Pa.
+- **Distúrbio com a chave de fenda:** `DISTÚRBIO` com o |m| em 21,7 µT (abaixo do raio) e depois em 31,9 µT (acima), e `distúrbio terminou` ao afastar. Enquanto durou, a proa filtrada ficou parada em 114,7°, com a `mag` indo até 46°, e o estado no fluxo era `DISTURBIO`.
+  - Depois do "terminou", o campo ainda estava distorcido, mas dentro dos 15 %, e a proa filtrada foi puxada (de 115° para ~88°). Isso já tinha sido visto em 15/10 (magnetometro.md: ajuste do `MAG_DISTURB_PCT` ou do τ a decidir) e não é regressão.
+- **`m` cancelado:** linhas de progresso a cada 2 s (51, 101… 351 pontos) e `x` com `calibração cancelada; calibração anterior mantida`. O `c` seguinte mostrou a mesma calibração (offset +8,1 +6,2 +10,6 µT, raio de 25,7 µT).
+  - Com a caixa parada, a cobertura do progresso chegou a 16/24 em 14 s. O centro provisório (mín./máx.) coincide com a nuvem de pontos, e o ruído espalha as direções pelos setores. Esse comportamento já existia. No fim da coleta, a cobertura é recontada com o centro ajustado, e a recusa vem daí. O guia `faltam:` só fica confiável depois que a caixa já girou.
+
+**Passo 3+4, segunda sessão (log `261020-144205`, mesmo carimbo).** Calibração curta, com a caixa parada na mesa o tempo todo.
+
+- **Coleta:** progresso a cada 2 s. **A cobertura chegou a 24/24 aos 46 s só com ruído**, e a coleta terminou pela cobertura (1 151 pontos), não pelo tempo.
+- **Ajuste:** recusado por `raio fora da faixa` (0,19 µT, resíduo de 34,7 %, 22/24 setores recontados com o centro ajustado). A mensagem trouxe os limites.
+- **Revisão:**
+  - `s` deu `calibração recusada não pode ser gravada`;
+  - `d` imprimiu os 1 151 pontos entre `# mag_cal inicio` e `# mag_cal fim`, com a linha `# firmware`;
+  - `x` deu `resultado descartado; calibração anterior mantida`.
+- **Depois:**
+  - `p` com 53 linhas no estado `ok`;
+  - `c` com a mesma calibração (offset +8,1 +6,2 +10,6 µT), `ATT ok`, `HDG ok` e `valid = 0x000D`.
+- **`fila cheia 432 desde o boot`:** veio do `d`, que parou o laço por ~3 s (1 151 linhas a 115200). É o esperado: o D5 do magnetometro.md já registra que a impressão bloqueia o laço, e a fusão é reiniciada depois.
+- **Não conferido na bancada:** o `s` de uma calibração aceita (gravação, uso imediato da calibração nova e reinício da proa). São ~10 linhas movidas sem mudança, e a gravação (`magStoreSave`) não mudou. Fica para a próxima calibração real, no modelo final (pendência 4). A carga no boot (`loadCalibration`) está conferida em todos os boots.
+- **Passo 3+4 fechado.**
+
 ## Pendências (fora da refatoração)
 
 1. **Teclas ignoradas na calibração do magnetômetro.** Na coleta do `m` (até 180 s), o firmware ignora as teclas sem dizer nada, e o terminal parece travado. A revisão que vem depois, que só aceita `s`, `x` e `d`, também. Proposta: ao ignorar uma tecla, imprimir uma linha curta, por exemplo `[mag] calibração em andamento: x cancela`, no máximo uma vez por segundo. Fica para depois do passo 4, num commit à parte, porque muda o comportamento. Vista em 20/10, log `261020-133830`.
 2. **Log de erro do núcleo parando o laço.** Com um sensor falhando e uma impressão longa em curso (o resumo `r`, o `c`), cada `[E][Wire.cpp]` pode parar o laço por ~50 ms. Isso descarta 10 amostras e reinicia a fusão a cada tentativa, quando a fase coincide. Já estava previsto para a semana 3 ([plano.md](plano.md): serial numa task de baixa prioridade e revisão do nível de log do núcleo). Agora há a medida do efeito na fusão. Decidir na migração: baixar o `CORE_DEBUG_LEVEL` ou redirecionar o log do núcleo para a fila do `lib/logger`. Vista em 20/10, log `261020-134704`.
+3. **Cobertura da calibração completada pelo ruído.** Com a caixa parada, o centro provisório (mín./máx.) fica no meio da nuvem de pontos, e o ruído espalha as direções pelos setores. Em 20/10, a coleta chegou a 24/24 em 46 s sem girar a caixa. O resultado é recusado no fim, mas o guia `faltam:` e o fim antecipado confundem. Proposta: só contar a cobertura quando a amplitude (máx. − mín.) passar de uma fração do raio esperado em pelo menos dois eixos, por exemplo `MAG_CAL_MIN_SPAN_UT` no `config.h`. Muda o comportamento, então fica fora da refatoração. Vista no log `261020-144205`.
+4. **`s` de uma calibração aceita do magnetômetro, sem conferência na bancada.** A gravação na NVS, o uso imediato da calibração nova, o reinício da proa e a **persistência depois de um reinício** (boot com `NVS: … magnetômetro calibrado` e o `c` com o offset e a W novos) ficaram sem conferir na refatoração. Os testes novos cobrem só o núcleo puro (`MagCalibrator`), não essa integração com a NVS e o filtro da proa. Conferir na próxima calibração real (modelo final), com os passos 8–12 do roteiro completo do passo 3+4. Registrada em 20/10/2026.

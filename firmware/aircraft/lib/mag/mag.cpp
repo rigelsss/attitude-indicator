@@ -360,6 +360,47 @@ MagFitStatus magFitEllipsoid(const Vec3 *pts, size_t n, const MagFitLimits &lim,
     return out.status = MagFitStatus::Ok;
 }
 
+// ---------- Calibração (comando m) ----------
+
+void MagCalibrator::start(Vec3 *buf, uint32_t nowMs) {
+    pts_ = buf;
+    n_ = 0;
+    mm_.reset();
+    startMs_ = nowMs;
+    lastMs_ = nowMs;
+    nextProgMs_ = nowMs + p_.progressMs;
+    covered_ = 0;
+    for (int f = 0; f < MAG_FACES; f++) miss_[f] = 0;
+    fit_ = MagFitResult();
+    state_ = State::Collect;
+}
+
+MagCalibrator::Event MagCalibrator::feed(const Vec3 &raw, uint32_t tMs) {
+    if (state_ != State::Collect) return Event::None;
+    if (n_ < p_.maxPoints) {
+        pts_[n_++] = raw;
+        mm_.add(raw);
+    }
+    const bool timeUp = tMs - startMs_ >= p_.maxMs || n_ >= p_.maxPoints;
+    if ((int32_t)(tMs - nextProgMs_) < 0 && !timeUp) return Event::None;
+    nextProgMs_ += p_.progressMs;
+    lastMs_ = tMs;
+    uint16_t counts[MAG_SECTORS];
+    magCountSectors(pts_, n_, mm_.center(), counts);
+    covered_ = magSectorsCovered(counts, p_.fit.minPtsSector);
+    magMissingByFace(counts, p_.fit.minPtsSector, miss_);
+    if (covered_ < MAG_SECTORS && !timeUp) return Event::Progress;
+    magFitEllipsoid(pts_, n_, p_.fit, fit_);
+    state_ = State::Review;
+    return Event::Finished;
+}
+
+void MagCalibrator::stop() {
+    state_ = State::Off;
+    pts_ = nullptr;
+    n_ = 0;
+}
+
 // ---------- Proa ----------
 
 float wrap360(float deg) {

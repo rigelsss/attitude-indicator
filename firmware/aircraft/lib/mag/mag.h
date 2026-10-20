@@ -127,6 +127,57 @@ struct MagFitResult {
 // O ajuste alinhado aos eixos (6 parâmetros) deixou resíduo de 4,6 % na bancada, e este, 0,6 %.
 MagFitStatus magFitEllipsoid(const Vec3 *pts, size_t n, const MagFitLimits &lim, MagFitResult &out);
 
+struct MagCalParams {
+    uint32_t     maxMs;        // duração máxima da coleta
+    uint32_t     progressMs;   // intervalo das linhas de progresso
+    size_t       maxPoints;    // capacidade do buffer de pontos
+    MagFitLimits fit;          // limites do ajuste; minPtsSector também vale para a cobertura do progresso
+};
+
+// Máquina de estado da calibração do magnetômetro (comando m): coleta dos pontos girando a caixa, com o
+// progresso da cobertura a cada progressMs, e ajuste do elipsoide no fim. A coleta termina com os 24
+// setores cobertos (pelo centro provisório do mín./máx.), com o tempo esgotado ou com o buffer cheio, e
+// passa para a revisão (gravar ou descartar, decidido por quem usa). O buffer é do chamador, que o
+// libera depois de stop(). Instantes em millis(), dados pelo chamador (virada dos 32 bits tratada).
+class MagCalibrator {
+public:
+    enum class State : uint8_t { Off, Collect, Review };
+    enum class Event : uint8_t {
+        None,
+        Progress,   // nova linha de progresso: elapsedMs(), count(), covered(), missing()
+        Finished,   // linha de progresso final e ajuste feito (fit()); estado Review
+    };
+
+    explicit MagCalibrator(const MagCalParams &p) : p_(p) {}
+    void start(Vec3 *buf, uint32_t nowMs);
+    // Um ponto da coleta (µT, eixos do modelo, sem calibração). Fora da coleta, ignorado.
+    Event feed(const Vec3 &raw, uint32_t tMs);
+    void stop();   // volta a Off
+
+    State state() const { return state_; }
+    size_t count() const { return n_; }
+    const Vec3 *points() const { return pts_; }
+    uint32_t startMs() const { return startMs_; }
+    // Da última linha de progresso
+    uint32_t elapsedMs() const { return lastMs_ - startMs_; }
+    int covered() const { return covered_; }
+    uint8_t missing(int face) const { return miss_[face]; }
+    const MagFitResult &fit() const { return fit_; }
+
+private:
+    MagCalParams p_;
+    State    state_ = State::Off;
+    Vec3    *pts_ = nullptr;
+    size_t   n_ = 0;
+    uint32_t startMs_ = 0;
+    uint32_t nextProgMs_ = 0;
+    uint32_t lastMs_ = 0;
+    MagMinMax mm_;            // centro provisório para a cobertura durante a coleta
+    int      covered_ = 0;
+    uint8_t  miss_[MAG_FACES] = {0};
+    MagFitResult fit_;
+};
+
 // ---------- Proa ----------
 
 float wrap360(float deg);   // [0, 360)

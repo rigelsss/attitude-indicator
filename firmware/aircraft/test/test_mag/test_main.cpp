@@ -511,6 +511,142 @@ static void test_heading_gap_resets() {
     TEST_ASSERT_TRUE(isfinite(f.headingDeg()));
 }
 
+// ---------- Calibração (MagCalibrator) ----------
+
+static const MagCalParams CP = {180000, 2000, 4500, LIM};
+static Vec3 g_calBuf[4500];
+
+struct CalOut {
+    MagCalibrator::Event ev;   // primeiro evento diferente de None
+    uint32_t tMs;
+    int samples;               // pontos entregues até o evento
+};
+
+// Entrega pontos a 25 Hz (40 ms) a partir de t0 até o primeiro evento (ou maxSamples). pt(i) dá o i-ésimo ponto.
+template <typename F>
+static CalOut feedUntilEvent(MagCalibrator &c, uint32_t t0, int maxSamples, F pt, int i0 = 0) {
+    for (int i = 0; i < maxSamples; i++) {
+        const uint32_t t = t0 + 40u * (uint32_t)i;
+        const MagCalibrator::Event e = c.feed(pt(i0 + i), t);
+        if (e != MagCalibrator::Event::None) return {e, t, i + 1};
+    }
+    return {MagCalibrator::Event::None, 0, maxSamples};
+}
+
+static const Vec3 OFF = {8.0f, 6.0f, 10.0f};
+static Vec3 fixedPoint(int) { return {OFF.x + 26.0f, OFF.y, OFF.z}; }
+static Vec3 spherePoint(int i) {
+    const Vec3 u = fib(i % 600, 600);
+    return {OFF.x + 26.0f * u.x, OFF.y + 26.0f * u.y, OFF.z + 26.0f * u.z};
+}
+
+static void test_calib_off_ignores_points() {
+    MagCalibrator c(CP);
+    TEST_ASSERT_TRUE(c.feed({1, 2, 3}, 0) == MagCalibrator::Event::None);
+    TEST_ASSERT_TRUE(c.state() == MagCalibrator::State::Off);
+    TEST_ASSERT_EQUAL_UINT32(0, c.count());
+}
+
+// Uma linha de progresso a cada 2 s, com a contagem de pontos e o que falta por face
+static void test_calib_progress_every_interval() {
+    MagCalibrator c(CP);
+    c.start(g_calBuf, 1000);
+    const CalOut o = feedUntilEvent(c, 1000, 500, fixedPoint);
+    TEST_ASSERT_TRUE(o.ev == MagCalibrator::Event::Progress);
+    TEST_ASSERT_EQUAL_UINT32(3000, o.tMs);
+    TEST_ASSERT_EQUAL_UINT32(51, c.count());
+    TEST_ASSERT_EQUAL_UINT32(2000, c.elapsedMs());
+    TEST_ASSERT_EQUAL(0, c.covered());   // um ponto só: direção nula em relação ao centro
+    for (int f = 0; f < MAG_FACES; f++) TEST_ASSERT_EQUAL_UINT8(4, c.missing(f));
+    TEST_ASSERT_TRUE(c.state() == MagCalibrator::State::Collect);
+    const CalOut o2 = feedUntilEvent(c, 3040, 500, fixedPoint);
+    TEST_ASSERT_TRUE(o2.ev == MagCalibrator::Event::Progress);
+    TEST_ASSERT_EQUAL_UINT32(5000, o2.tMs);
+}
+
+// Com a esfera inteira coberta, a coleta termina sozinha e o ajuste recupera o offset e o raio
+static void test_calib_finishes_by_coverage() {
+    MagCalibrator c(CP);
+    c.start(g_calBuf, 0);
+    CalOut o = {MagCalibrator::Event::None, 0, 0};
+    int fed = 0;
+    while (fed < 2000) {
+        o = feedUntilEvent(c, 40u * (uint32_t)fed, 2000 - fed, spherePoint, fed);
+        fed += o.samples;
+        if (o.ev != MagCalibrator::Event::Progress) break;
+    }
+    TEST_ASSERT_TRUE(o.ev == MagCalibrator::Event::Finished);
+    TEST_ASSERT_TRUE(c.state() == MagCalibrator::State::Review);
+    TEST_ASSERT_EQUAL(MAG_SECTORS, c.covered());
+    // Fim numa linha de progresso (51 pontos aos 2 s, mais 50 a cada 2 s), antes da volta completa (600)
+    TEST_ASSERT_EQUAL_UINT32(1, c.count() % 50);
+    TEST_ASSERT_TRUE(c.count() < 600);
+    TEST_ASSERT_EQUAL(MagFitStatus::Ok, c.fit().status);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, OFF.x, c.fit().cal.offset.x);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, OFF.y, c.fit().cal.offset.y);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, OFF.z, c.fit().cal.offset.z);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, 26.0f, c.fit().cal.radiusUt);
+    TEST_ASSERT_TRUE(c.feed(spherePoint(0), o.tMs + 40) == MagCalibrator::Event::None);   // revisão: ignorado
+}
+
+// Sem cobertura, a coleta termina pelo tempo, e o ajuste é recusado
+static void test_calib_finishes_by_time() {
+    const MagCalParams p = {10000, 2000, 4500, LIM};
+    MagCalibrator c(p);
+    c.start(g_calBuf, 0);
+    int progress = 0;
+    CalOut o = {MagCalibrator::Event::None, 0, 0};
+    int fed = 0;
+    for (;;) {
+        o = feedUntilEvent(c, 40u * (uint32_t)fed, 1000, fixedPoint);
+        fed += o.samples;
+        if (o.ev != MagCalibrator::Event::Progress) break;
+        progress++;
+    }
+    TEST_ASSERT_EQUAL(4, progress);   // 2, 4, 6 e 8 s
+    TEST_ASSERT_TRUE(o.ev == MagCalibrator::Event::Finished);
+    TEST_ASSERT_EQUAL_UINT32(10000, o.tMs);
+    TEST_ASSERT_TRUE(c.state() == MagCalibrator::State::Review);
+    TEST_ASSERT_TRUE(c.fit().status != MagFitStatus::Ok);
+}
+
+// Buffer cheio encerra a coleta antes da próxima linha de progresso
+static void test_calib_finishes_when_buffer_full() {
+    const MagCalParams p = {180000, 2000, 30, LIM};
+    MagCalibrator c(p);
+    c.start(g_calBuf, 0);
+    const CalOut o = feedUntilEvent(c, 0, 100, spherePoint);
+    TEST_ASSERT_TRUE(o.ev == MagCalibrator::Event::Finished);
+    TEST_ASSERT_EQUAL(30, o.samples);
+    TEST_ASSERT_EQUAL_UINT32(30, c.count());
+}
+
+static void test_calib_stop() {
+    MagCalibrator c(CP);
+    c.start(g_calBuf, 0);
+    feedUntilEvent(c, 0, 10, spherePoint);
+    c.stop();
+    TEST_ASSERT_TRUE(c.state() == MagCalibrator::State::Off);
+    TEST_ASSERT_EQUAL_UINT32(0, c.count());
+    TEST_ASSERT_TRUE(c.feed(spherePoint(0), 400) == MagCalibrator::Event::None);
+    // Uma nova coleta começa do zero
+    c.start(g_calBuf, 1000);
+    TEST_ASSERT_TRUE(c.feed(spherePoint(0), 1000) == MagCalibrator::Event::None);
+    TEST_ASSERT_EQUAL_UINT32(1, c.count());
+}
+
+// Virada do millis() (~49,7 dias) durante a coleta
+static void test_calib_millis_wraparound() {
+    MagCalibrator c(CP);
+    const uint32_t t0 = 0xFFFFF830u;   // 2000 ms antes da virada: a primeira linha de progresso cai em 0
+    c.start(g_calBuf, t0);
+    const CalOut o = feedUntilEvent(c, t0, 500, fixedPoint);
+    TEST_ASSERT_TRUE(o.ev == MagCalibrator::Event::Progress);
+    TEST_ASSERT_EQUAL_UINT32(0, o.tMs);
+    TEST_ASSERT_EQUAL_UINT32(2000, c.elapsedMs());
+    TEST_ASSERT_EQUAL_UINT32(51, c.count());
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_cra_crb_codes);
@@ -541,5 +677,12 @@ int main(int, char **) {
     RUN_TEST(test_heading_suspensions_keep_gyro);
     RUN_TEST(test_heading_suspended_with_degraded_attitude);
     RUN_TEST(test_heading_gap_resets);
+    RUN_TEST(test_calib_off_ignores_points);
+    RUN_TEST(test_calib_progress_every_interval);
+    RUN_TEST(test_calib_finishes_by_coverage);
+    RUN_TEST(test_calib_finishes_by_time);
+    RUN_TEST(test_calib_finishes_when_buffer_full);
+    RUN_TEST(test_calib_stop);
+    RUN_TEST(test_calib_millis_wraparound);
     return UNITY_END();
 }

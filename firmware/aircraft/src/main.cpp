@@ -7,7 +7,8 @@
 //   serial: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem |
 //           m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa |
 //           0 = zerar altitude | r = resumo por segundo.
-// A lógica está em lib/imu_cal, lib/attitude, lib/baro, lib/mag e lib/sched (puras, testadas com pio test -e native).
+// A lógica está em lib/imu_cal, lib/attitude, lib/fusion, lib/baro, lib/mag e lib/sched (puras, testadas com
+// pio test -e native).
 // O barômetro e o magnetômetro são atendidos por lib/baro_service e lib/mag_service.
 // A saída de texto passa por lib/logger. Refatoração em andamento: docs/refatoracao.md.
 // Na semana 3 este arquivo passa a só inicializar o hardware e criar as tasks (src/tasks/):
@@ -26,6 +27,7 @@
 #include "imu_cal.h"
 #include "imu_store.h"
 #include "attitude.h"
+#include "fusion.h"
 #include "level_store.h"
 #include "baro_service.h"
 #include "mag_service.h"
@@ -112,30 +114,26 @@ static Vec3 g_levelF[2];
 static float g_levelTempSum = 0;
 static MountResult g_levelResult;
 
-// ---------- Fusão (lib/attitude, docs/fusao.md) ----------
+// ---------- Fusão (lib/fusion, lib/attitude, docs/fusao.md) ----------
 
 static const FusionParams FUSION_PARAMS = {COMP_FILTER_TAU_S, FUSION_ACC_FULL_DEV_G, FUSION_ACC_ZERO_DEV_G,
                                            FUSION_ROLL_MIN_G, FUSION_MAX_DT_MS / 1000.0f, FUSION_INIT_SAMPLES,
                                            FUSION_INIT_MAX_RATE_DPS};
-static AttitudeFilter g_att(FUSION_PARAMS);
-static AttitudeFilter g_gyroOnly(FUSION_PARAMS, false);   // diagnóstico: deriva só do giroscópio
+static const HeadingParams HEADING_PARAMS = {MAG_HEADING_TAU_S, MAG_MAX_PITCH_DEG, MAG_DISTURB_PCT,
+                                             MAG_MAX_DT_MS / 1000.0f};
+// Atitude, diagnóstico só de giroscópio e proa (predição aqui, correção pelo serviço do magnetômetro)
+static FusionCore g_fusion(FUSION_PARAMS, HEADING_PARAMS);
+static const AttitudeFilter &g_att = g_fusion.att();
 static LevelData g_level;                // rotação de montagem em uso (identidade sem calibração)
-static bool g_fusPrevValid = false;      // há um pulso anterior aceito pela fusão (referência do dt)
-static uint32_t g_fusPrevIntUs = 0;
 
-// Fluxo de atitude (comando a): estatística acumulada entre duas linhas
+// Fluxo de atitude (comando a): estatística da aquisição entre duas linhas; a do filtro fica em
+// g_fusion.stats()
 struct AttStream {
     bool     on = false;
     Periodic print;            // próxima linha
-    uint32_t n = 0;            // intervalos integrados
-    float    dtMin = 1e9f, dtMax = 0;
-    double   dtSum = 0;
     uint32_t lagMaxUs = 0;     // maior atraso pulso → início da leitura
-    uint32_t costSumUs = 0;    // custo de update() (só o filtro, não o ciclo inteiro): soma e máximo
-    uint32_t costMaxUs = 0;
     uint32_t ambiguous = 0;    // quadros fora da calibração e da fusão: pulso mais novo durante a leitura (ou atraso excessivo)
     uint32_t dropped = 0;      // pulsos sem leitura (amostra sobrescrita)
-    uint32_t resets = 0;       // reinícios por intervalo acima de FUSION_MAX_DT_MS
 };
 static AttStream g_as;
 static const uint32_t ATT_PRINT_US = 1000000UL / ATT_PRINT_HZ;
@@ -153,12 +151,6 @@ static BaroService g_baroSvc(BARO_CFG);
 
 // ---------- Magnetômetro (lib/mag_service, docs/magnetometro.md) ----------
 
-// Filtro da proa: predição pela fusão a cada amostra, correção pelo serviço do magnetômetro.
-// Vai para a fusão no passo 5 da refatoração (docs/refatoracao.md).
-static const HeadingParams HEADING_PARAMS = {MAG_HEADING_TAU_S, MAG_MAX_PITCH_DEG, MAG_DISTURB_PCT,
-                                             MAG_MAX_DT_MS / 1000.0f};
-static HeadingFilter g_hdg(HEADING_PARAMS);
-
 static const MagServiceConfig MAG_CFG = {
     {&Wire, ADDR_HMC5883L, MAG_AVG_SAMPLES, MAG_OUTPUT_HZ, MAG_RANGE_MGA, MAG_MAX_FAIL_STREAK},
     {MAG_CAL_MS, MAG_CAL_PROGRESS_MS, (size_t)MAG_CAL_MS / 1000 * MAG_READ_HZ,
@@ -166,14 +158,12 @@ static const MagServiceConfig MAG_CFG = {
       MAG_CAL_MIN_SECTORS, MAG_CAL_MIN_PTS_SECTOR}},
     MAG_READ_HZ, MAG_RETRY_MS, MAG_FAIL_RETRY_MS, MAG_DISTURB_PCT, MAG_REF_FIELD_UT, MAG_PRINT_HZ,
 };
-static MagService g_magSvc(MAG_CFG, g_att, g_hdg);
+static MagService g_magSvc(MAG_CFG, g_fusion.att(), g_fusion.heading());
 
-static void fusionReset() {
-    g_att.reset();
-    g_gyroOnly.reset();
-    g_hdg.reset();   // a proa depende da atitude
-    g_fusPrevValid = false;
-}
+static void fusionReset() { g_fusion.reset(); }
+
+// Relógio do custo do filtro no fluxo a (o micros() devolve unsigned long, não uint32_t)
+static uint32_t clockUs() { return micros(); }
 
 // Após configurar o MPU, calibração e fusão descartam amostras por CAL_MPU_SETTLE_MS
 static void beginSettle() {
@@ -561,9 +551,9 @@ static void checkRecovery() {
 
 static void printAttitudeLine(const Vec3 &acc, float tempC) {
     const Angles am = accelRollPitch(acc);
+    const AttitudeFilter &go = g_fusion.gyroOnly();
     char gyroOnly[32] = "  --      --  ";
-    if (g_gyroOnly.initialized()) snprintf(gyroOnly, sizeof(gyroOnly), "%+7.2f %+7.2f", g_gyroOnly.rollDeg(),
-                                           g_gyroOnly.pitchDeg());
+    if (go.initialized()) snprintf(gyroOnly, sizeof(gyroOnly), "%+7.2f %+7.2f", go.rollDeg(), go.pitchDeg());
     if (g_att.initialized())
         logPrintf("[att] roll %+7.2f pitch %+7.2f | acc %+7.2f %+7.2f | giro %s | |a| %.3f w %.2f | %.2f °C%s\n",
                   g_att.rollDeg(), g_att.pitchDeg(), am.rollDeg, am.pitchDeg, gyroOnly, norm(acc),
@@ -572,58 +562,35 @@ static void printAttitudeLine(const Vec3 &acc, float tempC) {
         logPrintf("[att] aguardando referência | acc %+7.2f %+7.2f | |a| %.3f w %.2f | %.2f °C\n", am.rollDeg,
                   am.pitchDeg, norm(acc), g_att.lastAccWeight(), tempC);
     const AttStream &a = g_as;
+    const FusionStats &f = g_fusion.stats();
     logPrintf("      dt %.2f/%.2f/%.2f ms (%lu) | atraso máx %lu µs | filtro méd/máx %.0f/%lu µs | ambíguos %lu | "
               "descartados %lu | reinícios %lu\n",
-              a.n ? a.dtMin * 1e3 : 0.0, a.n ? a.dtSum / a.n * 1e3 : 0.0, a.dtMax * 1e3, (unsigned long)a.n,
-              (unsigned long)a.lagMaxUs, a.n ? (double)a.costSumUs / a.n : 0.0, (unsigned long)a.costMaxUs,
+              f.n ? f.dtMin * 1e3 : 0.0, f.n ? f.dtSum / f.n * 1e3 : 0.0, f.dtMax * 1e3, (unsigned long)f.n,
+              (unsigned long)a.lagMaxUs, f.n ? (double)f.costSumUs / f.n : 0.0, (unsigned long)f.costMaxUs,
               (unsigned long)a.ambiguous,
-              (unsigned long)a.dropped, (unsigned long)a.resets);
+              (unsigned long)a.dropped, (unsigned long)f.resets);
 }
 
 // Uma amostra válida, fora do descarte: calibração nos eixos do chip → eixos do modelo →
 // rotação de montagem → filtro. intUs: instante do pulso de "data ready" desta amostra, que já
 // passou pela validade temporal no loop().
 static void fusionSample(const ImuSample &s, uint32_t intUs) {
-    const Vec3 aRaw = {s.ax, s.ay, s.az};
-    const Vec3 aChip = g_cal.accelValid ? applyAccelCal(g_cal.accel, aRaw) : aRaw;
-    const Vec3 gChip = applyGyroBias({s.gx, s.gy, s.gz}, g_gyroBias);
-    const Vec3 acc = mat3Apply(g_level.r, chipToBody(aChip));
-    const Vec3 gyro = mat3Apply(g_level.r, chipToBody(gChip));
-    const float dt = g_fusPrevValid ? elapsedUs(g_fusPrevIntUs, intUs) * 1e-6f : 0.0f;
-    g_fusPrevIntUs = intUs;
-    g_fusPrevValid = true;
-
+    const BodyImu b = imuToBody({s.ax, s.ay, s.az}, {s.gx, s.gy, s.gz}, g_cal.accelValid, g_cal.accel, g_gyroBias,
+                                g_level.r);
     const ImuFlags flags = {s.accelSaturated, s.gyroSaturated};
-    const uint32_t t0 = micros();
-    const AttitudeFilter::Step st = g_att.update(acc, gyro, dt, flags);
-    const uint32_t cost = micros() - t0;
-    if (st == AttitudeFilter::Step::Reset) g_as.resets++;
-    // Diagnóstico só de giroscópio: parte da atitude do filtro e depois só integra
-    if (g_gyroOnly.initialized()) g_gyroOnly.update(acc, gyro, dt, flags);
-    else if (g_att.initialized()) g_gyroOnly.initFrom(g_att.rollDeg(), g_att.pitchDeg());
-    // Proa: predição pelo giroscópio a cada amostra; sem atitude (ou na coleta da calibração), recomeça
-    if (g_att.initialized() && !g_magSvc.calibrating()) g_hdg.predict(gyro, g_att.rollDeg(), g_att.pitchDeg(), dt);
-    else g_hdg.reset();
-
-    if (st == AttitudeFilter::Step::Updated) {
-        g_as.n++;
-        g_as.dtSum += dt;
-        g_as.dtMin = fminf(g_as.dtMin, dt);
-        g_as.dtMax = fmaxf(g_as.dtMax, dt);
-        g_as.costSumUs += cost;
-        if (cost > g_as.costMaxUs) g_as.costMaxUs = cost;
-    }
+    g_fusion.update(b.acc, b.gyro, flags, intUs, g_magSvc.calibrating());
     if (g_att.initialized()) {
         g_win.att[0].add(g_att.rollDeg());
         g_win.att[1].add(g_att.pitchDeg());
     }
 
     if (g_as.on && g_as.print.due(intUs)) {
-        printAttitudeLine(acc, s.tempC);
+        printAttitudeLine(b.acc, s.tempC);
         const bool on = g_as.on;
         g_as = AttStream();
         g_as.on = on;
         g_as.print.restart(intUs, ATT_PRINT_US);
+        g_fusion.resetStats();
     }
 }
 
@@ -639,12 +606,12 @@ static ValidityInputs validityInputs() {
     ValidityInputs in;
     in.attInitialized = g_att.initialized();
     in.attDegraded = g_att.degraded();
-    in.attAgeMs = g_fusPrevValid ? (micros() - g_fusPrevIntUs) / 1000UL : AGE_NEVER;
+    in.attAgeMs = g_fusion.havePrev() ? (micros() - g_fusion.prevIntUs()) / 1000UL : AGE_NEVER;
     in.baroOk = g_baroSvc.ok();
     in.baroZeroValid = g_baroSvc.zeroValid();
     in.altFinite = isfinite(g_baroSvc.altitudeM());
     in.baroAgeMs = ageMs(g_baroSvc.have(), g_baroSvc.last().tMs);
-    in.hdgInitialized = g_hdg.initialized();
+    in.hdgInitialized = g_fusion.heading().initialized();
     in.magCalibrated = g_magSvc.calData().valid;
     in.hdgMagSuspended = g_magSvc.correctionSuspended();
     in.magAgeMs = ageMs(g_magSvc.lastReadValid(), g_magSvc.lastReadMs());
@@ -878,7 +845,8 @@ static void handleSerial() {
             g_as = AttStream();
             g_as.on = on;
             g_as.print.start(micros());
-            g_gyroOnly.reset();   // o diagnóstico só de giroscópio recomeça da atitude atual
+            g_fusion.resetStats();
+            g_fusion.resetGyroOnly();   // o diagnóstico só de giroscópio recomeça da atitude atual
             logPrintf("[att] fluxo de atitude %s (%d Hz): filtro | só acelerômetro | só giroscópio desde o a\n",
                       on ? "ligado" : "desligado", ATT_PRINT_HZ);
             break;
@@ -940,6 +908,7 @@ void setup() {
               g_level.valid ? "calibrada" : "sem calibração",
               g_magSvc.calData().valid ? "calibrado" : "sem calibração (proa com offset zero; use m)");
 
+    g_fusion.setClock(clockUs);
     startMpu();
     g_baroSvc.begin();
     g_magSvc.begin();

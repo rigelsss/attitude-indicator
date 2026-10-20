@@ -274,3 +274,12 @@ LevelRest checkLevelWindow(const WindowStats &gyroRaw, const Vec3 &gyroBias, con
     if (fabsf(m.x) >= maxMeanDps || fabsf(m.y) >= maxMeanDps || fabsf(m.z) >= maxMeanDps) return LevelRest::Rotating;
     return LevelRest::Ok;
 }
+
+// ---------- Cadeia da amostra até a fusão ----------
+
+BodyImu imuToBody(const Vec3 &accRaw, const Vec3 &gyroRaw, bool accelCalValid, const AccelCal &accelCal,
+                  const Vec3 &gyroBias, const Mat3 &mount) {
+    const Vec3 aChip = accelCalValid ? applyAccelCal(accelCal, accRaw) : accRaw;
+    const Vec3 gChip = applyGyroBias(gyroRaw, gyroBias);
+    return {mat3Apply(mount, chipToBody(aChip)), mat3Apply(mount, chipToBody(gChip))};
+}

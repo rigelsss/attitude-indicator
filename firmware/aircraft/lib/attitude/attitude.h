@@ -155,3 +155,15 @@ enum class LevelRest : uint8_t {
 // giroscópio corrigido. Desvio baixo e médias estáveis também aceitariam uma rotação lenta constante.
 LevelRest checkLevelWindow(const WindowStats &gyroRaw, const Vec3 &gyroBias, const WindowStats &accCorrected,
                            uint32_t minSamples, const RestLimits &lim, float maxMeanDps);
+
+// ---------- Cadeia da amostra até a fusão ----------
+
+struct BodyImu {
+    Vec3 acc;    // g, eixos do modelo
+    Vec3 gyro;   // °/s, eixos do modelo
+};
+
+// Amostra crua nos eixos do chip (g e °/s) → calibração nos eixos do chip (acelerômetro, se houver,
+// e bias do giroscópio) → eixos do modelo (chipToBody) → rotação de montagem (identidade sem calibração)
+BodyImu imuToBody(const Vec3 &accRaw, const Vec3 &gyroRaw, bool accelCalValid, const AccelCal &accelCal,
+                  const Vec3 &gyroBias, const Mat3 &mount);

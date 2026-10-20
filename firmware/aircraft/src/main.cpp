@@ -7,8 +7,8 @@
 //   serial: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem |
 //           m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa |
 //           0 = zerar altitude | r = resumo por segundo.
-// A lógica está em lib/imu_cal, lib/cal_flow, lib/attitude, lib/fusion, lib/baro, lib/mag e lib/sched (puras,
-// testadas com pio test -e native).
+// A lógica está em lib/imu_cal, lib/cal_flow, lib/attitude, lib/fusion, lib/acq, lib/baro, lib/mag e lib/sched
+// (puras, testadas com pio test -e native).
 // As calibrações do MPU (giroscópio, seis posições e montagem) e a carga da NVS ficam em lib/cal_service;
 // o barômetro e o magnetômetro são atendidos por lib/baro_service e lib/mag_service.
 // A saída de texto passa por lib/logger. Refatoração em andamento: docs/refatoracao.md.
@@ -28,6 +28,7 @@
 #include "imu_cal.h"
 #include "attitude.h"
 #include "fusion.h"
+#include "acq.h"
 #include "cal_service.h"
 #include "baro_service.h"
 #include "mag_service.h"
@@ -46,28 +47,13 @@ static volatile uint32_t g_intOverflow = 0;
 static bool g_mpuReady = false;
 static uint32_t g_mpuRetryMs = 0;            // MPU ausente: próxima tentativa de configuração
 
-// ---------- Resumo por segundo (validação do driver) ----------
+// ---------- Aquisição (lib/acq): janelas de 1 s do resumo (r) e do estado (c) ----------
 
-// Acúmulo de uma janela de impressão. As janelas têm limites contínuos, medidos pelos instantes
-// dos pulsos: [startUs, startUs + WINDOW_US). Assim o tempo gasto imprimindo não distorce a taxa.
-struct Window {
-    uint32_t startUs = 0;
-    uint32_t pulses = 0;       // pulsos de INT com instante dentro da janela
-    uint32_t samples = 0;      // leituras válidas
-    uint32_t lost = 0;         // pulsos que faltaram (intervalo maior que 1,5 período)
-    uint32_t stale = 0;        // pulsos atendidos atrasados: a amostra já tinha sido sobrescrita
-    uint32_t satAcc = 0;       // amostras com algum eixo do acelerômetro no limite da faixa
-    uint32_t satGyro = 0;      // idem, giroscópio
-    double   sum[6] = {0}, sq[6] = {0};   // ax ay az gx gy gz
-    float    peakGyro = 0;     // maior |g| em qualquer eixo
-    float    tempSum = 0;
-    AngleStats att[2];         // roll, pitch com a fusão inicializada (sem o salto de ±180°)
-};
-static const uint32_t WINDOW_US = MAIN_PRINT_MS * 1000UL;
-static Window g_win;
-static Window g_lastWin;          // última janela completa: base do comando c
+static PulseTracker g_acq(MAIN_PRINT_MS * 1000UL);
 static bool g_summaryOn = false;  // resumo por segundo (comando r)
-static uint32_t g_lastIntUs = 0;
+// Após configurar o MPU, calibração e fusão descartam amostras por CAL_MPU_SETTLE_MS
+static SettleGate g_settle;
+static uint32_t g_lastRecoveries = 0;
 
 // ---------- Calibração (lib/cal_service, lib/cal_flow, docs/calibracao.md) ----------
 
@@ -88,13 +74,6 @@ static const CalServiceConfig CAL_CFG = {
 };
 static CalService g_calSvc(CAL_CFG);
 
-// Após configurar o MPU, a calibração descarta amostras até g_settleUntilUs. O estado explícito
-// evita comparar o prazo depois de vencido: a diferença em int32_t volta a ficar negativa ~36 min
-// depois, e todas as amostras passariam a ser descartadas.
-static bool g_settling = false;
-static uint32_t g_settleUntilUs = 0;
-static uint32_t g_lastRecoveries = 0;
-
 // ---------- Fusão (lib/fusion, lib/attitude, docs/fusao.md) ----------
 
 static const FusionParams FUSION_PARAMS = {COMP_FILTER_TAU_S, FUSION_ACC_FULL_DEV_G, FUSION_ACC_ZERO_DEV_G,
@@ -111,9 +90,7 @@ static const AttitudeFilter &g_att = g_fusion.att();
 struct AttStream {
     bool     on = false;
     Periodic print;            // próxima linha
-    uint32_t lagMaxUs = 0;     // maior atraso pulso → início da leitura
-    uint32_t ambiguous = 0;    // quadros fora da calibração e da fusão: pulso mais novo durante a leitura (ou atraso excessivo)
-    uint32_t dropped = 0;      // pulsos sem leitura (amostra sobrescrita)
+    AcqStats acq;
 };
 static AttStream g_as;
 static const uint32_t ATT_PRINT_US = 1000000UL / ATT_PRINT_HZ;
@@ -145,11 +122,7 @@ static void fusionReset() { g_fusion.reset(); }
 // Relógio do custo do filtro no fluxo a (o micros() devolve unsigned long, não uint32_t)
 static uint32_t clockUs() { return micros(); }
 
-// Após configurar o MPU, calibração e fusão descartam amostras por CAL_MPU_SETTLE_MS
-static void beginSettle() {
-    g_settling = true;
-    g_settleUntilUs = micros() + CAL_MPU_SETTLE_MS * 1000UL;
-}
+static void beginSettle() { g_settle.begin(micros(), CAL_MPU_SETTLE_MS * 1000UL); }
 
 static void IRAM_ATTR onMpuInt() {
     uint32_t t = micros();
@@ -177,56 +150,33 @@ static void startMpu() {
     pinMode(PIN_MPU_INT, INPUT_PULLDOWN);
     attachInterrupt(digitalPinToInterrupt(PIN_MPU_INT), onMpuInt, RISING);
     g_mpuReady = true;
-    g_lastIntUs = 0;
     // O giroscópio tem um transitório logo após a configuração: calibração e fusão ignoram esse trecho
     beginSettle();
     fusionReset();
     g_lastRecoveries = g_mpu.recoveries();
-    g_win = Window();
-    g_win.startUs = micros();
+    g_acq.begin(micros());
 }
 
 // ---------- Resumo por segundo ----------
 
-static void accumulate(const ImuSample &s) {
-    const float v[6] = {s.ax, s.ay, s.az, s.gx, s.gy, s.gz};
-    for (int i = 0; i < 6; i++) {
-        g_win.sum[i] += v[i];
-        g_win.sq[i] += (double)v[i] * v[i];
-    }
-    for (int i = 3; i < 6; i++) g_win.peakGyro = fmaxf(g_win.peakGyro, fabsf(v[i]));
-    g_win.tempSum += s.tempC;
-    if (s.accelSaturated) g_win.satAcc++;
-    if (s.gyroSaturated) g_win.satGyro++;
-    g_win.samples++;
-}
-
-static void printWindow() {
-    const uint32_t n = g_win.samples;
-    const float rate = g_win.pulses * 1e6f / WINDOW_US;
-    if (n == 0) {
+static void printWindow(const SampleWindow &w) {
+    const WindowSummary s = summarize(w, g_acq.windowUs());
+    if (w.samples == 0) {
         logPrintf("[A] %.0f Hz | nenhuma leitura válida | falhas %lu (seguidas %lu, recuperações %lu)%s\n",
-                  rate, (unsigned long)g_mpu.failTotal(), (unsigned long)g_mpu.failStreak(),
-                  (unsigned long)g_mpu.recoveries(), g_win.pulses == 0 ? " | sem pulsos do INT" : "");
+                  s.rateHz, (unsigned long)g_mpu.failTotal(), (unsigned long)g_mpu.failStreak(),
+                  (unsigned long)g_mpu.recoveries(), w.pulses == 0 ? " | sem pulsos do INT" : "");
         return;
     }
-    double mean[6], sd[6];
-    for (int i = 0; i < 6; i++) {
-        mean[i] = g_win.sum[i] / n;
-        sd[i] = sqrt(fmax(0.0, g_win.sq[i] / n - mean[i] * mean[i]));
-    }
-    const double amod = sqrt(mean[0] * mean[0] + mean[1] * mean[1] + mean[2] * mean[2]);
-    const double sdA = fmax(sd[0], fmax(sd[1], sd[2]));
-    const double sdG = fmax(sd[3], fmax(sd[4], sd[5]));
+    const double *mean = s.mean;
     logPrintf("[A] %.0f Hz | a (g) %+.3f %+.3f %+.3f  |a| %.3f | g (°/s) %+.2f %+.2f %+.2f | T %.1f °C\n",
-              rate, mean[0], mean[1], mean[2], amod, mean[3], mean[4], mean[5], g_win.tempSum / n);
+              s.rateHz, mean[0], mean[1], mean[2], s.accNorm, mean[3], mean[4], mean[5], s.tempC);
     logPrintf("    ruído: a %.1f mg, g %.3f °/s | pico |g| %.1f °/s | saturadas a %lu g %lu | perdidas %lu | "
               "descartadas %lu | falhas %lu (seguidas %lu, recuperações %lu) | fila cheia %lu\n",
-              sdA * 1000.0, sdG, g_win.peakGyro, (unsigned long)g_win.satAcc, (unsigned long)g_win.satGyro,
-              (unsigned long)g_win.lost, (unsigned long)g_win.stale, (unsigned long)g_mpu.failTotal(),
+              s.accMaxStdG * 1000.0, s.gyroMaxStdDps, w.peakGyro, (unsigned long)w.satAcc, (unsigned long)w.satGyro,
+              (unsigned long)w.lost, (unsigned long)w.stale, (unsigned long)g_mpu.failTotal(),
               (unsigned long)g_mpu.failStreak(), (unsigned long)g_mpu.recoveries(),
               (unsigned long)g_intOverflow);
-    const AngleStats *att = g_win.att;
+    const AngleStats *att = w.att;
     if (att[0].count() == 0) {
         logPrintln("    atitude: não inicializada");
         return;
@@ -235,38 +185,26 @@ static void printWindow() {
               att[0].stddev(), att[1].mean(), att[1].stddev(), (unsigned long)att[0].count());
 }
 
-// Fecha (imprime) todas as janelas que terminaram antes de nowUs e abre a seguinte sem lacuna.
-// Diferença com sinal: um instante anterior ao início da janela dá negativo (e não um intervalo
-// enorme), e a virada do micros() a cada ~71 min continua tratada.
+// Fecha (imprime) todas as janelas que terminaram antes de nowUs e abre a seguinte sem lacuna
 static void closeWindowsUntil(uint32_t nowUs) {
-    while ((int32_t)(nowUs - g_win.startUs) >= (int32_t)WINDOW_US) {
+    while (g_acq.due(nowUs)) {
+        const SampleWindow &w = g_acq.cur();
         g_magSvc.closeWindow();
         if (g_summaryOn) {
-            printWindow();
+            printWindow(w);
             g_baroSvc.printSummary();
             g_magSvc.printSummary();
         }
-        if (g_win.samples > 0) g_calSvc.checkTempDrift(g_win.tempSum / g_win.samples);
+        if (w.samples > 0) g_calSvc.checkTempDrift(w.meanTempC());
         digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS));
-        g_lastWin = g_win;
-        const uint32_t next = g_win.startUs + WINDOW_US;
-        g_win = Window();
-        g_win.startUs = next;
+        g_acq.rotate();
     }
 }
 
 // Conta um pulso na janela do seu instante e detecta pulsos que faltaram
 static void notePulse(uint32_t tInt) {
     closeWindowsUntil(tInt);
-    // Pulso anterior ao início da janela (ela avançou pelo relógio enquanto ele esperava na fila):
-    // pertence a uma janela já impressa e não entra na taxa da atual
-    if ((int32_t)(tInt - g_win.startUs) >= 0) g_win.pulses++;
-    const float periodUs = 1e6f / g_mpu.actualSampleRateHz();
-    if (g_lastIntUs != 0) {
-        const uint32_t dt = tInt - g_lastIntUs;
-        if (dt > 1.5f * periodUs) g_win.lost += (uint32_t)lroundf(dt / periodUs) - 1;
-    }
-    g_lastIntUs = tInt;
+    g_acq.notePulse(tInt, 1e6f / g_mpu.actualSampleRateHz());
 }
 
 
@@ -295,7 +233,7 @@ static void printAttitudeLine(const Vec3 &acc, float tempC) {
     else
         logPrintf("[att] aguardando referência | acc %+7.2f %+7.2f | |a| %.3f w %.2f | %.2f °C\n", am.rollDeg,
                   am.pitchDeg, norm(acc), g_att.lastAccWeight(), tempC);
-    const AttStream &a = g_as;
+    const AcqStats &a = g_as.acq;
     const FusionStats &f = g_fusion.stats();
     logPrintf("      dt %.2f/%.2f/%.2f ms (%lu) | atraso máx %lu µs | filtro méd/máx %.0f/%lu µs | ambíguos %lu | "
               "descartados %lu | reinícios %lu\n",
@@ -314,10 +252,7 @@ static void fusionSample(const ImuSample &s, uint32_t intUs) {
                                 g_calSvc.level().r);
     const ImuFlags flags = {s.accelSaturated, s.gyroSaturated};
     g_fusion.update(b.acc, b.gyro, flags, intUs, g_magSvc.calibrating());
-    if (g_att.initialized()) {
-        g_win.att[0].add(g_att.rollDeg());
-        g_win.att[1].add(g_att.pitchDeg());
-    }
+    if (g_att.initialized()) g_acq.cur().addAttitude(g_att.rollDeg(), g_att.pitchDeg());
 
     if (g_as.on && g_as.print.due(intUs)) {
         printAttitudeLine(b.acc, s.tempC);
@@ -436,18 +371,19 @@ static void printStatus() {
     g_magSvc.printSummary();
     printValidity(validity);
 
-    const uint32_t n = g_lastWin.samples;
+    const SampleWindow &last = g_acq.last();
+    const uint32_t n = last.samples;
     if (n == 0) {
         logPrintln("  último 1 s: nenhuma leitura válida");
         return;
     }
-    const Vec3 aRaw = {(float)(g_lastWin.sum[0] / n), (float)(g_lastWin.sum[1] / n), (float)(g_lastWin.sum[2] / n)};
-    const Vec3 gRaw = {(float)(g_lastWin.sum[3] / n), (float)(g_lastWin.sum[4] / n), (float)(g_lastWin.sum[5] / n)};
+    const Vec3 aRaw = last.meanAcc();
+    const Vec3 gRaw = last.meanGyro();
     const Vec3 aCor = cal.accelValid ? applyAccelCal(cal.accel, aRaw) : aRaw;
     const Vec3 gCor = applyGyroBias(gRaw, bias);
-    const float tNow = g_lastWin.tempSum / n;
+    const float tNow = last.meanTempC();
     logPrintf("  pulsos do INT: no último 1 s, perdidos %lu e descartados %lu | fila cheia %lu desde o boot\n",
-              (unsigned long)g_lastWin.lost, (unsigned long)g_lastWin.stale, (unsigned long)g_intOverflow);
+              (unsigned long)last.lost, (unsigned long)last.stale, (unsigned long)g_intOverflow);
     logPrintf("  último 1 s (%lu amostras, %.1f °C):\n", (unsigned long)n, tNow);
     logPrintf("    a bruto     %+.4f %+.4f %+.4f g  |a| %.4f\n", aRaw.x, aRaw.y, aRaw.z, norm(aRaw));
     logPrintf("    a corrigido %+.4f %+.4f %+.4f g  |a| %.4f\n", aCor.x, aCor.y, aCor.z, norm(aCor));
@@ -595,36 +531,26 @@ void loop() {
     // Todos os pulsos contam para a taxa e as perdas; os anteriores ao último ficam sem leitura
     notePulse(pulses[0]);
     for (size_t i = 1; i < n; i++) {
-        g_win.stale++;   // o pulso anterior fica sem leitura; conta na janela dele, antes de avançar
+        g_acq.noteStale();   // o pulso anterior fica sem leitura; conta na janela dele, antes de avançar
         notePulse(pulses[i]);
     }
-    g_as.dropped += n - 1;
+    g_as.acq.dropped += n - 1;
 
     checkRecovery();   // read() pode ter reconfigurado o chip (e então devolveu false)
     if (!ok) return;
-    accumulate(s);
-    // Descarte de partida: a comparação só acontece durante ele (no máximo CAL_MPU_SETTLE_MS), longe da virada
-    if (g_settling) {
-        if ((int32_t)(s.tUs - g_settleUntilUs) < 0) {
-            g_calSvc.holdWindowStart(s.tUs);   // a janela só começa a contar depois do descarte
-            return;
-        }
-        g_settling = false;
-    }
-
-    // Validade temporal, comum à calibração e à fusão. Sem FIFO, o quadro lido é o mais recente no
-    // instante da leitura. Se um pulso mais novo chegou antes do fim da leitura, o quadro pode ser
-    // dele, e o próximo ciclo (que atende esse pulso) leria o mesmo quadro de novo: ele ficaria
-    // duplicado na janela de calibração e com o instante errado na fusão. O ciclo fica fora das duas;
-    // na fusão, o dt seguinte cobre a lacuna (a referência de tempo não avança). O teto de atraso é
-    // só uma rede de segurança (latência da ISR): um atraso de alguns ms, depois de uma impressão, é
-    // normal e o quadro é válido.
-    const uint32_t lag = elapsedUs(latest, s.tUs);
-    if (newerPulse || lag > FUSION_MAX_INT_LAG_US) {
-        g_as.ambiguous++;
+    g_acq.cur().add({s.ax, s.ay, s.az}, {s.gx, s.gy, s.gz}, s.tempC, s.accelSaturated, s.gyroSaturated);
+    // Descarte de partida
+    if (g_settle.hold(s.tUs)) {
+        g_calSvc.holdWindowStart(s.tUs);   // a janela só começa a contar depois do descarte
         return;
     }
-    if (lag > g_as.lagMaxUs) g_as.lagMaxUs = lag;
+
+    // Validade temporal, comum à calibração e à fusão (lib/acq, checkFrame). Um quadro ambíguo fica
+    // fora das duas; na fusão, o dt seguinte cobre a lacuna (a referência de tempo não avança). Um
+    // atraso de alguns ms, depois de uma impressão, é normal e o quadro é válido.
+    const FrameCheck frame = checkFrame(latest, s.tUs, newerPulse, FUSION_MAX_INT_LAG_US);
+    g_as.acq.noteFrame(frame);
+    if (!frame.valid) return;
     g_calSvc.sample(s);
     fusionSample(s, latest);
 }

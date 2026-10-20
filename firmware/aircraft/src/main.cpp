@@ -10,8 +10,9 @@
 // A lógica está em lib/imu_cal, lib/cal_flow, lib/attitude, lib/fusion, lib/acq, lib/baro, lib/mag e lib/sched
 // (puras, testadas com pio test -e native).
 // As calibrações do MPU (giroscópio, seis posições e montagem) e a carga da NVS ficam em lib/cal_service;
-// o barômetro e o magnetômetro são atendidos por lib/baro_service e lib/mag_service.
-// A saída de texto passa por lib/logger. Refatoração em andamento: docs/refatoracao.md.
+// o barômetro e o magnetômetro são atendidos por lib/baro_service e lib/mag_service. As teclas, o estado (c),
+// o resumo (r), o fluxo de atitude (a) e a ajuda ficam em src/console.cpp. Este arquivo só inicializa e roda o
+// laço de aquisição. A saída de texto passa por lib/logger. Refatoração: docs/refatoracao.md.
 // Na semana 3 este arquivo passa a só inicializar o hardware e criar as tasks (src/tasks/):
 //   sensor_task  (prio 4, core 1) — acordada pela INT do MPU a SAMPLE_RATE_HZ; dona do barramento: lê o
 //                MPU e, intercalados, o BME280 e o HMC5883L; calibração e fusão (roll/pitch/proa).
@@ -34,7 +35,7 @@
 #include "mag_service.h"
 #include "telemetry_flags.h"
 #include "logger.h"
-#include "sched.h"
+#include "console.h"
 
 extern const char *const BUILD_STAMP;   // build_info.cpp: data e hora da compilação
 
@@ -50,7 +51,6 @@ static uint32_t g_mpuRetryMs = 0;            // MPU ausente: próxima tentativa 
 // ---------- Aquisição (lib/acq): janelas de 1 s do resumo (r) e do estado (c) ----------
 
 static PulseTracker g_acq(MAIN_PRINT_MS * 1000UL);
-static bool g_summaryOn = false;  // resumo por segundo (comando r)
 // Após configurar o MPU, calibração e fusão descartam amostras por CAL_MPU_SETTLE_MS
 static SettleGate g_settle;
 static uint32_t g_lastRecoveries = 0;
@@ -85,15 +85,8 @@ static const HeadingParams HEADING_PARAMS = {MAG_HEADING_TAU_S, MAG_MAX_PITCH_DE
 static FusionCore g_fusion(FUSION_PARAMS, HEADING_PARAMS);
 static const AttitudeFilter &g_att = g_fusion.att();
 
-// Fluxo de atitude (comando a): estatística da aquisição entre duas linhas; a do filtro fica em
-// g_fusion.stats()
-struct AttStream {
-    bool     on = false;
-    Periodic print;            // próxima linha
-    AcqStats acq;
-};
-static AttStream g_as;
-static const uint32_t ATT_PRINT_US = 1000000UL / ATT_PRINT_HZ;
+// Estatística da aquisição entre duas linhas do fluxo a (lida e zerada pelo console)
+static AcqStats g_acqStats;
 
 // ---------- Barômetro (lib/baro_service, docs/barometro.md) ----------
 
@@ -118,6 +111,14 @@ static const MagServiceConfig MAG_CFG = {
 static MagService g_magSvc(MAG_CFG, g_fusion.att(), g_fusion.heading());
 
 static void fusionReset() { g_fusion.reset(); }
+
+// ---------- Console (src/console.cpp): teclas, c, r, a e ajuda ----------
+
+static ValidityInputs validityInputs();
+static const ConsoleDeps CONSOLE_DEPS = {
+    g_mpu, g_intOverflow, g_acq, g_acqStats, g_fusion, g_calSvc, g_baroSvc, g_magSvc, validityInputs, fusionReset,
+};
+static Console g_console(CONSOLE_DEPS);
 
 // Relógio do custo do filtro no fluxo a (o micros() devolve unsigned long, não uint32_t)
 static uint32_t clockUs() { return micros(); }
@@ -157,44 +158,12 @@ static void startMpu() {
     g_acq.begin(micros());
 }
 
-// ---------- Resumo por segundo ----------
-
-static void printWindow(const SampleWindow &w) {
-    const WindowSummary s = summarize(w, g_acq.windowUs());
-    if (w.samples == 0) {
-        logPrintf("[A] %.0f Hz | nenhuma leitura válida | falhas %lu (seguidas %lu, recuperações %lu)%s\n",
-                  s.rateHz, (unsigned long)g_mpu.failTotal(), (unsigned long)g_mpu.failStreak(),
-                  (unsigned long)g_mpu.recoveries(), w.pulses == 0 ? " | sem pulsos do INT" : "");
-        return;
-    }
-    const double *mean = s.mean;
-    logPrintf("[A] %.0f Hz | a (g) %+.3f %+.3f %+.3f  |a| %.3f | g (°/s) %+.2f %+.2f %+.2f | T %.1f °C\n",
-              s.rateHz, mean[0], mean[1], mean[2], s.accNorm, mean[3], mean[4], mean[5], s.tempC);
-    logPrintf("    ruído: a %.1f mg, g %.3f °/s | pico |g| %.1f °/s | saturadas a %lu g %lu | perdidas %lu | "
-              "descartadas %lu | falhas %lu (seguidas %lu, recuperações %lu) | fila cheia %lu\n",
-              s.accMaxStdG * 1000.0, s.gyroMaxStdDps, w.peakGyro, (unsigned long)w.satAcc, (unsigned long)w.satGyro,
-              (unsigned long)w.lost, (unsigned long)w.stale, (unsigned long)g_mpu.failTotal(),
-              (unsigned long)g_mpu.failStreak(), (unsigned long)g_mpu.recoveries(),
-              (unsigned long)g_intOverflow);
-    const AngleStats *att = w.att;
-    if (att[0].count() == 0) {
-        logPrintln("    atitude: não inicializada");
-        return;
-    }
-    logPrintf("    atitude: roll %+.2f ± %.2f° | pitch %+.2f ± %.2f° (%lu amostras)\n", att[0].mean(),
-              att[0].stddev(), att[1].mean(), att[1].stddev(), (unsigned long)att[0].count());
-}
-
 // Fecha (imprime) todas as janelas que terminaram antes de nowUs e abre a seguinte sem lacuna
 static void closeWindowsUntil(uint32_t nowUs) {
     while (g_acq.due(nowUs)) {
         const SampleWindow &w = g_acq.cur();
         g_magSvc.closeWindow();
-        if (g_summaryOn) {
-            printWindow(w);
-            g_baroSvc.printSummary();
-            g_magSvc.printSummary();
-        }
+        g_console.windowClosed(w);   // resumo, se o r estiver ligado
         if (w.samples > 0) g_calSvc.checkTempDrift(w.meanTempC());
         digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS));
         g_acq.rotate();
@@ -221,28 +190,6 @@ static void checkRecovery() {
 
 // ---------- Fusão ----------
 
-static void printAttitudeLine(const Vec3 &acc, float tempC) {
-    const Angles am = accelRollPitch(acc);
-    const AttitudeFilter &go = g_fusion.gyroOnly();
-    char gyroOnly[32] = "  --      --  ";
-    if (go.initialized()) snprintf(gyroOnly, sizeof(gyroOnly), "%+7.2f %+7.2f", go.rollDeg(), go.pitchDeg());
-    if (g_att.initialized())
-        logPrintf("[att] roll %+7.2f pitch %+7.2f | acc %+7.2f %+7.2f | giro %s | |a| %.3f w %.2f | %.2f °C%s\n",
-                  g_att.rollDeg(), g_att.pitchDeg(), am.rollDeg, am.pitchDeg, gyroOnly, norm(acc),
-                  g_att.lastAccWeight(), tempC, g_att.degraded() ? " | DEGRADADO" : "");
-    else
-        logPrintf("[att] aguardando referência | acc %+7.2f %+7.2f | |a| %.3f w %.2f | %.2f °C\n", am.rollDeg,
-                  am.pitchDeg, norm(acc), g_att.lastAccWeight(), tempC);
-    const AcqStats &a = g_as.acq;
-    const FusionStats &f = g_fusion.stats();
-    logPrintf("      dt %.2f/%.2f/%.2f ms (%lu) | atraso máx %lu µs | filtro méd/máx %.0f/%lu µs | ambíguos %lu | "
-              "descartados %lu | reinícios %lu\n",
-              f.n ? f.dtMin * 1e3 : 0.0, f.n ? f.dtSum / f.n * 1e3 : 0.0, f.dtMax * 1e3, (unsigned long)f.n,
-              (unsigned long)a.lagMaxUs, f.n ? (double)f.costSumUs / f.n : 0.0, (unsigned long)f.costMaxUs,
-              (unsigned long)a.ambiguous,
-              (unsigned long)a.dropped, (unsigned long)f.resets);
-}
-
 // Uma amostra válida, fora do descarte: calibração nos eixos do chip → eixos do modelo →
 // rotação de montagem → filtro. intUs: instante do pulso de "data ready" desta amostra, que já
 // passou pela validade temporal no loop().
@@ -253,20 +200,11 @@ static void fusionSample(const ImuSample &s, uint32_t intUs) {
     const ImuFlags flags = {s.accelSaturated, s.gyroSaturated};
     g_fusion.update(b.acc, b.gyro, flags, intUs, g_magSvc.calibrating());
     if (g_att.initialized()) g_acq.cur().addAttitude(g_att.rollDeg(), g_att.pitchDeg());
-
-    if (g_as.on && g_as.print.due(intUs)) {
-        printAttitudeLine(b.acc, s.tempC);
-        const bool on = g_as.on;
-        g_as = AttStream();
-        g_as.on = on;
-        g_as.print.restart(intUs, ATT_PRINT_US);
-        g_fusion.resetStats();
-    }
+    g_console.attitudeSample(b.acc, s.tempC, intUs);   // linha do a, se estiver ligado e vencida
 }
 
 // ---------- Validade dos dados (campo valid do TelemetryPacket, lib/telemetry_flags) ----------
-
-static const ValidityLimits VALIDITY_LIMITS = {FUSION_MAX_DT_MS, BARO_STALE_MS, MAG_STALE_MS};
+// Entradas no instante da chamada; hoje usadas pelo c, na semana 3 também pela radio_task
 
 static uint32_t ageMs(bool have, uint32_t tMs) {
     return have ? millis() - tMs : AGE_NEVER;
@@ -286,159 +224,6 @@ static ValidityInputs validityInputs() {
     in.hdgMagSuspended = g_magSvc.correctionSuspended();
     in.magAgeMs = ageMs(g_magSvc.lastReadValid(), g_magSvc.lastReadMs());
     return in;
-}
-
-// Uma linha no estado (c): cada flag com o motivo quando está desligada. in é capturado no início do c:
-// as linhas anteriores levam ~100 ms na serial, e as idades medidas depois delas refletiriam a impressão
-static void printValidity(const ValidityInputs &in) {
-    const uint16_t v = telemetryValidFlags(in, VALIDITY_LIMITS);
-    logPrint("  validade (telemetria): ATT ");
-    if (v & VAL_ATT) logPrint("ok");
-    else if (!in.attInitialized) logPrint("não (filtro não inicializado)");
-    else logPrintf("não (MPU sem amostra há %lu ms)", (unsigned long)in.attAgeMs);
-    logPrintf(" | ATT_DEGRADED %s | ALT ", (v & VAL_ATT_DEGRADED) ? "sim" : "não");
-    if (v & VAL_ALT) logPrint("ok");
-    else if (!in.baroOk) logPrint("não (sem barômetro)");
-    else if (!in.baroZeroValid) logPrint("não (sem zero)");
-    else if (!in.altFinite) logPrint("não (valor inválido)");
-    else logPrintf("não (leitura de %lu ms atrás)", (unsigned long)in.baroAgeMs);
-    logPrint(" | HDG ");
-    if (v & VAL_HDG) logPrint("ok");
-    else if (!(v & VAL_ATT)) logPrint("não (sem atitude)");
-    else if (!in.magCalibrated) logPrint("não (magnetômetro sem calibração)");
-    else logPrint("não (filtro da proa não inicializado)");
-    logPrint(" | HDG_GYRO_ONLY ");
-    if (!(v & VAL_HDG_GYRO_ONLY)) logPrint("não");
-    else if (in.attDegraded) logPrint("sim (ATITUDE_DEGRADADA)");
-    else if (in.magAgeMs > VALIDITY_LIMITS.magMaxAgeMs) logPrint("sim (magnetômetro sem leitura recente)");
-    else logPrintf("sim (%s)", g_magSvc.stateText());
-    logPrintf(" | valid = 0x%04X\n", v);
-}
-
-static void printStatus() {
-    const ValidityInputs validity = validityInputs();   // antes de imprimir (ver printValidity)
-    const ImuCalData &cal = g_calSvc.imuCal();
-    const LevelData &level = g_calSvc.level();
-    const Vec3 &bias = g_calSvc.gyroBias();
-    const float biasTempC = g_calSvc.gyroBiasTempC();
-    const bool definitive = g_calSvc.gyroDefinitive();
-    logPrintln("[A] estado da calibração");
-    if (cal.accelValid) {
-        const AccelCal &c = cal.accel;
-        logPrintf("  acelerômetro: calibrado (±%d g, %.1f °C) | offset (mg) %+.1f %+.1f %+.1f | "
-                  "escala %+.2f %% %+.2f %% %+.2f %%\n",
-                  cal.accelRangeG, cal.accelTempC, c.offset.x * 1000, c.offset.y * 1000, c.offset.z * 1000,
-                  (c.scale.x - 1) * 100, (c.scale.y - 1) * 100, (c.scale.z - 1) * 100);
-    } else {
-        logPrintln("  acelerômetro: NÃO calibrado (sem dados na NVS para esta faixa): use 6");
-    }
-    if (level.valid)
-        logPrintf("  montagem: calibrada | módulo em roll %+.2f° pitch %+.2f° em relação à caixa (%.1f °C)\n",
-                  level.mountRollDeg, level.mountPitchDeg, level.tempC);
-    else
-        logPrintln("  montagem: NÃO calibrada (eixos nominais): use z");
-    if (g_att.initialized())
-        logPrintf("  atitude: roll %+.2f° pitch %+.2f°%s\n", g_att.rollDeg(), g_att.pitchDeg(),
-                  g_att.degraded() ? " (DEGRADADA: giroscópio saturou)" : "");
-    else
-        logPrintln("  atitude: aguardando referência (caixa parada, |a| perto de 1 g)");
-    logPrintf("  giroscópio: %s | bias %+.3f %+.3f %+.3f °/s | calibrado a %.1f °C\n",
-              definitive ? "DEFINITIVO (deste boot)"
-                               : (cal.gyroValid ? "PROVISÓRIO (bias salvo de antes)" : "PROVISÓRIO (sem bias salvo)"),
-              bias.x, bias.y, bias.z, biasTempC);
-
-    if (g_baroSvc.zeroValid())
-        logPrintf("  altitude: zero p0 = %.2f hPa a %.1f °C%s\n", g_baroSvc.zeroRefHpa(),
-                  g_baroSvc.zeroRefTempC(), g_baroSvc.zeroActive() ? " (novo zero em andamento)" : "");
-    else
-        logPrintf("  altitude: %s\n", g_baroSvc.zeroActive() ? "zero em andamento" : "sem zero");
-    g_baroSvc.printSummary();
-
-    const MagCalData &magCal = g_magSvc.calData();
-    if (magCal.valid) {
-        const MagCal &mc = magCal.cal;
-        logPrintf("  magnetômetro: calibrado | offset %+.1f %+.1f %+.1f µT | raio %.1f µT | resíduo %.1f %% | "
-                  "%d setores\n",
-                  mc.offset.x, mc.offset.y, mc.offset.z, mc.radiusUt, magCal.residPct, magCal.sectors);
-        logPrintf("  magnetômetro: W = [%+.3f %+.3f %+.3f; %+.3f %+.3f %+.3f; %+.3f %+.3f %+.3f]\n", mc.w.m[0][0],
-                  mc.w.m[0][1], mc.w.m[0][2], mc.w.m[1][0], mc.w.m[1][1], mc.w.m[1][2], mc.w.m[2][0],
-                  mc.w.m[2][1], mc.w.m[2][2]);
-    } else {
-        logPrintln("  magnetômetro: NÃO calibrado (offset zero, escala 1, sem detecção de distúrbio): use m");
-    }
-    logPrintf("  magnetômetro: ±%.1f Ga, %.0f Hz, média de %d, leitura a %d Hz\n", MAG_RANGE_MGA / 1000.0f,
-              MAG_OUTPUT_HZ, MAG_AVG_SAMPLES, MAG_READ_HZ);
-    g_magSvc.printSummary();
-    printValidity(validity);
-
-    const SampleWindow &last = g_acq.last();
-    const uint32_t n = last.samples;
-    if (n == 0) {
-        logPrintln("  último 1 s: nenhuma leitura válida");
-        return;
-    }
-    const Vec3 aRaw = last.meanAcc();
-    const Vec3 gRaw = last.meanGyro();
-    const Vec3 aCor = cal.accelValid ? applyAccelCal(cal.accel, aRaw) : aRaw;
-    const Vec3 gCor = applyGyroBias(gRaw, bias);
-    const float tNow = last.meanTempC();
-    logPrintf("  pulsos do INT: no último 1 s, perdidos %lu e descartados %lu | fila cheia %lu desde o boot\n",
-              (unsigned long)last.lost, (unsigned long)last.stale, (unsigned long)g_intOverflow);
-    logPrintf("  último 1 s (%lu amostras, %.1f °C):\n", (unsigned long)n, tNow);
-    logPrintf("    a bruto     %+.4f %+.4f %+.4f g  |a| %.4f\n", aRaw.x, aRaw.y, aRaw.z, norm(aRaw));
-    logPrintf("    a corrigido %+.4f %+.4f %+.4f g  |a| %.4f\n", aCor.x, aCor.y, aCor.z, norm(aCor));
-    logPrintf("    g bruto     %+.3f %+.3f %+.3f °/s\n", gRaw.x, gRaw.y, gRaw.z);
-    logPrintf("    g corrigido %+.3f %+.3f %+.3f °/s\n", gCor.x, gCor.y, gCor.z);
-    if (tempDrifted(biasTempC, tNow, CAL_TEMP_WARN_C) && (definitive || cal.gyroValid))
-        logPrintf("  AVISO: temperatura a mais de %.1f °C da calibração do giroscópio: recalibre com g\n",
-                  CAL_TEMP_WARN_C);
-}
-
-static void printHelp() {
-    logPrintln("[A] comandos: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem | "
-               "m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa | "
-               "0 = zerar altitude | r = resumo por segundo");
-}
-
-static void handleSerial() {
-    while (Serial.available()) {
-        const char ch = (char)Serial.read();
-        const MagKey mk = g_magSvc.handleKey(ch);
-        // d parou o laço por alguns segundos: a referência de tempo da fusão não vale mais
-        if (mk == MagKey::HandledLoopStalled) fusionReset();
-        if (mk != MagKey::NotHandled) continue;
-        const CalKey ck = g_calSvc.handleKey(ch);   // seis posições e montagem em andamento
-        if (ck == CalKey::HandledFusionReset) fusionReset();
-        if (ck != CalKey::NotHandled) continue;
-        switch (ch) {
-        case 'c': printStatus(); break;
-        case 'r':
-            g_summaryOn = !g_summaryOn;
-            logPrintf("[A] resumo por segundo %s\n", g_summaryOn ? "ligado" : "desligado");
-            break;
-        case 'g': g_calSvc.startGyro(GyroCalKind::Cmd); break;
-        case 'z': g_calSvc.startMount(); break;
-        case 'a': {
-            const bool on = !g_as.on;
-            g_as = AttStream();
-            g_as.on = on;
-            g_as.print.start(micros());
-            g_fusion.resetStats();
-            g_fusion.resetGyroOnly();   // o diagnóstico só de giroscópio recomeça da atitude atual
-            logPrintf("[att] fluxo de atitude %s (%d Hz): filtro | só acelerômetro | só giroscópio desde o a\n",
-                      on ? "ligado" : "desligado", ATT_PRINT_HZ);
-            break;
-        }
-        case 'b': g_baroSvc.toggleStream(micros()); break;
-        case 'm': g_magSvc.startCalibration(!g_calSvc.magAllowed()); break;
-        case 'p': g_magSvc.toggleStream(micros()); break;
-        case '0': g_baroSvc.zeroAltitude(); break;
-        case '6': g_calSvc.startSix(); break;
-        case 'h':
-        case '?': printHelp(); break;
-        default: break;
-        }
-    }
 }
 
 void setup() {
@@ -468,7 +253,7 @@ void setup() {
     startMpu();
     g_baroSvc.begin();
     g_magSvc.begin();
-    printHelp();
+    g_console.printHelp();
     g_calSvc.startGyro(GyroCalKind::Boot);
 }
 
@@ -486,7 +271,7 @@ static bool waitPulse(uint32_t &tInt) {
 }
 
 void loop() {
-    handleSerial();
+    g_console.poll();
     if (!g_mpuReady) {
         // Sem MPU, o barômetro continua sendo atendido; a configuração é tentada a cada MPU_RETRY_MS
         if ((int32_t)(millis() - g_mpuRetryMs) >= 0) startMpu();
@@ -534,7 +319,7 @@ void loop() {
         g_acq.noteStale();   // o pulso anterior fica sem leitura; conta na janela dele, antes de avançar
         notePulse(pulses[i]);
     }
-    g_as.acq.dropped += n - 1;
+    g_acqStats.dropped += n - 1;
 
     checkRecovery();   // read() pode ter reconfigurado o chip (e então devolveu false)
     if (!ok) return;
@@ -549,7 +334,7 @@ void loop() {
     // fora das duas; na fusão, o dt seguinte cobre a lacuna (a referência de tempo não avança). Um
     // atraso de alguns ms, depois de uma impressão, é normal e o quadro é válido.
     const FrameCheck frame = checkFrame(latest, s.tUs, newerPulse, FUSION_MAX_INT_LAG_US);
-    g_as.acq.noteFrame(frame);
+    g_acqStats.noteFrame(frame);
     if (!frame.valid) return;
     g_calSvc.sample(s);
     fusionSample(s, latest);

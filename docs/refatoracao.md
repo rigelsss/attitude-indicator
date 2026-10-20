@@ -25,7 +25,8 @@ Tirar do `main.cpp` as máquinas de estado e os serviços, **sem mudar o comport
 | `lib/baro_service` | Arduino | `Bme280`, nova tentativa, recuperação, zero, aviso de ΔT, fluxo `b`, altitude atual |
 | `lib/mag` (amplia) | puro | `MagCalibrator`: coleta, cobertura e progresso, ajuste e revisão (o buffer de pontos vem do serviço) |
 | `lib/mag_service` | Arduino | `Hmc5883l`, agenda, correção da proa, borda do distúrbio, `m`/`s`/`x`/`d`, fluxo `p` |
-| `lib/attitude` (amplia) | puro | `imuToBody()` (calibração → eixos do modelo → montagem); `FusionCore`: filtro, só-giroscópio, `HeadingFilter`, referência do dt, estatística do `a`, `reset()` |
+| `lib/attitude` (amplia) | puro | `imuToBody()` (calibração → eixos do modelo → montagem) |
+| `lib/fusion` | puro | `FusionCore`: filtro, só-giroscópio, `HeadingFilter`, referência do dt, estatística do filtro para o `a` (o custo pelo relógio dado por quem usa), `reset()`. Fica fora do `lib/attitude` porque o `lib/mag` (com o `HeadingFilter`) já depende dele. A estatística da aquisição (atraso, ambíguos, descartados) fica no `main.cpp` até o passo 7 |
 | `lib/cal_flow` | puro | `GyroCalFlow` (boot e `g`, com nova tentativa), `SixPoseFlow`, `MountFlow` e o coordenador (modo, janela de calibração, regras de bloqueio: `m` liberado na calibração do boot, `z` com pré-requisitos) |
 | `lib/cal_service` | Arduino | carga da NVS no boot, gravações (`imu_store`, `level_store`), mensagens `[cal]` e `[mont]` |
 | `lib/acq` | puro | `PulseTracker` (pulsos, perdidas, descartadas, fechamento de janelas, virada do `micros()`); `SampleWindow` (médias, ruído, saturações, atitude); validade temporal do quadro; descarte de partida |
@@ -51,7 +52,7 @@ Cada passo termina com: compilar `aircraft`, rodar `pio test -e native`, fazer a
 | 1 | `lib/logger` + `lib/sched` | roteiro base | feito em 20/10 (build: RAM 24 136 B, flash 363 485 B; `test_sched` com 7 casos; bancada abaixo) |
 | 2 | Barômetro (`BaroZero` + `baro_service`) | zero do boot, `0`, `b`, SDA do BMP280 solto | feito em 20/10 (build: RAM 24 248 B, flash 363 941 B; 10 casos novos no `test_baro`; bancada abaixo) |
 | 3+4 | Magnetômetro: `MagCalibrator` + `mag_service` (agenda, proa, distúrbio, calibração `m`). Juntos em 20/10: a leitura entrega os pontos à coleta, e separar exigiria um gancho provisório | roteiro base; `p` com ímã perto do módulo; `m` cancelado com `x`; `m` completo com `d` e `s` | feito em 20/10 (build: RAM 24 384 B, flash 364 769 B; 7 casos novos no `test_mag`; bancada abaixo; `s` de uma calibração aceita não conferido) |
-| 5 | Fusão (`imuToBody` + `FusionCore`) | `a`, inclinações conhecidas, métricas iguais às da base | — |
+| 5 | Fusão (`imuToBody` + `FusionCore`) | `a`, inclinações conhecidas, métricas iguais às da base | feito em 20/10 (build: RAM 24 408 B, flash 365 229 B; `test_fusion` com 10 casos; bancada e A/B abaixo; variação de ±50 µs no dt, pendência 5) |
 | 6a | Calibração do giroscópio + coordenador | `g`, calibração do boot, `m` durante a calibração do boot | — |
 | 6b | Seis posições + montagem | `z` completo; `6`: entrada, uma posição, cancelamento | — |
 | 7 | Aquisição (`lib/acq`) | `r`, `c`, INT solto, métricas iguais às da base | — |
@@ -188,9 +189,51 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
 - **Não conferido na bancada:** o `s` de uma calibração aceita (gravação, uso imediato da calibração nova e reinício da proa). São ~10 linhas movidas sem mudança, e a gravação (`magStoreSave`) não mudou. Fica para a próxima calibração real, no modelo final (pendência 4). A carga no boot (`loadCalibration`) está conferida em todos os boots.
 - **Passo 3+4 fechado.**
 
+**Passo 5, primeira sessão (log `261020-150426`, carimbo `2026-10-20 15:03:32`).** Roteiro base e calço novo, mais alto que o de 2,5 cm. Pelo inclinômetro do celular, ele dá ~9–10° no nariz e na cauda e ~20–21° nas asas.
+
+- **Roteiro base:** as mensagens são as mesmas da linha de base.
+  - `r`: 199–200 Hz, com perdidas, descartadas, falhas e fila cheia em 0 nas 118 janelas.
+  - `a`, 147 linhas: atraso de 102–117 µs; custo do filtro médio de 27–36 µs e máximo de 93–208 µs; ambíguos, descartados e reinícios em 0.
+  - `b` e `p` a 10 Hz. Zero com 0,65 Pa (boot) e 0,73 Pa (`0`).
+- **Calço** (média de 1 s no `r`, desvio de 0,00–0,01° parado):
+
+  | Posição | Roll | Pitch |
+  |---|---|---|
+  | Nivelada (antes, entre e depois) | −0,45 a −0,54° | −0,79 a −0,84° |
+  | Asa esquerda | +20,97° | −0,99° |
+  | Asa direita | −22,96° | −0,56° |
+  | Nariz | −0,35° | +8,79° |
+  | Cauda | +1,43° | −10,27° |
+
+  - **Meia diferença entre os lados opostos** (o ângulo do calço, sem a inclinação da mesa): roll de 21,97° e pitch de 9,53°, dentro da faixa do celular, que tem resolução de 1°.
+  - **O ponto médio entre os lados opostos repete a mesa nivelada:** roll de −1,00° (nivelada: −0,5°) e pitch de −0,74° (nivelada: −0,80°).
+  - A razão entre os senos (2,26) passa ~5 % da razão das bases da caixa (28/13 = 2,15). Em 14/10 também passou (~3,5 %). O apoio do calço muda a distância efetiva, então não é erro do filtro.
+  - O outro eixo mudou ao apoiar o calço (até 1,9° de roll na cauda), como em 14/10: é o apoio da caixa.
+- **O dt da fusão passou a ter ±50 µs de variação em janelas alternadas.** Em ~55 % das linhas do `a`, o dt mínimo/máximo ficou em 4,94–4,98 / 5,03–5,07 ms. Nos logs anteriores (passos 0 a 3+4), era sempre 5,00–5,01 ms. A média observada permanece em 5,01 ms; não foi identificado impacto nos testes realizados. A estimativa por intervalo é pequena (a 20 °/s, 50 µs dão 0,001°), mas o efeito durante movimentos variáveis ainda não foi quantificado: a soma dos dt se mantém, e o erro integrado depende também da velocidade angular de cada amostra. O comportamento é novo, e a causa ainda não foi identificada: o carimbo do pulso vem da ISR, que este passo não mudou.
+
+**Passo 5, teste A/B (logs `261020-151621` e `261020-151801`).** Mesma sessão, caixa parada, só o `a` por 10 s:
+
+| Firmware | Carimbo | dt no `a` |
+|---|---|---|
+| Passo 3+4 (`ae27361`, compilado num worktree à parte) | `15:15:32` | 83 linhas, todas 5,00/5,01/5,01 ms |
+| Passo 5 | `15:17:12` | 75 de 85 linhas entre 4,95 e 5,06 ms |
+
+- **A variação vem do build, não da sessão.** Atraso, custo do filtro, ambíguos, descartados e reinícios ficaram iguais nas duas rodadas.
+- **Hipótese, não confirmada:** o caminho da interrupção não mudou, mas o carimbo do pulso depende de duas coisas que variam com o build.
+  - A ISR do GPIO tem a mesma prioridade (nível 1) da ISR de transmissão da UART, que copia dezenas de bytes para a FIFO. Um pulso que chega durante essa cópia espera.
+  - O despachante de GPIO do Arduino (`__onPinInterrupt`) roda da flash, porque o `CONFIG_ARDUINO_ISR_IRAM` está desligado no núcleo, e fica sujeito ao cache.
+  - O passo 5 mudou o tempo entre o pulso e a impressão do `a` e a posição do código. Com isso, a cópia da UART passou a coincidir com os pulsos. Isso explicaria também o atraso bimodal do passo 3+4 e a alternância do custo do filtro na linha de base.
+- **Decisão (autor, 20/10):** fechar o passo 5 como está e corrigir o caminho da INT na semana 3 (pendência 5). A média observada do dt permanece em 5,01 ms, e não foi identificado impacto nos testes realizados. O efeito durante movimentos variáveis não foi quantificado (pendência 5).
+- **Passo 5 fechado.**
+
 ## Pendências (fora da refatoração)
 
 1. **Teclas ignoradas na calibração do magnetômetro.** Na coleta do `m` (até 180 s), o firmware ignora as teclas sem dizer nada, e o terminal parece travado. A revisão que vem depois, que só aceita `s`, `x` e `d`, também. Proposta: ao ignorar uma tecla, imprimir uma linha curta, por exemplo `[mag] calibração em andamento: x cancela`, no máximo uma vez por segundo. Fica para depois do passo 4, num commit à parte, porque muda o comportamento. Vista em 20/10, log `261020-133830`.
 2. **Log de erro do núcleo parando o laço.** Com um sensor falhando e uma impressão longa em curso (o resumo `r`, o `c`), cada `[E][Wire.cpp]` pode parar o laço por ~50 ms. Isso descarta 10 amostras e reinicia a fusão a cada tentativa, quando a fase coincide. Já estava previsto para a semana 3 ([plano.md](plano.md): serial numa task de baixa prioridade e revisão do nível de log do núcleo). Agora há a medida do efeito na fusão. Decidir na migração: baixar o `CORE_DEBUG_LEVEL` ou redirecionar o log do núcleo para a fila do `lib/logger`. Vista em 20/10, log `261020-134704`.
 3. **Cobertura da calibração completada pelo ruído.** Com a caixa parada, o centro provisório (mín./máx.) fica no meio da nuvem de pontos, e o ruído espalha as direções pelos setores. Em 20/10, a coleta chegou a 24/24 em 46 s sem girar a caixa. O resultado é recusado no fim, mas o guia `faltam:` e o fim antecipado confundem. Proposta: só contar a cobertura quando a amplitude (máx. − mín.) passar de uma fração do raio esperado em pelo menos dois eixos, por exemplo `MAG_CAL_MIN_SPAN_UT` no `config.h`. Muda o comportamento, então fica fora da refatoração. Vista no log `261020-144205`.
 4. **`s` de uma calibração aceita do magnetômetro, sem conferência na bancada.** A gravação na NVS, o uso imediato da calibração nova, o reinício da proa e a **persistência depois de um reinício** (boot com `NVS: … magnetômetro calibrado` e o `c` com o offset e a W novos) ficaram sem conferir na refatoração. Os testes novos cobrem só o núcleo puro (`MagCalibrator`), não essa integração com a NVS e o filtro da proa. Conferir na próxima calibração real (modelo final), com os passos 8–12 do roteiro completo do passo 3+4. Registrada em 20/10/2026.
+5. **Carimbo do pulso do MPU não determinístico.** O instante marcado pela ISR do INT pode atrasar ~50 µs, e isso depende do build (passo 5, teste A/B). As causas prováveis são a ISR do GPIO no mesmo nível da ISR da UART e o despachante do Arduino na flash. Na semana 3, quando a INT passar a acionar a `sensor_task`:
+   - registrar a ISR pelo ESP-IDF (`gpio_install_isr_service` + `gpio_isr_handler_add`), com o handler em IRAM e `ESP_INTR_FLAG_IRAM`, num nível acima do da UART (ex.: `ESP_INTR_FLAG_LEVEL2`), sem passar pelo `attachInterrupt`;
+   - conferir no `a` que o dt volta a 5,00–5,01 ms com as impressões ligadas.
+   - se a variação continuar, quantificar o efeito na atitude com a caixa em movimento (giros com velocidade variável, comparando o filtro com o só-giroscópio);
+   Registrada em 20/10/2026.

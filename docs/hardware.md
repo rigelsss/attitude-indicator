@@ -939,6 +939,17 @@ Log `261020-134704`, firmware da refatoração, passo 2 (carimbo `2026-10-20 13:
   - Às 14:08, o diagnóstico (`140827`) achou o 0x76 de novo, e o firmware de voo voltou a configurar o chip (`141053`).
   - O EN não desliga os módulos. Se um sensor parar de responder depois de mexer nos fios com a placa ligada, **tire o USB por 5 s** antes de procurar outro defeito.
 
+### Carimbo do pulso do INT dependente do build (20/10/2026)
+
+Teste A/B na mesma sessão, com a caixa parada e só o `a` por 10 s.
+
+- **Passo 3+4 da refatoração** (log `261020-151621`): dt sempre 5,00/5,01/5,01 ms.
+- **Passo 5** (log `261020-151801`): 75 de 85 linhas entre 4,95 e 5,06 ms, com a média em 5,01 ms.
+
+O passo 5 não mexe na ISR. A hipótese é que o carimbo `micros()` da ISR do GPIO atrasa ~50 µs quando o pulso coincide com a ISR de transmissão da UART, que está no mesmo nível 1. Além disso, o despachante `__onPinInterrupt` do Arduino roda da flash: o `CONFIG_ARDUINO_ISR_IRAM` está desligado. Correção prevista para a semana 3 (pendência 5 do [refatoracao.md](refatoracao.md)).
+
+Também neste dia, com um calço mais alto, a meia diferença entre lados opostos deu 21,97° de roll e 9,53° de pitch, contra ~20–21° e ~9–10° no inclinômetro do celular. O ponto médio entre os lados repetiu a caixa nivelada (log `261020-150426`).
+
 ## Orientação de montagem do MPU6050
 
 ### Montagem final (14/10/2026, em uso)

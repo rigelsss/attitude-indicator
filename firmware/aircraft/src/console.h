@@ -1,8 +1,9 @@
 // console.h — console serial do ESP A: tecla → comando, estado (c), resumo por segundo (r), fluxo de
 // atitude (a) e ajuda. Só formata e despacha: a lógica fica nos serviços e nas libs puras. Imprime pelo
 // lib/logger. Docs: docs/refatoracao.md (passo 8).
-// Hoje roda no loop(), junto com a aquisição, e chama os serviços direto. Na semana 3, na task da
-// serial, os comandos passam por uma fila para a sensor_task (camada única de comandos).
+// Roda na sensor_task: as teclas chegam pela fila de comandos (src/tasks/sensor_task.h), lidas do Serial pela
+// serial_task. Por isso pode chamar os serviços direto. O c, o r e o a ainda são formatados aqui, na
+// sensor_task; no passo 2 da semana 3 vão para a serial_task (refatoracao.md, pendências 2 e 7).
 #pragma once
 #include <Arduino.h>
 #include "mpu6050.h"
@@ -31,8 +32,8 @@ class Console {
 public:
     explicit Console(const ConsoleDeps &d) : d_(d) {}
     void printHelp() const;
-    // Teclas recebidas: calibração do magnetômetro, seis posições e montagem primeiro; depois os comandos
-    void poll();
+    // Uma tecla: calibração do magnetômetro, seis posições e montagem primeiro; depois os comandos
+    void handleKey(char ch);
     // Uma janela de 1 s fechou (antes de ser guardada como a última): resumo, se o r estiver ligado
     void windowClosed(const SampleWindow &w) const;
     // Uma amostra passou pela fusão: linha do a quando vence (acc nos eixos do modelo, já corrigido)

@@ -63,6 +63,21 @@
                                        // (resumo + fluxo a 10 Hz ≈ 4 kB/s, abaixo dos ~11,5 kB/s de 115200).
                                        // O c imprime ~1,4 kB de uma vez: com 1 kB, o laço bloqueava ~30 ms,
                                        // perto do reinício da fusão (FUSION_MAX_DT_MS)
+// ---------- Tasks (FreeRTOS, docs/plano.md semana 3) ----------
+// A sensor_task fica sozinha no núcleo 1 com a ISR do INT e a do I2C; a serial (e depois o rádio e o OLED),
+// no núcleo 0, junto com o Wi-Fi do IDF. Pilhas em bytes (no ESP32, o xTaskCreate conta bytes)
+#define SENSOR_TASK_CORE        1
+#define SENSOR_TASK_PRIO        4
+#define SENSOR_TASK_STACK       8192   // a mesma da loopTask do Arduino, onde o laço rodava antes
+#define SERIAL_TASK_CORE        0
+#define SERIAL_TASK_PRIO        1
+#define SERIAL_TASK_STACK       4096
+#define SERIAL_TASK_PERIOD_MS   2      // volta da serial_task: esvazia o logger e lê as teclas
+#define SERIAL_START_DELAY_MS   500    // espera depois do Serial.begin() para o monitor reabrir após o reset
+#define CMD_QUEUE_LEN           16     // comandos (teclas) aguardando a sensor_task
+#define SERIAL_READY_TIMEOUT_MS 1000   // boot: espera máxima pela serial_task iniciar o Serial (reinicia se passar)
+#define LOG_FLUSH_TIMEOUT_MS    3000   // logFlush() de outra task (antes de um reinício): 12 kB de buffers a
+                                       // 115200 levam ~1,1 s
 #define LOG_BUFFER_BYTES        8192   // buffer do lib/logger, antes do Serial: quem imprime não espera a UART;
                                        // cheio, a mensagem é descartada e contada. Com o do Serial, ~12 kB
                                        // (~1 s a 115200): cabe o c (~1,4 kB) junto com o r e o a

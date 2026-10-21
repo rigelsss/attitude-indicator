@@ -60,16 +60,36 @@ static RingLogBuffer s_buf;
 static SerialLogSink s_out;
 static MuxLogLock s_dropLock;
 static LogCore s_core(s_buf, s_dropLock);
-static bool s_ready = false;
+static bool s_ready = false;   // buffer criado; sem ele, modo degradado (ver push)
+// Única task que esvazia o buffer e escreve no Serial (LogCore: um consumidor só), registrada por
+// logAttachSerial() depois do Serial.begin(). Antes dela, as mensagens só se acumulam. Escrita uma vez, antes
+// de liberar s_serialReady: quem passa por logWaitSerial() já a enxerga
+static TaskHandle_t s_consumer = nullptr;
+static uint32_t s_flushTimeoutMs = 0;
 
+// Semáforos estáticos (sem alocação: valem também quando o heap falhou)
+static StaticSemaphore_t s_serialReadyBuf, s_flushReqBuf, s_flushDoneBuf;
+static SemaphoreHandle_t s_serialReady = nullptr;   // dado pelo logAttachSerial()
+static SemaphoreHandle_t s_flushReq = nullptr;      // pedido de flush de outra task para a consumidora
+static SemaphoreHandle_t s_flushDone = nullptr;     // flush concluído pela consumidora
+static bool s_flushPending = false;                 // só a consumidora usa
+
+static bool isConsumer() { return s_consumer != nullptr && xTaskGetCurrentTaskHandle() == s_consumer; }
+
+// Modo degradado (sem buffer): antes do Serial pronto, a mensagem é descartada; depois, escrita direta, que
+// bloqueia quem imprime (como antes da P2). O HardwareSerial tem mutex: a escrita é segura entre tasks
 static void push(const char *s, size_t len) {
     if (len == 0) return;
     if (!s_ready) {
-        Serial.write((const uint8_t *)s, len);
+        if (s_consumer != nullptr) Serial.write((const uint8_t *)s, len);
         return;
     }
     s_core.push(s, len);
 }
+
+// Tudo o que entrou no buffer já foi escrito no Serial. Só a consumidora sabe: ela retira um trecho antes de
+// escrevê-lo, e nesse intervalo o buffer parece vazio para as outras tasks
+static bool drained() { return !s_ready || (s_buf.waiting() == 0 && s_core.pendingMsgs() == 0); }
 
 // ---------- Logs do núcleo (ets_printf, um caractere por vez) e do ESP-IDF ----------
 
@@ -98,15 +118,34 @@ static int idfVprintf(const char *fmt, va_list arg) {
     return len;
 }
 
-bool logBegin(size_t bytes) {
+bool logBegin(size_t bytes, uint32_t flushTimeoutMs) {
+    s_flushTimeoutMs = flushTimeoutMs;
+    s_serialReady = xSemaphoreCreateBinaryStatic(&s_serialReadyBuf);
+    s_flushReq = xSemaphoreCreateBinaryStatic(&s_flushReqBuf);
+    s_flushDone = xSemaphoreCreateBinaryStatic(&s_flushDoneBuf);
     s_buf.rb = xRingbufferCreate(bytes, RINGBUF_TYPE_BYTEBUF);
     if (s_buf.rb == nullptr) return false;
     s_ready = true;
-    // Desliga o canal de depuração do núcleo no Serial: sem ele, log_printf não espera a UART ficar ociosa.
-    // Em seguida, o putc do ets_printf passa a ser o deste arquivo
-    Serial.setDebugOutput(false);
     ets_install_putc1(corePutc);
     esp_log_set_vprintf(idfVprintf);
+    return true;
+}
+
+void logAttachSerial() {
+    if (s_ready) {
+        // Desliga o canal de depuração do núcleo no Serial: sem ele, log_printf não espera a UART ficar
+        // ociosa. setDebugOutput(false) também desinstala o putc do ets_printf, então ele é instalado de novo.
+        // No modo degradado, o log do núcleo fica como no Arduino (direto na UART)
+        Serial.setDebugOutput(false);
+        ets_install_putc1(corePutc);
+    }
+    s_consumer = xTaskGetCurrentTaskHandle();
+    xSemaphoreGive(s_serialReady);
+}
+
+bool logWaitSerial(uint32_t timeoutMs) {
+    if (s_serialReady == nullptr || xSemaphoreTake(s_serialReady, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) return false;
+    xSemaphoreGive(s_serialReady);   // fica disponível para outra espera
     return true;
 }
 
@@ -144,11 +183,20 @@ void logPrint(const char *s) { push(s, strlen(s)); }
 void logPrintln(const char *s) { logPrintf("%s\r\n", s); }
 
 void logPump() {
+    if (!isConsumer()) return;
     if (s_ready) s_core.pump(s_out);
+    // Pedido de flush de outra task: concluído quando tudo o que entrou no buffer já foi escrito
+    if (!s_flushPending && xSemaphoreTake(s_flushReq, 0) == pdTRUE) s_flushPending = true;
+    if (s_flushPending && drained()) {
+        Serial.flush();
+        s_flushPending = false;
+        xSemaphoreGive(s_flushDone);
+    }
 }
 
+// Nas esperas, quem não é o consumidor só aguarda: a serial_task esvazia o buffer
 void logWaitRoom(size_t bytes) {
-    if (!s_ready) return;
+    if (!s_ready || s_consumer == nullptr) return;
     // Com um descarte pendente, a mensagem seguinte também seria descartada: espera o aviso sair
     while (s_buf.freeBytes() < bytes || s_core.pendingMsgs() > 0) {
         logPump();
@@ -157,13 +205,17 @@ void logWaitRoom(size_t bytes) {
 }
 
 void logFlush() {
-    if (s_ready) {
-        // Até o buffer esvaziar e o aviso de um descarte pendente sair
-        for (;;) {
-            logPump();
-            if (s_buf.waiting() == 0 && s_core.pendingMsgs() == 0) break;
+    if (s_consumer == nullptr) return;   // Serial ainda não iniciado: nada a esperar
+    if (isConsumer()) {
+        while (!drained()) {
+            s_core.pump(s_out);
             delay(1);
         }
+        Serial.flush();
+        return;
     }
-    Serial.flush();
+    // Outra task: a consumidora faz o flush e confirma. Com o limite, um reinício não trava se ela parar
+    xSemaphoreTake(s_flushDone, 0);   // descarta uma confirmação antiga
+    xSemaphoreGive(s_flushReq);
+    xSemaphoreTake(s_flushDone, pdMS_TO_TICKS(s_flushTimeoutMs));
 }

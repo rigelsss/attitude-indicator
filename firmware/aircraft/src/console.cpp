@@ -13,34 +13,31 @@ void Console::printHelp() const {
                "0 = zerar altitude | r = resumo por segundo");
 }
 
-void Console::poll() {
-    while (Serial.available()) {
-        const char ch = (char)Serial.read();
-        const MagKey mk = d_.mag.handleKey(ch);
-        // d parou o laço por alguns segundos: a referência de tempo da fusão não vale mais
-        if (mk == MagKey::HandledLoopStalled) d_.fusionReset();
-        if (mk != MagKey::NotHandled) continue;
-        const CalKey ck = d_.cal.handleKey(ch);   // seis posições e montagem em andamento
-        if (ck == CalKey::HandledFusionReset) d_.fusionReset();
-        if (ck != CalKey::NotHandled) continue;
-        switch (ch) {
-        case 'c': printStatus(); break;
-        case 'r':
-            summaryOn_ = !summaryOn_;
-            logPrintf("[A] resumo por segundo %s\n", summaryOn_ ? "ligado" : "desligado");
-            break;
-        case 'g': d_.cal.startGyro(GyroCalKind::Cmd); break;
-        case 'z': d_.cal.startMount(); break;
-        case 'a': toggleAttitude(); break;
-        case 'b': d_.baro.toggleStream(micros()); break;
-        case 'm': d_.mag.startCalibration(!d_.cal.magAllowed()); break;
-        case 'p': d_.mag.toggleStream(micros()); break;
-        case '0': d_.baro.zeroAltitude(); break;
-        case '6': d_.cal.startSix(); break;
-        case 'h':
-        case '?': printHelp(); break;
-        default: break;
-        }
+void Console::handleKey(char ch) {
+    const MagKey mk = d_.mag.handleKey(ch);
+    // d parou o laço por alguns segundos: a referência de tempo da fusão não vale mais
+    if (mk == MagKey::HandledLoopStalled) d_.fusionReset();
+    if (mk != MagKey::NotHandled) return;
+    const CalKey ck = d_.cal.handleKey(ch);   // seis posições e montagem em andamento
+    if (ck == CalKey::HandledFusionReset) d_.fusionReset();
+    if (ck != CalKey::NotHandled) return;
+    switch (ch) {
+    case 'c': printStatus(); break;
+    case 'r':
+        summaryOn_ = !summaryOn_;
+        logPrintf("[A] resumo por segundo %s\n", summaryOn_ ? "ligado" : "desligado");
+        break;
+    case 'g': d_.cal.startGyro(GyroCalKind::Cmd); break;
+    case 'z': d_.cal.startMount(); break;
+    case 'a': toggleAttitude(); break;
+    case 'b': d_.baro.toggleStream(micros()); break;
+    case 'm': d_.mag.startCalibration(!d_.cal.magAllowed()); break;
+    case 'p': d_.mag.toggleStream(micros()); break;
+    case '0': d_.baro.zeroAltitude(); break;
+    case '6': d_.cal.startSix(); break;
+    case 'h':
+    case '?': printHelp(); break;
+    default: break;
     }
 }
 

@@ -1071,6 +1071,35 @@ Pendência 3 do [refatoracao.md](refatoracao.md). No progresso, um ponto só con
 - **Quedas de um setor (8→7 e 13→12):** o centro provisório se desloca com a coleta, e alguns pontos mudam de setor ou ficam a menos de 10 µT dele. Isso já acontecia antes (log `261021-131836`: 14→13 aos 18 s). A aceitação reconta os setores com o centro ajustado e não depende disso.
 - O fim pela cobertura com uma calibração real não foi conferido aqui. O teste `native` do giro em esfera cobre esse caminho, e a calibração real fica para o modelo final (pendência 4).
 
+### Histerese do distúrbio magnético (21/10/2026)
+
+O distúrbio começa com |m| a mais de 15 % do raio da calibração (`MAG_DISTURB_PCT`) e termina com ele de volta a no máximo 10 % (`MAG_DISTURB_EXIT_PCT`): com o raio de 25,7 µT, entra fora de 21,8–29,6 µT e sai dentro de 23,1–28,3 µT. Antes era um limite só, e o aviso alternava perto dele (passos 2 e 6b da refatoração, 20/10).
+
+**Primeira bancada, só com a folga** (log `261021-141352`, carimbo `14:12:27`). Fluxo `p` ligado e a chave de fenda chegando perto do GY-273 e se afastando, duas vezes.
+
+| Aproximação | Entradas e saídas | \|m\| nas trocas |
+|---|---|---|
+| 1ª, devagar | 1 e 1 | entrada com 29,6 µT; saída com 28,0 µT. No caminho, o \|m\| foi até 62 µT e voltou por 30–33 µT sem alternar |
+| 2ª, com a chave mexendo perto do módulo | 5 e 5 em ~13 s | entradas com 29,6–34,0 µT; saídas com 25,6–28,1 µT |
+
+- **Nenhuma troca dentro da faixa de folga:** a regra foi cumprida. Na 2ª, o |m| oscilou mais que a folga e depressa: 28,1 → 29,4 µT em 0,2 s, com uma nova entrada 0,3 s depois da saída, e 25,4 → 36,2 µT de uma linha para a outra. A proa do magnetômetro variou de 125° a 29° no trecho, e a filtrada ficou parada (correção suspensa).
+- **Decisão (autor, 21/10):** além da folga, um tempo mínimo seguido na faixa de saída (`MAG_DISTURB_EXIT_MS`, 1 s) antes de terminar. Com os |m| desse log (linhas do `p`, a ~10 Hz), o teste `native` dá 4 entradas sem o tempo mínimo e 2 com ele.
+
+**Bancada com o tempo mínimo de 1 s** (carimbos `14:24:20` e `14:28:36`):
+
+| Log | Aproximação | Trocas | Do \|m\| entrar na faixa de saída até o `terminou` |
+|---|---|---|---|
+| `261021-142503` | 1ª, devagar | 1 e 1 (29,7 → 25,7 µT) | 9 linhas do `p` (~1 s), de 28,0 a 25,8 µT |
+| `261021-142503` | 2ª, com a chave mexendo | 1 e 1 (29,8 → 25,2 µT) | 11 linhas (~1,1 s), de 27,3 a 25,3 µT |
+| `261021-142929` | chave mexendo na borda do distúrbio | 1 e 1 (29,7 → 25,5 µT) | 10 linhas (~1 s), de 28,3 a 25,6 µT |
+
+- Uma entrada e uma saída por aproximação, e a saída 1 s depois da volta à faixa, como previsto. O `c` deu `valid = 0x000D`.
+- **Não reproduzido na placa:** a oscilação dentro da faixa de 27–31 µT. Nas duas tentativas, com a chave mexendo, o |m| ficou entre 31 e 199 µT: a chave estava perto demais do módulo para o campo passar pela faixa de saída. Esse caso está coberto pelo teste `native` com os valores reais do log `261021-141352`.
+- **Correções da revisão (21/10, antes do commit), depois desta bancada:**
+  - uma leitura inválida (falha ou saturação) e o início do `m` passaram a zerar a contagem da saída, sem tirar o distúrbio. Antes, a primeira leitura válida depois de uma pausa de mais de 1 s já encerrava o distúrbio;
+  - ao gravar uma calibração nova, o detector recomeça. Antes, um distúrbio decidido com o raio antigo continuava com o raio novo, e um campo entre 10 e 15 % do raio novo manteria a correção suspensa;
+  - cobertas pelo `native` (`test_disturbed_exit_interrupted`, `test_disturbed_reset_on_new_calibration`). Na placa, só o caminho normal é conferido; a saturação exige um ímã encostado no módulo, e o `s` exige uma calibração aceita (modelo final, pendência 4).
+
 ### `z` refeito na montagem final (20/10/2026)
 
 Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo `2026-10-20 18:53:13`). A caixa foi encostada pelo nariz e, girada 180°, pela cauda, na mesma referência.

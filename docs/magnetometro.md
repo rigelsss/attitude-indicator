@@ -204,7 +204,7 @@ O que a bancada mostrou:
 - **Inicialização:** com a primeira proa válida do magnetômetro, sem esperar convergir.
 - **Suspensão da correção,** com o giroscópio mantendo a proa sozinho:
   - |pitch| > `MAG_MAX_PITCH_DEG` (70°, faixa validada da fusão), porque a proa fica mal definida perto de ±90°;
-  - \|m\| corrigido afastado do raio da calibração por mais de `MAG_DISTURB_PCT` (15 %), o distúrbio. A serial sinaliza;
+  - \|m\| corrigido afastado do raio da calibração por mais de `MAG_DISTURB_PCT` (15 %), o distúrbio. A serial sinaliza. **Com histerese (desde 21/10/2026):** o distúrbio só termina com o \|m\| de volta a no máximo `MAG_DISTURB_EXIT_PCT` (10 %), entre 23,1 e 28,3 µT com o raio de 25,7 µT, por `MAG_DISTURB_EXIT_MS` (1 s) seguidos; uma leitura fora dessa faixa recomeça a contagem. O tempo mínimo veio da bancada de 21/10: com a chave de fenda mexendo perto do módulo, o \|m\| oscilava mais que a folga, e houve 5 entradas em 13 s. Uma leitura inválida (falha ou saturação) e o início de uma calibração zeram a contagem, sem tirar o distúrbio: a saída sempre exige 1 s seguido de leituras válidas na faixa. Ao gravar uma calibração nova, o detector recomeça, porque o distúrbio foi decidido com o raio antigo; se havia um em curso, sai `[mag] distúrbio encerrado: calibração nova gravada`. Sem a folga, um campo passando devagar pelo limite alternava o aviso e a correção (20/10/2026). O custo: num lugar com o campo entre 10 % e 15 % fora do raio, depois de um distúrbio, a correção fica suspensa, e a proa segue só pelo giroscópio até o \|m\| voltar à faixa; e, mesmo de volta, a correção só recomeça 1 s depois;
   - **atitude degradada** (o giroscópio saturou, `AttitudeFilter::degraded()`): roll e pitch podem estar errados por alguns segundos, e a compensação de inclinação passaria o erro para a proa.
 - **Deriva sem correção:** com o bias do giroscópio calibrado no boot (incerteza de ~0,006 °/s), um minuto inteiro deriva menos de 1°.
 - **Reinício:** a proa recomeça da primeira proa válida do magnetômetro quando a atitude reinicia (ou ainda não foi inicializada), numa lacuna de mais de `MAG_MAX_DT_MS` (200 ms) entre amostras do MPU e depois de uma calibração gravada.
@@ -228,7 +228,7 @@ O que a bancada mostrou:
 - roll e pitch;
 - estado: `ok`, `DISTURBIO`, `INCL_ALTA`, `ATITUDE_DEGRADADA`, `SEM_ATITUDE` (fusão ainda sem referência), mais `SEM_CAL` sem calibração na NVS.
 
-A linha sai a ~10 Hz em média, alinhada às leituras de 25 Hz (intervalos de 80 e 120 ms). Ao entrar e sair de um distúrbio, a serial imprime uma linha `[mag] DISTÚRBIO: ...` e `[mag] distúrbio terminou`. O aviso é calculado pelo próprio \|m\| em relação ao raio da calibração, e não pelo estado da correção: com outra suspensão ativa (atitude degradada, inclinação alta), o estado mostra essa outra causa, mas o aviso de distúrbio continua correto.
+A linha sai a ~10 Hz em média, alinhada às leituras de 25 Hz (intervalos de 80 e 120 ms). Ao entrar e sair de um distúrbio, a serial imprime uma linha `[mag] DISTÚRBIO: ...` e `[mag] distúrbio terminou`. O aviso e a suspensão da correção usam o mesmo estado (`MagDisturbance`, em `lib/mag`), atualizado uma vez por leitura pelo próprio \|m\| em relação ao raio da calibração, e não pelo resultado da correção: com outra suspensão ativa (atitude degradada, inclinação alta), o estado mostra essa outra causa, mas o aviso de distúrbio continua correto.
 
 **Linhas novas no `c` e no `r`:**
 - `c`: calibração (offset, W, raio, resíduo e setores, ou "NÃO calibrado"), configuração (ganho, taxa, média e leitura) e a linha do `r`;
@@ -289,6 +289,8 @@ O `printHelp()` passa a listar `m` e `p`.
 | `MAG_CAL_MAX_RESID_PCT` | 3 | Resíduo máximo do ajuste |
 | `MAG_CAL_MIN_SCALE` / `MAG_CAL_MAX_SCALE` | 0,7 / 1,3 | Faixa dos semieixos normalizados |
 | `MAG_DISTURB_PCT` | 15 | Desvio de \|m\| que suspende a correção |
+| `MAG_DISTURB_EXIT_PCT` | 10 | Desvio de \|m\| abaixo do qual o distúrbio termina (histerese) |
+| `MAG_DISTURB_EXIT_MS` | 1000 | Tempo seguido na faixa de saída para o distúrbio terminar |
 | `MAG_HEADING_TAU_S` | 1,0 | Filtro da proa (D6) |
 | `MAG_MAX_PITCH_DEG` | 70 | Acima disso, sem correção pelo magnetômetro |
 | `MAG_MAX_DT_MS` | 200 | Lacuna que reinicia a proa; limite do passo na correção |

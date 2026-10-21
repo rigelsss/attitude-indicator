@@ -11,6 +11,22 @@
 #include "attitude.h"
 #include "sched.h"
 
+// Resumo de uma linha (r e c), copiado na task dona do barramento e formatado na task da serial (por cópia:
+// docs/tasks.md). Os textos apontam para literais, válidos em qualquer task
+struct MagSummary {
+    bool        ready;         // begin() aceito
+    const char *statusText;    // sem ready: motivo da última tentativa
+    bool        ok;
+    uint32_t    winReads;      // leituras válidas no último 1 s
+    bool        have;          // há uma leitura válida
+    float       normUt;        // |m| corrigido
+    bool        hdgInitialized;
+    float       hdgDeg;
+    const char *state;         // stateText()
+    bool        calValid;
+    uint32_t    failTotal, failStreak, recoveries, saturations;
+};
+
 // Valores do config.h, montados por quem cria o serviço (as libs não incluem o config.h)
 struct MagServiceConfig {
     Hmc5883lConfig chip;
@@ -57,7 +73,7 @@ public:
     // Fecha a janela de 1 s do resumo (contagem de leituras)
     void closeWindow();
     // Uma linha no resumo por segundo (r) e no estado (c)
-    void printSummary() const;
+    MagSummary summary() const;   // uma linha no resumo por segundo (r) e no estado (c), por cópia
     const char *stateText() const;
 
     // Estado, para o console, a fusão e a validade da telemetria

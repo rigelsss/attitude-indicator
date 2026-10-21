@@ -75,22 +75,21 @@ void BaroService::printLine(const BaroSample &b) const {
         logPrintf("[baro] %6.2f °C | %8.2f hPa | alt: sem zero\n", b.tempC, b.pressHpa);
 }
 
-void BaroService::printSummary() const {
-    if (!ready_) {
-        logPrintf("    baro: barômetro indisponível (%s)\n", bme280StatusText(lastStatus_));
-        return;
-    }
-    logPrintf("    baro: %s | ", baro_.ok() ? "ok" : "FALHANDO");
-    const float alt = altitudeM();
-    if (!have_) logPrint("sem leitura");
-    else if (isfinite(alt))
-        logPrintf("%.2f hPa | alt %+.2f m | %.1f °C (ΔT %+.1f desde o zero)", last_.pressHpa, alt, last_.tempC,
-                  last_.tempC - zero_.refTempC());
-    else if (zero_.refValid())
-        logPrintf("%.2f hPa | alt inválida | %.1f °C", last_.pressHpa, last_.tempC);
-    else logPrintf("%.2f hPa | sem zero | %.1f °C", last_.pressHpa, last_.tempC);
-    logPrintf(" | falhas %lu (seguidas %lu, recuperações %lu)\n", (unsigned long)baro_.failTotal(),
-              (unsigned long)baro_.failStreak(), (unsigned long)baro_.recoveries());
+BaroSummary BaroService::summary() const {
+    BaroSummary s;
+    s.ready = ready_;
+    s.statusText = bme280StatusText(lastStatus_);
+    s.ok = baro_.ok();
+    s.have = have_;
+    s.pressHpa = last_.pressHpa;
+    s.tempC = last_.tempC;
+    s.altM = altitudeM();
+    s.zeroValid = zero_.refValid();
+    s.zeroTempC = zero_.refTempC();
+    s.failTotal = baro_.failTotal();
+    s.failStreak = baro_.failStreak();
+    s.recoveries = baro_.recoveries();
+    return s;
 }
 
 void BaroService::service(uint32_t nowUs) {

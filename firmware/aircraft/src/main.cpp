@@ -1,6 +1,6 @@
 // ESP A — avião. main.cpp só inicializa e cria as tasks (src/tasks/); a lógica está em lib/ e nas tasks:
-//   serial_task  (prio 1, núcleo 0) — inicia o Serial, passa as mensagens do lib/logger para a UART e entrega
-//                as teclas à sensor_task pela fila de comandos
+//   serial_task  (prio 1, núcleo 0) — inicia o Serial, formata o c, o r e o a a partir das cópias da
+//                sensor_task, passa as mensagens do lib/logger para a UART e entrega as teclas à sensor_task
 //   sensor_task  (prio 4, núcleo 1) — acordada pela INT do MPU a SAMPLE_RATE_HZ; dona do barramento: lê o
 //                MPU e, intercalados, o BME280 e o HMC5883L; calibração e fusão (roll/pitch/proa); executa
 //                os comandos (console)
@@ -15,6 +15,7 @@
 #include "logger.h"
 #include "tasks/serial_task.h"
 #include "tasks/sensor_task.h"
+#include "report_queue.h"
 
 extern const char *const BUILD_STAMP;   // build_info.cpp: data e hora da compilação
 
@@ -35,6 +36,7 @@ void setup() {
               (unsigned)sizeof(TelemetryPacket));
     if (!logBuffered)
         logPrintln("[A] AVISO: sem memória para o buffer do logger; impressões direto no Serial (bloqueiam o laço)");
+    if (!reportQueueInit()) fatal("[A] ERRO: sem memória para a fila de relatórios do console; reiniciando em 1 s");
     if (!sensorTaskStart()) fatal("[A] ERRO: sem memória para a sensor_task; reiniciando em 1 s");
 }
 

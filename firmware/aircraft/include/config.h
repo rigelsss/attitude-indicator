@@ -71,10 +71,14 @@
 #define SENSOR_TASK_STACK       8192   // a mesma da loopTask do Arduino, onde o laço rodava antes
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1
-#define SERIAL_TASK_STACK       4096
+#define SERIAL_TASK_STACK       6144   // formata o c, o r e o a (vsnprintf com float e o relatório copiado)
 #define SERIAL_TASK_PERIOD_MS   2      // volta da serial_task: esvazia o logger e lê as teclas
 #define SERIAL_START_DELAY_MS   500    // espera depois do Serial.begin() para o monitor reabrir após o reset
 #define CMD_QUEUE_LEN           16     // comandos (teclas) aguardando a sensor_task
+#define REPORT_QUEUE_LEN        4      // relatórios do console (c, r, a) aguardando a serial_task (~0,6 kB cada)
+#define CONSOLE_VIEW_BUFFER_BYTES 2048 // buffer de formatação de um bloco do console (o c tem ~1,4 kB)
+#define SERIAL_REPORTS_PER_CYCLE 2     // relatórios formatados por volta da serial_task (cada um seguido de um
+                                       // escoamento do logger); a fila de 4 esvazia em 2 voltas (~4 ms)
 #define SERIAL_READY_TIMEOUT_MS 1000   // boot: espera máxima pela serial_task iniciar o Serial (reinicia se passar)
 #define LOG_FLUSH_TIMEOUT_MS    3000   // logFlush() de outra task (antes de um reinício): 12 kB de buffers a
                                        // 115200 levam ~1,1 s

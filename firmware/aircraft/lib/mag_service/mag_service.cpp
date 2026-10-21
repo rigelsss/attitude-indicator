@@ -73,22 +73,23 @@ void MagService::printLine() const {
               stateText(), cal_.valid ? "" : " SEM_CAL");
 }
 
-void MagService::printSummary() const {
-    if (!ready_) {
-        logPrintf("    mag: HMC5883L indisponível (%s)\n", hmc5883lStatusText(lastStatus_));
-        return;
-    }
-    logPrintf("    mag: %s | %lu leituras no último 1 s | ", mag_.ok() ? "ok" : "FALHANDO",
-              (unsigned long)lastWinReads_);
-    if (!have_) logPrint("sem leitura");
-    else {
-        logPrintf("|m| %.1f µT", norm(corr_));
-        if (hdg_.initialized()) logPrintf(" | proa %.1f°", hdg_.headingDeg());
-        logPrintf(" | %s%s", stateText(), cal_.valid ? "" : " SEM_CAL");
-    }
-    logPrintf(" | falhas %lu (seguidas %lu, recuperações %lu) | saturadas %lu\n", (unsigned long)mag_.failTotal(),
-              (unsigned long)mag_.failStreak(), (unsigned long)mag_.recoveries(),
-              (unsigned long)mag_.saturations());
+MagSummary MagService::summary() const {
+    MagSummary s;
+    s.ready = ready_;
+    s.statusText = hmc5883lStatusText(lastStatus_);
+    s.ok = mag_.ok();
+    s.winReads = lastWinReads_;
+    s.have = have_;
+    s.normUt = norm(corr_);
+    s.hdgInitialized = hdg_.initialized();
+    s.hdgDeg = hdg_.headingDeg();
+    s.state = stateText();
+    s.calValid = cal_.valid;
+    s.failTotal = mag_.failTotal();
+    s.failStreak = mag_.failStreak();
+    s.recoveries = mag_.recoveries();
+    s.saturations = mag_.saturations();
+    return s;
 }
 
 void MagService::closeWindow() {

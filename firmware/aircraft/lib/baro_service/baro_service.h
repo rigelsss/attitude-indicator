@@ -8,6 +8,21 @@
 #include "baro.h"
 #include "sched.h"
 
+// Resumo de uma linha (r e c), copiado na task dona do barramento e formatado na task da serial (por cópia:
+// docs/tasks.md). Os textos apontam para literais, válidos em qualquer task
+struct BaroSummary {
+    bool        ready;         // begin() aceito
+    const char *statusText;    // sem ready: motivo da última tentativa
+    bool        ok;            // respondendo (sem ST_BARO_OK caído)
+    bool        have;          // há uma leitura válida
+    float       pressHpa;
+    float       tempC;
+    float       altM;          // NAN sem zero ou fora da faixa
+    bool        zeroValid;
+    float       zeroTempC;
+    uint32_t    failTotal, failStreak, recoveries;
+};
+
 // Valores do config.h, montados por quem cria o serviço (as libs não incluem o config.h)
 struct BaroServiceConfig {
     Bme280Config   chip;
@@ -32,8 +47,8 @@ public:
     void zeroAltitude();                 // tecla 0
     void toggleStream(uint32_t nowUs);   // tecla b
 
-    // Uma linha no resumo por segundo (r) e no estado (c)
-    void printSummary() const;
+    // Uma linha no resumo por segundo (r) e no estado (c), por cópia
+    BaroSummary summary() const;
 
     // Estado, para o console e a validade da telemetria
     bool ok() const { return ready_ && baro_.ok(); }

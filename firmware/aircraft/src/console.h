@@ -1,9 +1,8 @@
-// console.h — console serial do ESP A: tecla → comando, estado (c), resumo por segundo (r), fluxo de
-// atitude (a) e ajuda. Só formata e despacha: a lógica fica nos serviços e nas libs puras. Imprime pelo
-// lib/logger. Docs: docs/refatoracao.md (passo 8).
-// Roda na sensor_task: as teclas chegam pela fila de comandos (src/tasks/sensor_task.h), lidas do Serial pela
-// serial_task. Por isso pode chamar os serviços direto. O c, o r e o a ainda são formatados aqui, na
-// sensor_task; no passo 2 da semana 3 vão para a serial_task (refatoracao.md, pendências 2 e 7).
+// console.h — console serial do ESP A, lado da sensor_task: tecla → comando, liga e desliga do resumo por
+// segundo (r) e do fluxo de atitude (a), e cópia do estado (c) e das linhas do r e do a para a serial_task, que
+// as formata (src/console_view.cpp). As teclas chegam pela fila de comandos (src/tasks/sensor_task.h). Este lado
+// pode chamar os serviços direto, porque roda na task dona deles; a formatação, na serial_task, lê só as
+// cópias (refatoracao.md, pendência 7; docs/tasks.md). Imprime pelo lib/logger.
 #pragma once
 #include <Arduino.h>
 #include "mpu6050.h"
@@ -14,7 +13,7 @@
 #include "mag_service.h"
 #include "telemetry_flags.h"
 
-// O que o console lê e comanda, montado no main.cpp
+// O que o console lê e comanda, montado na sensor_task
 struct ConsoleDeps {
     Mpu6050 &mpu;                          // contadores de falha
     const volatile uint32_t &intOverflow;  // pulsos que não couberam na fila do INT, desde o boot
@@ -34,16 +33,13 @@ public:
     void printHelp() const;
     // Uma tecla: calibração do magnetômetro, seis posições e montagem primeiro; depois os comandos
     void handleKey(char ch);
-    // Uma janela de 1 s fechou (antes de ser guardada como a última): resumo, se o r estiver ligado
+    // Uma janela de 1 s fechou (antes de ser guardada como a última): cópia para o resumo, se o r estiver ligado
     void windowClosed(const SampleWindow &w) const;
-    // Uma amostra passou pela fusão: linha do a quando vence (acc nos eixos do modelo, já corrigido)
+    // Uma amostra passou pela fusão: cópia da linha do a quando vence (acc nos eixos do modelo, já corrigido)
     void attitudeSample(const Vec3 &acc, float tempC, uint32_t intUs);
 
 private:
-    void printStatus() const;
-    void printValidity(const ValidityInputs &in) const;
-    void printWindow(const SampleWindow &w) const;
-    void printAttitudeLine(const Vec3 &acc, float tempC) const;
+    void sendStatus() const;
     void toggleAttitude();
 
     ConsoleDeps d_;

@@ -67,3 +67,18 @@ Os valores ficam no `config.h` (seção "Tasks"). A `loopTask` do Arduino se apa
 - Com isso, as pendências 2 e 7 do [refatoracao.md](refatoracao.md) estão fechadas.
 
 **Passo 3: pulsos falsos no INT** (pendência 8): filtro de intervalo mínimo, conferência do `INT_STATUS` na leitura do MPU e quarentena de 10 ms, na `sensor_task`. Detalhes e bancada em [hardware.md](hardware.md), "Pulsos falsos no INT".
+
+**Passo 4: o rádio** (`radio_task`, [radio.md](radio.md)). A aquisição não mudou com o Wi-Fi ligado no núcleo 0: atraso de 101–115 µs, dt 5,00–5,01 ms, 199–200 Hz com tudo em 0, inclusive com o `r` e o `a` juntos por ~83 s. **O custo do filtro, porém, subiu** com o binário maior (de 373 para 836 kB de flash, com as bibliotecas do Wi-Fi):
+
+| Firmware | Log | Filtro, média (mediana) | Filtro, máximo (mediana / maior) |
+|---|---|---|---|
+| Passo 3, sem código de rádio | `261021-164446` | 31 µs | 38 / 85 µs |
+| Passo 4, Wi-Fi ligado | `261021-173300` | 146 µs | 241 / 273 µs |
+| A/B: código do rádio no binário, Wi-Fi **desligado** (`aircraft_noradio`) | `261021-174726` | 131 µs | 141 / 150 µs |
+| A/B: Wi-Fi ligado | `261021-174848` | 140 µs | 226 / 268 µs |
+| **`AttitudeFilter::update()` e auxiliares na IRAM (`HOT_PATH`)**, Wi-Fi ligado | `261021-175411` | **68 µs** | **108 / 148 µs** |
+
+- **A causa era a posição do código na flash, e não o Wi-Fi:** o aumento já aparecia com o Wi-Fi desligado (A/B com o mesmo binário, flash de 836 321 contra 836 305 B). É o mesmo efeito de layout dos passos 3+4, 5 e 8 da refatoração, agora maior. O Wi-Fi ligado só acrescenta ao pico.
+- **Correção:** o caminho por amostra do filtro (`update`, `wrapPi`, `finite3`, `scaled`, `accWeight`) vai para a IRAM pela macro `HOT_PATH` (`lib/attitude/hot_path.h`, que não faz nada no `native`). Com isso, o critério voltou a passar: média ≤ 75 µs e máximo ≤ 200 µs.
+- **Reserva:** os 68 µs que sobram vêm da libm (`atan2f`, `sinf`, `cosf`), que continua na flash. O `update()` faz 12 chamadas por amostra, 9 delas no `wrapPi()` (`atan2f(sinf(a), cosf(a))`). Trocá-lo por uma conta sem trigonometria derrubaria o custo, mas é uma mudança de lógica: fica para a semana 6, se a margem apertar.
+- **Ambiente `aircraft_noradio`:** o mesmo firmware, sem ligar o Wi-Fi (a flag é lida em tempo de execução, para o binário não mudar). Serve para A/B de tempo.

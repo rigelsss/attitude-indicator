@@ -1123,6 +1123,16 @@ Pendência 8 do [refatoracao.md](refatoracao.md). Com o fio do INT meio encaixad
   - no `c`, a linha `pulsos do INT` (com `falsos` e `sem dado novo`) passou a sair também quando o último 1 s não teve nenhuma leitura válida, que é justamente o caso em que todas foram descartadas.
   - Conferência (log `261021-170248`, carimbo `17:02:04`): `[teste] injeção terminada: 6972 pulsos falsos (0 recusados com a fila do INT cheia)`. O `c` logo depois mostrou a janela da injeção, `falsos 1249 e sem dado novo 151`, com `valid = 0x000D`. O caminho sem nenhuma leitura válida não foi exercitado: as leituras com dado novo contam como amostras mesmo fora da fusão, então ele só aparece com o INT sem pulso nenhum.
 
+### Brownout ao ligar o Wi-Fi (21/10/2026)
+
+Primeira gravação com a `radio_task` (passo 4 da semana 3): a placa A entrou num laço de reinícios logo depois do boot, sem nenhuma linha do firmware (logs `261021-172220` e `172235`, ~60 × `rst:0xc (SW_CPU_RESET)`).
+
+- **A mensagem sumia por causa do logger.** No ESP-IDF 4.4, o detector de brownout é uma interrupção que imprime `Brownout detector was triggered` pelo `ets_printf` e reinicia por software (por isso `SW_CPU_RESET`, e não um reset de brownout do hardware). Desde a P2, o `ets_printf` ia para o buffer do logger, e o reinício vinha antes da `serial_task` escoá-lo. **Correção:** um `ets_printf` dentro de uma interrupção vai direto para a UART pela ROM (`lib/logger`). A linha de boot passou a mostrar o motivo do reinício anterior (`esp_reset_reason()`), e o Wi-Fi passou a ligar 1 s depois do boot, com a linha `[radio] ligando o Wi-Fi...` impressa antes.
+- **Confirmação** (log `261021-172926`, carimbo `17:28:37`): em todos os boots, `[radio] ligando o Wi-Fi...`, `Brownout detector was triggered` e, no boot seguinte, `[A] reinício anterior: BROWNOUT (queda de tensão)`. Os sensores configuraram normalmente antes disso.
+- **Causa:** a partida do RF (calibração e primeiras transmissões) puxa picos de ~300–400 mA, que a alimentação da montagem (USB → regulador da NodeMCU → protoboard com os módulos) não sustenta. Isso é coerente com os episódios de mau contato no VCC de 19/10 e de hoje.
+- **Resolvido com o cabo USB** (log `261021-173149`, mesmo firmware): um cabo mais curto e de melhor qualidade, numa porta direta do PC. Os dois boots saíram com `reinício anterior: energia ligada` e `[radio] ESP-NOW ativo: MAC 1C:69:20:A4:E9:44, canal 1, peer 14:33:5C:03:8A:B4, 50 Hz | heap livre 168 kB, maior bloco 107 kB`. Sem capacitor e sem reduzir a potência de transmissão.
+- **Para o modelo final e para o B:** a alimentação precisa sustentar os picos do rádio. Com o powerbank, conferir a linha `reinício anterior` no primeiro boot. Se houver brownout, as opções são o capacitor de 100–470 µF entre o 5V e o GND, perto da placa, e a potência de transmissão menor.
+
 ### `z` refeito na montagem final (20/10/2026)
 
 Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo `2026-10-20 18:53:13`). A caixa foi encostada pelo nariz e, girada 180°, pela cauda, na mesma referência.

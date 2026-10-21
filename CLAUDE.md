@@ -16,6 +16,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - `docs/barometro.md`: BME280 (perfil "indoor navigation"), altitude relativa, zero (`0`) e roteiro de validação.
 - `docs/magnetometro.md`: HMC5883L, mapeamento de eixos, calibração (`m`), proa compensada e filtro da proa, roteiro de validação.
 - `docs/refatoracao.md`: refatoração do `main.cpp` provisório (concluída em 20/10/2026): módulos, linha de base e critérios de tempo da bancada, resultados por passo e pendências para a migração às tasks.
+- `docs/radio.md`: ESP-NOW (configuração do A e do B, campos do pacote, contadores do console) e a bancada do rádio.
 - `docs/tasks.md`: tasks do ESP A (núcleos, prioridades, filas, logger com um consumidor só) e as medições de tempo de cada passo da semana 3.
 - Antes de concluir uma etapa, atualize o doc afetado (procedimento de uso, resultados, decisões).
 
@@ -42,6 +43,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - Compilar/gravar: `pio run -e aircraft -t upload` / `pio run -e ground -t upload`
 - Diagnóstico I2C (ESP A): `pio run -e i2cscan -t upload`
 - Teste de pulsos falsos no INT (ESP A, tecla `F`): `pio run -e aircraft_pulsetest -t upload`; depois, regravar o `aircraft`
+- A/B de tempo sem o Wi-Fi ligado (ESP A): `pio run -e aircraft_noradio -t upload`; depois, regravar o `aircraft`
 - Monitor: `pio device monitor -b 115200`
 - Página web no B: `pio run -e ground -t uploadfs`
 - Testes de lógica: `pio test -e native`

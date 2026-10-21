@@ -70,8 +70,10 @@ static const int MAG_FACES = 6;
 int magSector(const Vec3 &d);
 const char *magFaceName(int face);   // "+x", "-x", "+y", "-y", "+z", "-z"
 
-// Pontos por setor, com a direção tomada em relação a center
-void magCountSectors(const Vec3 *pts, size_t n, const Vec3 &center, uint16_t counts[MAG_SECTORS]);
+// Pontos por setor, com a direção tomada em relação a center. Só contam os pontos a pelo menos minDistUt
+// do centro (0: todos)
+void magCountSectors(const Vec3 *pts, size_t n, const Vec3 &center, uint16_t counts[MAG_SECTORS],
+                     float minDistUt = 0.0f);
 // Setores com pelo menos minPts pontos
 int magSectorsCovered(const uint16_t counts[MAG_SECTORS], uint16_t minPts);
 // Setores ainda sem cobertura em cada face (0 a 4)
@@ -132,6 +134,9 @@ struct MagCalParams {
     uint32_t     progressMs;   // intervalo das linhas de progresso
     size_t       maxPoints;    // capacidade do buffer de pontos
     MagFitLimits fit;          // limites do ajuste; minPtsSector também vale para a cobertura do progresso
+    float        coverMinUt;   // progresso: um ponto só conta para a cobertura a pelo menos esta distância do
+                               // centro provisório. Com a caixa parada, a nuvem de ruído (~1 µT) fica toda
+                               // dentro e não cobre setores (refatoracao.md, pendência 3)
 };
 
 // Máquina de estado da calibração do magnetômetro (comando m): coleta dos pontos girando a caixa, com o

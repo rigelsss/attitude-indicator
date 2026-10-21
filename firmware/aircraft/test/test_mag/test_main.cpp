@@ -513,7 +513,7 @@ static void test_heading_gap_resets() {
 
 // ---------- Calibração (MagCalibrator) ----------
 
-static const MagCalParams CP = {180000, 2000, 4500, LIM};
+static const MagCalParams CP = {180000, 2000, 4500, LIM, 10.0f};
 static Vec3 g_calBuf[4500];
 
 struct CalOut {
@@ -591,7 +591,7 @@ static void test_calib_finishes_by_coverage() {
 
 // Sem cobertura, a coleta termina pelo tempo, e o ajuste é recusado
 static void test_calib_finishes_by_time() {
-    const MagCalParams p = {10000, 2000, 4500, LIM};
+    const MagCalParams p = {10000, 2000, 4500, LIM, 10.0f};
     MagCalibrator c(p);
     c.start(g_calBuf, 0);
     int progress = 0;
@@ -612,7 +612,7 @@ static void test_calib_finishes_by_time() {
 
 // Buffer cheio encerra a coleta antes da próxima linha de progresso
 static void test_calib_finishes_when_buffer_full() {
-    const MagCalParams p = {180000, 2000, 30, LIM};
+    const MagCalParams p = {180000, 2000, 30, LIM, 10.0f};
     MagCalibrator c(p);
     c.start(g_calBuf, 0);
     const CalOut o = feedUntilEvent(c, 0, 100, spherePoint);
@@ -645,6 +645,64 @@ static void test_calib_millis_wraparound() {
     TEST_ASSERT_EQUAL_UINT32(0, o.tMs);
     TEST_ASSERT_EQUAL_UINT32(2000, c.elapsedMs());
     TEST_ASSERT_EQUAL_UINT32(51, c.count());
+}
+
+// Distância mínima ao centro na contagem dos setores: abaixo dela o ponto não conta; no limite, conta
+static void test_count_sectors_min_distance() {
+    const Vec3 pts[] = {{5, 0, 0}, {10, 0, 0}, {-20, 0, 0}, {0, 0, 9.99f}, {NAN, 0, 0}};
+    uint16_t counts[MAG_SECTORS];
+    magCountSectors(pts, 5, {0, 0, 0}, counts, 10.0f);
+    uint32_t sum = 0;
+    for (int i = 0; i < MAG_SECTORS; i++) sum += counts[i];
+    TEST_ASSERT_EQUAL_UINT32(2, sum);
+    TEST_ASSERT_EQUAL_UINT16(1, counts[magSector({1, 0, 0})]);
+    TEST_ASSERT_EQUAL_UINT16(1, counts[magSector({-1, 0, 0})]);
+    // Sem distância mínima (a recontagem do ajuste), todos os finitos e não nulos contam
+    magCountSectors(pts, 5, {0, 0, 0}, counts);
+    sum = 0;
+    for (int i = 0; i < MAG_SECTORS; i++) sum += counts[i];
+    TEST_ASSERT_EQUAL_UINT32(4, sum);
+}
+
+// Caixa parada: ruído de ±0,5 µT em torno do offset (gerador linear congruente, determinístico)
+static uint32_t g_noiseState = 1;
+static float noise05() {
+    g_noiseState = g_noiseState * 1664525u + 1013904223u;
+    return ((g_noiseState >> 8) / 16777216.0f - 0.5f);   // [−0,5, 0,5)
+}
+static Vec3 stillPoint(int) { return {OFF.x + noise05(), OFF.y + noise05(), OFF.z + noise05()}; }
+
+// O caso da pendência 3: com a caixa parada, o ruído cobria setores pelo centro provisório. Com a
+// distância mínima, a cobertura fica em 0 em todas as linhas, e a coleta só termina pelo tempo
+static void test_calib_still_box_no_coverage() {
+    // Sem a distância mínima, o mesmo ruído cobre setores logo na primeira linha (o defeito de antes)
+    {
+        const MagCalParams p0 = {180000, 2000, 4500, LIM, 0.0f};
+        MagCalibrator c(p0);
+        g_noiseState = 1;
+        c.start(g_calBuf, 0);
+        const CalOut o = feedUntilEvent(c, 0, 500, stillPoint);
+        TEST_ASSERT_TRUE(o.ev == MagCalibrator::Event::Progress);
+        TEST_ASSERT_TRUE(c.covered() > 0);
+    }
+    MagCalibrator c(CP);
+    g_noiseState = 1;
+    c.start(g_calBuf, 0);
+    int progress = 0;
+    int fed = 0;
+    CalOut o = {MagCalibrator::Event::None, 0, 0};
+    for (;;) {
+        o = feedUntilEvent(c, 40u * (uint32_t)fed, 5000, stillPoint, fed);
+        fed += o.samples;
+        if (o.ev != MagCalibrator::Event::Progress) break;
+        progress++;
+        TEST_ASSERT_EQUAL(0, c.covered());
+        for (int f = 0; f < MAG_FACES; f++) TEST_ASSERT_EQUAL_UINT8(4, c.missing(f));
+    }
+    TEST_ASSERT_TRUE(o.ev == MagCalibrator::Event::Finished);
+    TEST_ASSERT_EQUAL(89, progress);              // 2, 4, …, 178 s
+    TEST_ASSERT_EQUAL_UINT32(4500, c.count());    // até o fim do tempo ou do buffer
+    TEST_ASSERT_TRUE(c.fit().status != MagFitStatus::Ok);
 }
 
 int main(int, char **) {
@@ -684,5 +742,7 @@ int main(int, char **) {
     RUN_TEST(test_calib_finishes_when_buffer_full);
     RUN_TEST(test_calib_stop);
     RUN_TEST(test_calib_millis_wraparound);
+    RUN_TEST(test_count_sectors_min_distance);
+    RUN_TEST(test_calib_still_box_no_coverage);
     return UNITY_END();
 }

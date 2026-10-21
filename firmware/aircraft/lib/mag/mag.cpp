@@ -96,10 +96,14 @@ const char *magFaceName(int face) {
     return (face >= 0 && face < MAG_FACES) ? NAMES[face] : "?";
 }
 
-void magCountSectors(const Vec3 *pts, size_t n, const Vec3 &center, uint16_t counts[MAG_SECTORS]) {
+void magCountSectors(const Vec3 *pts, size_t n, const Vec3 &center, uint16_t counts[MAG_SECTORS],
+                     float minDistUt) {
     for (int i = 0; i < MAG_SECTORS; i++) counts[i] = 0;
+    const float minDist2 = minDistUt * minDistUt;
     for (size_t k = 0; k < n; k++) {
-        const int s = magSector({pts[k].x - center.x, pts[k].y - center.y, pts[k].z - center.z});
+        const Vec3 d = {pts[k].x - center.x, pts[k].y - center.y, pts[k].z - center.z};
+        if (minDistUt > 0 && !(d.x * d.x + d.y * d.y + d.z * d.z >= minDist2)) continue;
+        const int s = magSector(d);
         if (s >= 0 && counts[s] < UINT16_MAX) counts[s]++;
     }
 }
@@ -386,7 +390,7 @@ MagCalibrator::Event MagCalibrator::feed(const Vec3 &raw, uint32_t tMs) {
     nextProgMs_ += p_.progressMs;
     lastMs_ = tMs;
     uint16_t counts[MAG_SECTORS];
-    magCountSectors(pts_, n_, mm_.center(), counts);
+    magCountSectors(pts_, n_, mm_.center(), counts, p_.coverMinUt);
     covered_ = magSectorsCovered(counts, p_.fit.minPtsSector);
     magMissingByFace(counts, p_.fit.minPtsSector, miss_);
     if (covered_ < MAG_SECTORS && !timeUp) return Event::Progress;

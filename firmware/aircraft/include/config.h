@@ -150,6 +150,9 @@
 #define MAG_KEY_HINT_MS          1000     // tecla ignorada na coleta ou na revisão: no máximo um aviso por intervalo
 #define MAG_CAL_MIN_SECTORS      20       // setores cobertos (de 24) para aceitar a coleta
 #define MAG_CAL_MIN_PTS_SECTOR   5        // pontos para um setor contar
+#define MAG_CAL_COVER_MIN_UT     10.0f    // progresso da coleta: ponto conta para a cobertura só a pelo menos isto
+                                          // do centro provisório (~40 % do raio de 25,7 µT; ruído ~0,5 µT). Com a
+                                          // caixa parada, a cobertura fica em 0 e a coleta não termina pelo ruído
 #define MAG_CAL_MIN_RADIUS_UT    10.0f    // raio ajustado aceito (faixa larga: modelo final)
 #define MAG_CAL_MAX_RADIUS_UT    60.0f
 #define MAG_CAL_MAX_RESID_PCT    3.0f     // resíduo RMS de |m| corrigido, % do raio

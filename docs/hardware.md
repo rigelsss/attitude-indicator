@@ -1035,6 +1035,30 @@ Pendência 2 do [refatoracao.md](refatoracao.md), parte que não depende das tas
 - O giroscópio é recalibrado a cada boot, então o bias novo é absorvido. O offset do acelerômetro (~10 mg em z) fica fora da calibração de seis posições até ela ser refeita, o que será feito no modelo final de qualquer forma.
 - **Acompanhar:** se o bias z não voltar a ~+1,16 °/s nas próximas bancadas, conferir o assento do módulo.
 
+### Aviso de tecla ignorada na calibração do magnetômetro (21/10/2026)
+
+Pendência 1 do [refatoracao.md](refatoracao.md). Log `261021-131836`, carimbo `2026-10-21 13:10:11`, caixa parada na mesa. O monitor não grava as teclas digitadas, então cada tecla foi dada logo depois de uma linha de progresso conhecida (a cada 2 s), e o aviso foi conferido entre ela e a linha seguinte.
+
+| Tecla | Depois da linha | Avisos até a linha seguinte |
+|---|---|---|
+| `c` uma vez | `4 s` | 1 (`[mag] calibração em andamento: x cancela`) |
+| `c` quatro vezes rápido | `10 s` | **1**: limite de um por segundo (`MAG_KEY_HINT_MS`) |
+| Enter três vezes | `22 s` | 0 |
+| nenhuma, até o fim da coleta | — | 0 (180 s, 4 500 pontos, recusada: raio de 0,17 µT) |
+| `c` na revisão | `calibração RECUSADA` | 1 (`[mag] revisão da calibração: s = gravar \| x = sair \| d = pontos em CSV`) |
+
+- O `x` deu `resultado descartado; calibração anterior mantida`, e o `c` seguinte mostrou a mesma calibração (offset +8,1 +6,2 +10,6 µT) com `valid = 0x000D`.
+- Um log anterior com o mesmo firmware (`261021-131127`) teve 4 avisos na coleta, todos a mais de 1 s um do outro, mas sem a sequência de teclas controlada, e o passo da revisão não foi feito.
+- **Correções da revisão (21/10, antes do commit), depois desta bancada:**
+  - **Intervalo:** passou a usar a diferença sem sinal do `millis()`, com um indicador de primeiro aviso. Com o `Periodic` (diferença com sinal em µs), depois de ~35 min sem avisos (a revisão pode ficar aberta) uma tecla ignorada deixaria de gerar resposta por mais ~35 min.
+  - **Dica da revisão recusada:** passou a ser `[mag] revisão da calibração recusada: x = sair | d = pontos em CSV`, sem oferecer o `s`, que não grava nesse caso.
+  - **Bancada do build corrigido** (carimbo `13:32:42`):
+    - log `261021-133323`: um aviso entre as linhas `4 s` e `6 s` depois de um `c`, e dois entre `10 s` e `12 s` depois de quatro `c` rápidos. Isso é compatível com as teclas espalhadas por mais de 1 s; na rodada de 13:18 saiu um só;
+    - log `261021-134014`: logo depois de `calibração RECUSADA`, um `c` deu `[mag] revisão da calibração recusada: x = sair | d = pontos em CSV`, e o `x` deu `resultado descartado`;
+    - nas duas rodadas, a coleta terminou pelo ruído aos 72 e 86 s, com a caixa parada (pendência 3).
+- **`fila cheia` depois da coleta:** o `c` seguinte mostrou `fila cheia 15` (1 801 pontos, log `133323`) e `59` (4 500 pontos, log `131836`). O ajuste do fim da coleta roda no laço e o para por mais de 80 ms (16 pulsos na fila). O comportamento já existia e é anterior a esta mudança. Na migração para as tasks, o ajuste pode ir para uma task de prioridade baixa.
+- **Primeiro boot do log `133323`:** aos 9 s, uma rajada de `[E][Wire.cpp]` com reinícios do barramento, `HMC5883L perdeu a configuração` e um `POWERON_RESET`. É a alimentação ou o contato oscilando, como nos outros casos de hoje. O teste rodou no boot seguinte.
+
 ### `z` refeito na montagem final (20/10/2026)
 
 Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo `2026-10-20 18:53:13`). A caixa foi encostada pelo nariz e, girada 180°, pela cauda, na mesma referência.

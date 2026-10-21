@@ -148,6 +148,7 @@ Com a proa magnética ψ, o campo nos eixos do modelo é x = H·cosψ, y = −H�
 - `m` inicia a coleta, que termina sozinha ao completar os 24 setores, ou depois de `MAG_CAL_MS` (180 s; 90 e 120 s ficaram curtos para girar com calma).
 - Os pontos (até 4 500, a 25 Hz) ficam guardados em µT, nos eixos do modelo e sem calibração, num buffer de ~54 kB alocado só durante a calibração. O buffer é necessário porque o resíduo e a recontagem da cobertura precisam de uma segunda passada sobre os pontos, e a tecla `d` os imprime.
 - Durante a coleta e a revisão, a proa e o fluxo `p` ficam suspensos. O MPU continua normal. `x` cancela.
+- As outras teclas são ignoradas, com um aviso no máximo uma vez por segundo (`MAG_KEY_HINT_MS`): `[mag] calibração em andamento: x cancela` na coleta. Na revisão, `[mag] revisão da calibração: s = gravar | x = sair | d = pontos em CSV`, ou `[mag] revisão da calibração recusada: x = sair | d = pontos em CSV` quando o ajuste foi recusado. Enter e espaço não geram aviso. O intervalo usa a diferença sem sinal do `millis()`, então vale com a revisão aberta por horas. Antes de 21/10/2026, a tecla era ignorada sem nada na serial, e o terminal parecia travado.
 
 **Como girar a caixa (revisto na bancada em 14/10/2026):** **no mesmo lugar**, sem transportá-la, e num ponto onde o campo seja uniforme. Para cada face apoiada, um giro de 360° em torno da vertical, devagar (~20–25 s por giro):
 

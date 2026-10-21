@@ -405,12 +405,12 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
 | # | Pendência | Situação |
 |---|---|---|
 | 1 | Teclas ignoradas no `m` | feita em 21/10 |
-| 2 | Log do núcleo e formatação no laço | log do núcleo feito em 21/10; **o atraso com o `r` e o `a` juntos ficou em 104–118 µs com as tasks (passo 1, [tasks.md](tasks.md))**: vinha da escrita no `Serial`, não da formatação. Falta conferir o atraso depois de um `c` (passo 2) |
+| 2 | Log do núcleo e formatação no laço | **feita em 21/10**: log do núcleo pelo logger; com as tasks, atraso de 104–120 µs com o `r` e o `a` juntos e de 105–119 µs depois de um `c` ([tasks.md](tasks.md), passos 1 e 2) |
 | 3 | Cobertura do `m` pelo ruído | feita em 21/10 |
 | 4 | `s` de uma calibração aceita do magnetômetro | modelo final (calibração real no lugar) |
 | 5 | Carimbo do pulso do INT | feita em 21/10 (ISR em IRAM, nível 2); causa de 20/10 não confirmada |
 | 6 | `s` das seis posições | modelo final |
-| 7 | Console chamando os serviços direto | **semana 3**, com a `sensor_task` (fila de comandos e estado publicado) |
+| 7 | Console chamando os serviços direto | **feita em 21/10**: teclas pela fila de comandos para a `sensor_task`; `c`, `r` e `a` formatados na `serial_task` a partir de cópias ([tasks.md](tasks.md), passos 1 e 2) |
 | 8 | Pulsos falsos no INT | **semana 3**, junto com a `sensor_task`; teste por `native` e por injeção de pulsos pelo software, sem depender do fio |
 
 Fora da lista, também em 21/10: histerese e tempo mínimo na saída do distúrbio magnético ([hardware.md](hardware.md), "Histerese do distúrbio magnético").

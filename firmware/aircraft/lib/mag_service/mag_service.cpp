@@ -126,6 +126,7 @@ void MagService::startCalibration(bool otherCalRunning) {
         return;
     }
     calib_.start(pts_, millis());
+    keyHinted_ = false;
     hdg_.reset();
     logPrintf("[mag] calibração: gire a caixa devagar em TODAS as orientações por até %lu s (x cancela).\n",
               (unsigned long)(cfg_.cal.maxMs / 1000));
@@ -249,16 +250,37 @@ void MagService::service(uint32_t nowUs) {
     }
 }
 
+// Tecla ignorada na calibração: diz o que vale agora, no máximo uma vez por keyHintMs, para o terminal não
+// parecer travado (refatoracao.md, pendência 1). Enter e espaço não contam. O intervalo usa a diferença
+// sem sinal do millis(), e não o Periodic (diferença com sinal em µs, válida só até ~35 min de atraso)
+void MagService::hintIgnoredKey(char ch, const char *msg) {
+    if (ch == '\r' || ch == '\n' || ch == ' ') return;
+    const uint32_t now = millis();
+    if (keyHinted_ && now - keyHintMs_ < cfg_.keyHintMs) return;
+    logPrintln(msg);
+    keyHinted_ = true;
+    keyHintMs_ = now;
+}
+
 MagKey MagService::handleKey(char ch) {
     const MagCalibrator::State st = calib_.state();
     if (st == MagCalibrator::State::Collect) {
         if (ch == 'x') {
             logPrintln("[mag] calibração cancelada; calibração anterior mantida");
             freeCalibration();
+        } else {
+            hintIgnoredKey(ch, "[mag] calibração em andamento: x cancela");
         }
         return MagKey::Handled;   // outras teclas são ignoradas durante a coleta
     }
     if (st != MagCalibrator::State::Review) return MagKey::NotHandled;
+    if (ch != 's' && ch != 'x' && ch != 'd') {
+        // Recusada, o s não grava: a dica não o oferece
+        hintIgnoredKey(ch, calib_.fit().status == MagFitStatus::Ok
+                               ? "[mag] revisão da calibração: s = gravar | x = sair | d = pontos em CSV"
+                               : "[mag] revisão da calibração recusada: x = sair | d = pontos em CSV");
+        return MagKey::Handled;
+    }
     if (ch == 'd') {
         dumpPoints();
         return MagKey::HandledLoopStalled;

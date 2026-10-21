@@ -21,6 +21,7 @@ struct MagServiceConfig {
     float    disturbPct;     // |m| afastado do raio da calibração mais que isto: distúrbio
     float    refFieldUt;     // |B| do modelo geomagnético na bancada (só informativo, no fim da calibração)
     uint32_t printHz;        // fluxo p
+    uint32_t keyHintMs;      // calibração: intervalo mínimo entre os avisos de tecla ignorada
 };
 
 // Resultado de uma tecla entregue ao serviço
@@ -71,6 +72,7 @@ private:
     void printFinish();
     void dumpPoints();
     void printLine() const;
+    void hintIgnoredKey(char ch, const char *msg);
 
     MagServiceConfig cfg_;
     const AttitudeFilter &att_;
@@ -98,4 +100,7 @@ private:
     Vec3 *pts_ = nullptr;      // buffer da calibração (cal.maxPoints × 12 B, ~54 kB)
     bool streamOn_ = false;
     Periodic streamPrint_;
+    // Último aviso de tecla ignorada (millis, diferença sem sinal: vale com a revisão aberta por horas)
+    bool keyHinted_ = false;
+    uint32_t keyHintMs_ = 0;
 };

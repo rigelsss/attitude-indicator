@@ -147,6 +147,7 @@
                                           // calma (90 e 120 s ficaram curtos na bancada, 14/10/2026); 4 500 pontos,
                                           // ~54 kB alocados só durante a calibração
 #define MAG_CAL_PROGRESS_MS      2000     // intervalo das linhas de progresso da coleta
+#define MAG_KEY_HINT_MS          1000     // tecla ignorada na coleta ou na revisão: no máximo um aviso por intervalo
 #define MAG_CAL_MIN_SECTORS      20       // setores cobertos (de 24) para aceitar a coleta
 #define MAG_CAL_MIN_PTS_SECTOR   5        // pontos para um setor contar
 #define MAG_CAL_MIN_RADIUS_UT    10.0f    // raio ajustado aceito (faixa larga: modelo final)

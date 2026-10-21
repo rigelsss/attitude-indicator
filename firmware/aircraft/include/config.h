@@ -21,6 +21,9 @@
 
 // ---------- GPIO ----------
 #define PIN_MPU_INT      19       // interrupção "data ready" do MPU6050
+#define MPU_INT_INTR_LEVEL 2      // nível da interrupção do INT (1–3; C não atende níveis acima de 3):
+                                  // acima do nível 1 da UART, para o carimbo do pulso não esperar a ISR
+                                  // de transmissão (refatoracao.md, pendência 5)
 #define PIN_LED_STATUS   2        // LED onboard: pisca = transmitindo
 
 // ---------- Temporização ----------

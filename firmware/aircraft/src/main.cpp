@@ -23,6 +23,8 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
+#include <driver/gpio.h>
+#include <esp_timer.h>
 #include "config.h"
 #include "telemetry.h"
 #include "mpu6050.h"
@@ -125,11 +127,40 @@ static uint32_t clockUs() { return micros(); }
 
 static void beginSettle() { g_settle.begin(micros(), CAL_MPU_SETTLE_MS * 1000UL); }
 
-static void IRAM_ATTR onMpuInt() {
-    uint32_t t = micros();
+// ISR do INT, registrada pelo ESP-IDF (attachIntPin), sem o despachante do Arduino, que roda da flash.
+// O carimbo vem do esp_timer_get_time(), que fica na IRAM: o micros() do núcleo está na flash (sem
+// CONFIG_ARDUINO_ISR_IRAM) e devolve o mesmo relógio, truncado em 32 bits como aqui.
+static void IRAM_ATTR onMpuInt(void *) {
+    uint32_t t = (uint32_t)esp_timer_get_time();
     BaseType_t woke = pdFALSE;
     if (xQueueSendFromISR(g_intQueue, &t, &woke) != pdTRUE) g_intOverflow++;
     if (woke) portYIELD_FROM_ISR();
+}
+
+static_assert(MPU_INT_INTR_LEVEL >= 1 && MPU_INT_INTR_LEVEL <= 3, "MPU_INT_INTR_LEVEL fora de 1..3");
+
+// Liga a ISR do INT uma vez só (o serviço de GPIO do IDF não aceita ser instalado de novo), em IRAM e
+// no nível MPU_INT_INTR_LEVEL. Sem ela não há amostras: reinicia, como na falta da fila
+static void attachIntPin() {
+    static bool attached = false;
+    if (attached) return;
+    gpio_config_t io = {};
+    io.pin_bit_mask = 1ULL << PIN_MPU_INT;
+    io.mode = GPIO_MODE_INPUT;
+    io.pull_up_en = GPIO_PULLUP_DISABLE;
+    io.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    io.intr_type = GPIO_INTR_POSEDGE;
+    esp_err_t err = gpio_config(&io);
+    // ESP_INTR_FLAG_LEVELn vale (1 << n)
+    if (err == ESP_OK) err = gpio_install_isr_service(ESP_INTR_FLAG_IRAM | (1 << MPU_INT_INTR_LEVEL));
+    if (err == ESP_OK) err = gpio_isr_handler_add((gpio_num_t)PIN_MPU_INT, onMpuInt, nullptr);
+    if (err != ESP_OK) {
+        logPrintf("[A] ERRO: ISR do INT não registrada (%s); reiniciando em 1 s\n", esp_err_to_name(err));
+        logFlush();
+        delay(1000);
+        ESP.restart();
+    }
+    attached = true;
 }
 
 static void startMpu() {
@@ -148,8 +179,7 @@ static void startMpu() {
               MPU_ACCEL_RANGE_G, MPU_GYRO_RANGE_DPS, MPU_DLPF_HZ, g_mpu.actualSampleRateHz(),
               (unsigned long)I2C_FREQ_HZ);
     xQueueReset(g_intQueue);
-    pinMode(PIN_MPU_INT, INPUT_PULLDOWN);
-    attachInterrupt(digitalPinToInterrupt(PIN_MPU_INT), onMpuInt, RISING);
+    attachIntPin();
     g_mpuReady = true;
     // O giroscópio tem um transitório logo após a configuração: calibração e fusão ignoram esse trecho
     beginSettle();

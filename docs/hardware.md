@@ -1059,6 +1059,18 @@ Pendência 1 do [refatoracao.md](refatoracao.md). Log `261021-131836`, carimbo `
 - **`fila cheia` depois da coleta:** o `c` seguinte mostrou `fila cheia 15` (1 801 pontos, log `133323`) e `59` (4 500 pontos, log `131836`). O ajuste do fim da coleta roda no laço e o para por mais de 80 ms (16 pulsos na fila). O comportamento já existia e é anterior a esta mudança. Na migração para as tasks, o ajuste pode ir para uma task de prioridade baixa.
 - **Primeiro boot do log `133323`:** aos 9 s, uma rajada de `[E][Wire.cpp]` com reinícios do barramento, `HMC5883L perdeu a configuração` e um `POWERON_RESET`. É a alimentação ou o contato oscilando, como nos outros casos de hoje. O teste rodou no boot seguinte.
 
+### Cobertura do `m` com distância mínima (21/10/2026)
+
+Pendência 3 do [refatoracao.md](refatoracao.md). No progresso, um ponto só conta para a cobertura a pelo menos `MAG_CAL_COVER_MIN_UT` (10 µT) do centro provisório. Log `261021-135625`, carimbo `2026-10-21 13:55:41`.
+
+| Rodada | Cobertura |
+|---|---|
+| Caixa parada, 30 s | `0/24` nas 15 linhas, com `faltam: +x(4) -x(4) +y(4) -y(4) +z(4) -z(4)`. Com o firmware anterior, a mesma situação chegava a 13/24 em 10 s e a 24/24 em 72 s (log `261021-133323`), 86 s (`134014`) e 46 s (20/10) |
+| Caixa girando na mão, ~25 s, e de volta à mesa | 0 até 6 s (pegando a caixa), depois 3, 6, 8, 10 e 13/24 aos 28 s, com o `faltam:` diminuindo. Parada de novo: 12–13/24 |
+
+- **Quedas de um setor (8→7 e 13→12):** o centro provisório se desloca com a coleta, e alguns pontos mudam de setor ou ficam a menos de 10 µT dele. Isso já acontecia antes (log `261021-131836`: 14→13 aos 18 s). A aceitação reconta os setores com o centro ajustado e não depende disso.
+- O fim pela cobertura com uma calibração real não foi conferido aqui. O teste `native` do giro em esfera cobre esse caminho, e a calibração real fica para o modelo final (pendência 4).
+
 ### `z` refeito na montagem final (20/10/2026)
 
 Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo `2026-10-20 18:53:13`). A caixa foi encostada pelo nariz e, girada 180°, pela cauda, na mesma referência.

@@ -169,6 +169,10 @@ O que a bancada mostrou:
 
 **Cobertura, com 24 setores:**
 - A direção de cada ponto é tomada em relação a um centro provisório, o meio do mín./máx. corrente de cada eixo.
+- **Distância mínima (desde 21/10/2026):** no progresso, um ponto só conta para a cobertura se estiver a pelo menos `MAG_CAL_COVER_MIN_UT` (10 µT) do centro provisório.
+  - **Motivo:** com a caixa parada, os pontos formam uma nuvem de ~1 µT, e o centro provisório fica no meio dela. Antes, o ruído espalhava as direções pelos setores: a coleta chegava a 24/24 e terminava em 46–86 s, sem a caixa girar, e o `faltam:` não guiava nada. O resultado era recusado no fim (raio de ~0,2 µT).
+  - **Agora:** com a caixa parada, a cobertura fica em 0/24, e a coleta só termina pelo tempo. Girando, os pontos ficam a ~25 µT do centro e contam normalmente.
+  - A recontagem do fim, com o centro ajustado, não usa a distância mínima. O critério de aceitação não mudou.
 - O setor é a face do cubo do eixo dominante (±x, ±y, ±z), dividida em 4 quadrantes pelos sinais dos outros dois eixos.
 - Um setor só conta como coberto com pelo menos `MAG_CAL_MIN_PTS_SECTOR` (5) pontos.
 - A coleta é aceita com pelo menos `MAG_CAL_MIN_SECTORS` (20) setores. Ao fim da coleta, a cobertura é recontada com o centro ajustado.
@@ -277,6 +281,7 @@ O `printHelp()` passa a listar `m` e `p`.
 | `MAG_RETRY_MS` | 5000 | HMC ausente no boot: nova tentativa |
 | `MAG_CAL_MS` | 180000 | Duração máxima da coleta |
 | `MAG_CAL_PROGRESS_MS` | 2000 | Linhas de progresso da coleta |
+| `MAG_CAL_COVER_MIN_UT` | 10 | Distância mínima ao centro provisório para um ponto contar na cobertura do progresso |
 | `MAG_REF_FIELD_UT` | 26,2 | \|B\| do WMM na bancada, só para comparação na revisão |
 | `MAG_CAL_MIN_SECTORS` | 20 (de 24) | Cobertura mínima |
 | `MAG_CAL_MIN_PTS_SECTOR` | 5 | Pontos para um setor contar |

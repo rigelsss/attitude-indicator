@@ -988,6 +988,53 @@ Pendência 5 do [refatoracao.md](refatoracao.md). A ISR passou a ser registrada 
 - **O atraso bimodal (~105 ou 150–185 µs) aparece nos dois builds do passo 5, com e sem a correção**, e não no build atual (104–112 µs). Então ele não vem do caminho da ISR, o que é coerente com a hipótese do cache da flash no caminho da leitura (passo 3+4).
 - **Decisão:** a correção fica, porque é o desenho certo para as tasks (ISR curta em IRAM, acima da UART, que funciona com o cache desligado durante as gravações na NVS). A mudança elimina a dependência do despachante GPIO na flash e permite preempção da UART de nível 1; outras fontes de latência da ISR continuam possíveis: as seções críticas (`portENTER_CRITICAL` mascara até o nível 3, o que inclui o nível 2) e as interrupções de nível mais alto. O dt de 5,00–5,01 ms continua como critério em toda bancada.
 
+### Logger com buffer e log do núcleo redirecionado (21/10/2026)
+
+Pendência 2 do [refatoracao.md](refatoracao.md), parte que não depende das tasks. O `lib/logger` ganhou um buffer de 8 kB (`LOG_BUFFER_BYTES`), esvaziado pelo `logPump()` no `loop()` só no espaço livre do `Serial`. Com ele cheio, a mensagem é descartada e contada. O `[E][Wire.cpp]` do núcleo passou a entrar nesse buffer: `setDebugOutput(false)` desliga a espera do `log_printfv` pela UART ociosa, e o `ets_install_putc1` desvia o `ets_printf`. Firmware com carimbo `2026-10-21 12:09:12`.
+
+| Rodada | Log | Resultado |
+|---|---|---|
+| Roteiro base | `261021-120956` | `i2cInit()` do núcleo aparece no boot (passa pelo logger). `a`, 92 linhas: dt 5,00–5,01 ms, atraso de 100–113 µs, filtro méd. 25–73 / máx. 45–113 µs, ambíguos, descartados e reinícios em 0. `r` com 199–200 Hz e tudo em 0. Mensagens iguais às do passo 8 (`log_templates.py`) |
+| **SDA do BMP280 solto, com o `r`** | `261021-122908` | **73 janelas com o barômetro `FALHANDO` (falhas de 5 a 77): todas com 199–200 Hz, `descartadas 0` e 199–200 amostras de atitude.** Um `[E][Wire.cpp:499] … Error -1` por segundo, completo, pelo logger. Em 20/10, com o firmware antigo, a mesma situação dava `descartadas 10` e ~170 amostras por janela |
+| `r`, `a`, `b`, `p` e `c` juntos | `261021-121254` | Nenhuma mensagem descartada e nenhuma linha cortada. Atraso de 2 437 µs na linha do `a` logo depois do `c`, e de 447 e 381 µs depois de dois resumos: a formatação no laço, o resto da pendência 2. Uma linha (de 218) com dt máximo de 5,02 ms, sem ambíguos: uma observação, porque o logger acrescenta seções críticas, que mascaram até o nível 3 |
+| Dump `d` | `261021-121254` | Coleta de 180 s com 4 500 pontos, recusada (raio de 0,16 µT, caixa parada). O `d` imprimiu as 4 500 linhas (~100 kB, oito vezes o buffer) sem descarte: cada linha espera espaço |
+
+- **O BMP280 não voltou depois de recolocar o SDA** (77 falhas seguidas até o fim do log). No boot seguinte, depois de tirar o USB, ele configurou e aceitou o zero (log `261021-123137`). É o mesmo comportamento de 20/10: o módulo pode ficar mudo até a alimentação ser cortada. A volta do chip com o firmware rodando continua não vista ao vivo.
+- **Início do log `261021-122908`:** 138 linhas cortadas (`urned Error -1`), seguidas de ~45 reinícios no ROM (`rst:ets Jul 29 …`, sem completar o boot) e de um `POWERON_RESET`. Tudo isso foi antes do boot da rodada, na troca do USB. Os reinícios em sequência indicam alimentação instável no encaixe. As linhas cortadas não podem vir do descarte do logger, que retira mensagens inteiras. A falta do aviso `[log] … descartadas` não é evidência: no firmware deste log, o aviso dependia de uma mensagem posterior, e os reinícios logo depois apagariam a contagem pendente. A causa não foi identificada. Se aparecer de novo com o monitor já aberto e a placa estável, investigar.
+- **Correções da revisão (21/10, antes do commit):** a regra do buffer e do descarte foi para um núcleo puro (`LogCore`, em `lib/log_line`, testado no `native`). Os defeitos corrigidos:
+  - dois produtores podiam anunciar o mesmo lote e descontá-lo duas vezes, e o contador `uint32_t` dava a volta;
+  - a última perda de uma rajada ficava sem aviso;
+  - uma mensagem posterior ao descarte podia sair antes do aviso;
+  - os contadores eram lidos sem a trava.
+  - **Desenho final:** só o consumidor (`logPump()`) publica o aviso, quando o buffer esvazia, e só ele escreve no `Serial`. Com um descarte pendente, os produtores descartam também as mensagens novas, com a conferência e o incremento na mesma seção crítica. Todas as leituras dos contadores usam a trava.
+  - **Garantia:** o aviso sai depois de toda mensagem aceita antes do descarte e antes de toda mensagem que começou depois dele.
+  - **Custo:** depois de um descarte, tudo é descartado até o buffer esvaziar (até ~0,7 s).
+  - **Testes:** as intercalações são simuladas por preempção na trava falsa (`test_log_core`).
+  - **Bancada do build corrigido** (log `261021-125953`, carimbo `12:59:11`):
+    - boot com `i2cInit()` pelo logger, giroscópio calibrado e zero aceito; o `c` deu `valid = 0x000D`;
+    - `r`, 15 janelas: 199–200 Hz com tudo em 0;
+    - `a`, 155 linhas: dt 5,00–5,01 ms, atraso de 100–121 µs, filtro méd. 31–97 / máx. 60–161 µs, ambíguos, descartados e reinícios em 0;
+    - nenhum `[log] … descartadas`.
+
+**Fios mexidos por engano (logs `261021-121254` e `261021-122153`).** Nas duas primeiras tentativas da rodada do SDA, o fio solto foi o do INT (GPIO 19):
+
+- **INT solto de vez:** 30 janelas com `sem pulsos do INT` e a volta com `perdidas` grande, como na P5.
+- **INT meio encaixado:** **600 a 3 750 pulsos falsos por segundo** por ~40 s, com `descartadas` até 2 019 por janela, `fila cheia` de 0 para 54 e `pico |g|` de até 467 °/s com a caixa parada. A entrada com mau contato capta as bordas do I2C. Os picos são leituras feitas fora do "data ready", que pegam os registradores no meio da atualização. A atitude não mudou (±0,00°) e não houve reinícios, mas uma leitura assim pode passar pela validade temporal quando nenhum pulso falso chega durante ela (pendência 8 do [refatoracao.md](refatoracao.md)).
+
+**Deslocamento das medidas do MPU depois do manuseio dos fios (21/10).**
+
+| Logs | Bias z do giroscópio | `a` bruto em z | \|a\| corrigido |
+|---|---|---|---|
+| 10 boots de 11:28 a 12:18 | +1,15 a +1,18 °/s (29–33 °C) | +1,106 g | ~1,000 |
+| `122153` (12:21) | +1,81 a +1,83 °/s (28,2 °C) | +1,118 g | 1,018 |
+| `122908` (12:29) | +1,50 °/s (27,8 °C) | +1,115 g | 1,009 |
+| `123137` (12:31) | +1,42 °/s (27,7 °C) | — | — |
+| `125953` (12:59) | +1,42 °/s (27,2 °C) | — | — |
+
+- A temperatura e a inclinação da caixa (~0,4°) não explicam a mudança. Ela começou depois do manuseio dos fios perto do módulo e está voltando aos poucos. A hipótese é tensão mecânica no módulo do MPU, que desloca os offsets do MEMS.
+- O giroscópio é recalibrado a cada boot, então o bias novo é absorvido. O offset do acelerômetro (~10 mg em z) fica fora da calibração de seis posições até ela ser refeita, o que será feito no modelo final de qualquer forma.
+- **Acompanhar:** se o bias z não voltar a ~+1,16 °/s nas próximas bancadas, conferir o assento do módulo.
+
 ### `z` refeito na montagem final (20/10/2026)
 
 Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo `2026-10-20 18:53:13`). A caixa foi encostada pelo nariz e, girada 180°, pela cauda, na mesma referência.

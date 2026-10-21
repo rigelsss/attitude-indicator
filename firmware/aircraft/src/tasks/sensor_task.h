@@ -19,3 +19,9 @@ struct SensorCmd {
 bool sensorTaskStart();
 // Enfileira um comando, sem esperar. false com a fila cheia ou antes do sensorTaskStart()
 bool sensorTaskSend(const SensorCmd &c);
+
+#ifdef PULSE_TEST
+// Só no ambiente aircraft_pulsetest (src/pulse_test.h): põe um instante falso na fila do INT, como a ISR faria.
+// false com a fila cheia (contado por quem injeta, fora do contador "fila cheia" da ISR)
+bool sensorInjectPulse(uint32_t tUs);
+#endif

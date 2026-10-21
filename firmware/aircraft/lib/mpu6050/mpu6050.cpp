@@ -144,12 +144,16 @@ bool Mpu6050::read(ImuSample &out) {
     }
 
     uint32_t t = micros();
-    uint8_t b[14];
-    if (!readRegs(REG_ACCEL_XOUT_H, b, sizeof(b))) {
+    // Rajada a partir do INT_STATUS (0x3A), logo antes dos dados (0x3B): 1 byte a mais (~25 µs a 400 kHz).
+    // Com INT_RD_CLEAR = 0, só a leitura dele limpa o DATA_RDY_INT, então o bit diz se a amostra é nova
+    static_assert(REG_ACCEL_XOUT_H == REG_INT_STATUS + 1, "o INT_STATUS precisa vir logo antes dos dados");
+    uint8_t raw[15];
+    if (!readRegs(REG_INT_STATUS, raw, sizeof(raw))) {
         handleFail();
         return false;
     }
     failStreak_ = 0;
+    const uint8_t *b = raw + 1;
 
     int16_t v[7];   // ax ay az temp gx gy gz
     for (int i = 0; i < 7; i++) v[i] = (int16_t)((b[2 * i] << 8) | b[2 * i + 1]);
@@ -172,6 +176,7 @@ bool Mpu6050::read(ImuSample &out) {
     out.tUs = t;
     out.accelSaturated = accSat;
     out.gyroSaturated = gyroSat;
+    out.newData = (raw[0] & 0x01) != 0;
     return true;
 }
 

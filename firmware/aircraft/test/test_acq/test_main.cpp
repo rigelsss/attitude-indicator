@@ -224,6 +224,96 @@ static void test_settle_gate() {
     TEST_ASSERT_FALSE(g.hold(100000));
 }
 
+// ---------- Pulsos falsos (PulseFilter, pendência 8) ----------
+
+// Pulsos certos a cada 5 ms: todos aceitos
+static void test_pulse_filter_accepts_period() {
+    PulseFilter f(2500);
+    for (uint32_t k = 0; k < 10; k++) TEST_ASSERT_TRUE(f.accept(1000 + 5000 * k));
+}
+
+// Rajada a 0,3 ms (bordas captadas com o fio meio encaixado): só a primeira passa
+static void test_pulse_filter_rejects_burst() {
+    PulseFilter f(2500);
+    TEST_ASSERT_TRUE(f.accept(0));
+    int accepted = 0;
+    for (uint32_t t = 300; t < 2500; t += 300) accepted += f.accept(t);
+    TEST_ASSERT_EQUAL(0, accepted);
+    TEST_ASSERT_TRUE(f.accept(5000));   // o certo seguinte: 5 ms depois do último aceito
+}
+
+// Um falso 1 ms depois do certo é recusado e não vira referência: o certo seguinte, 5 ms depois, passa
+static void test_pulse_filter_isolated_spurious() {
+    PulseFilter f(2500);
+    TEST_ASSERT_TRUE(f.accept(10000));
+    TEST_ASSERT_FALSE(f.accept(11000));
+    TEST_ASSERT_TRUE(f.accept(15000));
+}
+
+// Exatamente no intervalo mínimo é aceito; 1 µs antes, não
+static void test_pulse_filter_boundary() {
+    PulseFilter f(2500);
+    TEST_ASSERT_TRUE(f.accept(0));
+    TEST_ASSERT_FALSE(f.accept(2499));
+    TEST_ASSERT_TRUE(f.accept(2500));
+}
+
+// reset(): sem referência, o primeiro pulso é aceito mesmo perto do anterior
+static void test_pulse_filter_reset() {
+    PulseFilter f(2500);
+    TEST_ASSERT_TRUE(f.accept(0));
+    f.reset();
+    TEST_ASSERT_TRUE(f.accept(100));
+    TEST_ASSERT_FALSE(f.accept(200));
+}
+
+// Virada do micros() (~71 min): a diferença sem sinal continua certa
+static void test_pulse_filter_wraparound() {
+    PulseFilter f(2500);
+    TEST_ASSERT_TRUE(f.accept(0xFFFFF000u));   // 4 096 µs antes da virada
+    TEST_ASSERT_FALSE(f.accept(0xFFFFF800u));  // 2 048 µs depois: falso
+    TEST_ASSERT_TRUE(f.accept(0x00000388u));   // 5 000 µs depois do aceito, já depois da virada
+}
+
+// ---------- Quarentena depois de um pulso falso (SpuriousHold) ----------
+
+// A brecha da bancada de 21/10: falso aceito em G+4 ms, verdadeiro de G+5 recusado (a 1 ms do falso), falso
+// seguinte em G+7 aceito e lido com a amostra de G+5. O quadro de G+7 tem que ficar fora da fusão
+static void test_spurious_hold_bench_sequence() {
+    const uint32_t G = 100000;
+    PulseFilter f(2500);
+    SpuriousHold h(10000);
+    TEST_ASSERT_TRUE(f.accept(G));
+    TEST_ASSERT_FALSE(h.holds(G));
+    TEST_ASSERT_TRUE(f.accept(G + 4000));   // falso aceito (lido sem dado novo)
+    TEST_ASSERT_FALSE(f.accept(G + 5000));  // o verdadeiro, recusado
+    h.noteSpurious(G + 5000);
+    TEST_ASSERT_TRUE(f.accept(G + 7000));   // falso aceito: a leitura encontra a amostra de G+5
+    TEST_ASSERT_TRUE(h.holds(G + 7000));    // ambíguo
+}
+
+// Falso isolado: os quadros até 10 ms depois ficam fora; depois disso, voltam, e a quarentena se encerra
+static void test_spurious_hold_isolated() {
+    SpuriousHold h(10000);
+    h.noteSpurious(1000);
+    TEST_ASSERT_TRUE(h.holds(500));     // pulso anterior ao falso, lido depois dele: ambíguo
+    TEST_ASSERT_TRUE(h.holds(5000));
+    TEST_ASSERT_TRUE(h.holds(10999));
+    TEST_ASSERT_FALSE(h.holds(11000));  // 10 ms depois
+    TEST_ASSERT_FALSE(h.holds(1000));   // encerrada: não volta a valer (nem com a virada do micros())
+}
+
+// Virada do micros() durante a quarentena; reset() a encerra
+static void test_spurious_hold_wraparound_and_reset() {
+    SpuriousHold h(10000);
+    h.noteSpurious(0xFFFFF000u);
+    TEST_ASSERT_TRUE(h.holds(0x00001000u));    // 8 192 µs depois, já depois da virada
+    TEST_ASSERT_FALSE(h.holds(0x00001710u));   // 10 000 µs depois
+    h.noteSpurious(50);
+    h.reset();
+    TEST_ASSERT_FALSE(h.holds(60));
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_windows_continuous_limits);
@@ -239,5 +329,14 @@ int main() {
     RUN_TEST(test_check_frame);
     RUN_TEST(test_acq_stats);
     RUN_TEST(test_settle_gate);
+    RUN_TEST(test_pulse_filter_accepts_period);
+    RUN_TEST(test_pulse_filter_rejects_burst);
+    RUN_TEST(test_pulse_filter_isolated_spurious);
+    RUN_TEST(test_pulse_filter_boundary);
+    RUN_TEST(test_pulse_filter_reset);
+    RUN_TEST(test_pulse_filter_wraparound);
+    RUN_TEST(test_spurious_hold_bench_sequence);
+    RUN_TEST(test_spurious_hold_isolated);
+    RUN_TEST(test_spurious_hold_wraparound_and_reset);
     return UNITY_END();
 }

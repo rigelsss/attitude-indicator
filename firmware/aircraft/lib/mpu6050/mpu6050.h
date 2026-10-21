@@ -37,6 +37,8 @@ struct ImuSample {
     uint32_t tUs;          // micros() no início da leitura
     bool     accelSaturated;   // algum eixo do acelerômetro atingiu o limite da faixa
     bool     gyroSaturated;    // algum eixo do giroscópio atingiu o limite da faixa
+    bool     newData;          // DATA_RDY_INT do INT_STATUS: houve amostra nova desde a leitura anterior.
+                               // Uma leitura disparada por uma borda falsa no INT vem com false (pendência 8)
 };
 
 class Mpu6050 {

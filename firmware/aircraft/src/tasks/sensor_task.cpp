@@ -41,6 +41,9 @@ static uint32_t g_mpuRetryMs = 0;            // MPU ausente: próxima tentativa 
 // ---------- Aquisição (lib/acq): janelas de 1 s do resumo (r) e do estado (c) ----------
 
 static PulseTracker g_acq(MAIN_PRINT_MS * 1000UL);
+// Pulsos falsos no INT (bordas captadas com o fio em mau contato): recusados antes da leitura (pendência 8)
+static PulseFilter g_pulseFilter(MPU_INT_MIN_GAP_US);
+static SpuriousHold g_spuriousHold(MPU_INT_SPURIOUS_HOLD_US);   // quadros ambíguos logo depois de um falso
 // Após configurar o MPU, calibração e fusão descartam amostras por CAL_MPU_SETTLE_MS
 static SettleGate g_settle;
 static uint32_t g_lastRecoveries = 0;
@@ -177,6 +180,8 @@ static void startMpu() {
     fusionReset();
     g_lastRecoveries = g_mpu.recoveries();
     g_acq.begin(micros());
+    g_pulseFilter.reset();
+    g_spuriousHold.reset();
 }
 
 // Fecha (imprime) todas as janelas que terminaram antes de nowUs e abre a seguinte sem lacuna
@@ -204,6 +209,8 @@ static void checkRecovery() {
     if (g_mpu.recoveries() == g_lastRecoveries) return;
     g_lastRecoveries = g_mpu.recoveries();
     xQueueReset(g_intQueue);   // pulsos enfileirados são de antes da reconfiguração
+    g_pulseFilter.reset();
+    g_spuriousHold.reset();
     beginSettle();
     g_calSvc.onMpuReconfigured();   // a candidata é de antes da reconfiguração; a janela recomeça
     fusionReset();
@@ -315,10 +322,25 @@ static void sensorCycle() {
     // Esvazia a fila num buffer local e lê o MPU antes de contar as janelas: a contagem pode imprimir
     // o resumo, e uma leitura feita depois disso seria de um pulso posterior ao último visto.
     // Só o pulso mais recente é lido, porque o MPU guarda apenas a última amostra.
+    // Os pulsos a menos de MPU_INT_MIN_GAP_US do último aceito são falsos: não geram leitura, não contam na
+    // taxa nem nas perdas, e abrem a quarentena (SpuriousHold): o instante da amostra não é confiável
     uint32_t pulses[MPU_INT_QUEUE_LEN];
     size_t n = 0;
-    pulses[n++] = tInt;
-    while (n < MPU_INT_QUEUE_LEN && xQueueReceive(g_intQueue, &pulses[n], 0) == pdTRUE) n++;
+    uint32_t spurious = 0;
+    uint32_t t = tInt;
+    for (size_t k = 0;;) {
+        if (g_pulseFilter.accept(t)) {
+            pulses[n++] = t;
+        } else {
+            spurious++;
+            g_spuriousHold.noteSpurious(t);
+        }
+        if (++k >= MPU_INT_QUEUE_LEN || xQueueReceive(g_intQueue, &t, 0) != pdTRUE) break;
+    }
+    if (n == 0) {   // só pulsos falsos: nada a ler
+        g_acq.cur().spurious += spurious;
+        return;
+    }
     const uint32_t latest = pulses[n - 1];
 
     // A borda de descida do pulso do INT induz ruído no SDA/SCL; lê só depois dela
@@ -341,9 +363,15 @@ static void sensorCycle() {
         notePulse(pulses[i]);
     }
     g_acqStats.dropped += n - 1;
+    g_acq.cur().spurious += spurious;
 
     checkRecovery();   // read() pode ter reconfigurado o chip (e então devolveu false)
     if (!ok) return;
+    // Sem amostra nova desde a leitura anterior (DATA_RDY_INT em 0): o pulso aceito era uma borda falsa
+    if (!s.newData) {
+        g_acq.cur().noNewData++;
+        return;
+    }
     g_acq.cur().add({s.ax, s.ay, s.az}, {s.gx, s.gy, s.gz}, s.tempC, s.accelSaturated, s.gyroSaturated);
     // Descarte de partida
     if (g_settle.hold(s.tUs)) {
@@ -353,8 +381,10 @@ static void sensorCycle() {
 
     // Validade temporal, comum à calibração e à fusão (lib/acq, checkFrame). Um quadro ambíguo fica
     // fora das duas; na fusão, o dt seguinte cobre a lacuna (a referência de tempo não avança). Um
-    // atraso de alguns ms, depois de uma impressão, é normal e o quadro é válido.
-    const FrameCheck frame = checkFrame(latest, s.tUs, newerPulse, FUSION_MAX_INT_LAG_US);
+    // atraso de alguns ms, depois de uma impressão, é normal e o quadro é válido. Na quarentena de um pulso
+    // falso (MPU_INT_SPURIOUS_HOLD_US), o quadro também é ambíguo: o instante da amostra não é confiável.
+    const FrameCheck frame =
+        checkFrame(latest, s.tUs, newerPulse || g_spuriousHold.holds(latest), FUSION_MAX_INT_LAG_US);
     g_acqStats.noteFrame(frame);
     if (!frame.valid) return;
     g_calSvc.sample(s);
@@ -372,6 +402,11 @@ bool sensorTaskStart() {
     return xTaskCreatePinnedToCore(sensorTask, "sensor", SENSOR_TASK_STACK, nullptr, SENSOR_TASK_PRIO, nullptr,
                                    SENSOR_TASK_CORE) == pdPASS;
 }
+
+#ifdef PULSE_TEST
+// O g_intOverflow fica só com a ISR (um escritor): quem injeta conta as próprias recusas
+bool sensorInjectPulse(uint32_t tUs) { return g_intQueue != nullptr && xQueueSend(g_intQueue, &tUs, 0) == pdTRUE; }
+#endif
 
 bool sensorTaskSend(const SensorCmd &c) {
     return g_cmdQueue != nullptr && xQueueSend(g_cmdQueue, &c, 0) == pdTRUE;

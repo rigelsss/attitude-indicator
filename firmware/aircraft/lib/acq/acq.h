@@ -16,6 +16,8 @@ struct SampleWindow {
     uint32_t samples = 0;      // leituras válidas
     uint32_t lost = 0;         // pulsos que faltaram (intervalo maior que 1,5 período)
     uint32_t stale = 0;        // pulsos atendidos atrasados: a amostra já tinha sido sobrescrita
+    uint32_t spurious = 0;     // pulsos falsos: a menos do intervalo mínimo do anterior aceito (PulseFilter)
+    uint32_t noNewData = 0;    // leituras sem amostra nova (DATA_RDY_INT em 0): disparadas por borda falsa
     uint32_t satAcc = 0;       // amostras com algum eixo do acelerômetro no limite da faixa
     uint32_t satGyro = 0;      // idem, giroscópio
     double   sum[6] = {0}, sq[6] = {0};   // ax ay az gx gy gz
@@ -75,6 +77,57 @@ private:
     SampleWindow last_;
     uint32_t     lastIntUs_ = 0;
     bool         havePrev_ = false;   // há pulso anterior (0 µs é um instante válido na virada do micros())
+};
+
+// Pulsos falsos no INT (refatoracao.md, pendência 8): com o fio em mau contato, a entrada capta bordas do
+// I2C (600 a 3 750 por segundo, 21/10/2026). Um pulso que chega a menos de minGapUs (metade do período) do
+// último aceito é falso: não gera leitura e não conta na taxa nem nas perdas. Diferença sem sinal, então a
+// virada do micros() está tratada.
+class PulseFilter {
+public:
+    explicit PulseFilter(uint32_t minGapUs) : minGapUs_(minGapUs) {}
+    // true: pulso aceito (passa a ser a referência); false: falso
+    bool accept(uint32_t tUs) {
+        if (haveLast_ && tUs - lastUs_ < minGapUs_) return false;
+        lastUs_ = tUs;
+        haveLast_ = true;
+        return true;
+    }
+    // MPU (re)configurado: sem referência, o primeiro pulso é aceito
+    void reset() { haveLast_ = false; }
+
+private:
+    uint32_t minGapUs_;
+    uint32_t lastUs_ = 0;
+    bool     haveLast_ = false;
+};
+
+// Quarentena depois de um pulso falso: os quadros cujo pulso fica a menos de holdUs depois do último pulso
+// recusado (ou antes dele) são ambíguos, fora da calibração e da fusão. Com bordas falsas por perto, o
+// instante da amostra não é confiável: um pulso verdadeiro pode ter sido recusado por chegar perto de um falso
+// aceito, e a amostra dele ser lida depois, no pulso falso seguinte, com o instante errado (bancada de
+// 21/10/2026, injeção de pulsos). Estado explícito, como o SettleGate: depois de vencida, a quarentena não
+// volta a valer com a virada do micros().
+class SpuriousHold {
+public:
+    explicit SpuriousHold(uint32_t holdUs) : holdUs_(holdUs) {}
+    void noteSpurious(uint32_t tUs) {
+        active_ = true;
+        lastUs_ = tUs;
+    }
+    // true: o quadro do pulso tUs está na quarentena
+    bool holds(uint32_t tUs) {
+        if (!active_) return false;
+        if ((int32_t)(tUs - lastUs_) < (int32_t)holdUs_) return true;
+        active_ = false;
+        return false;
+    }
+    void reset() { active_ = false; }
+
+private:
+    uint32_t holdUs_;
+    uint32_t lastUs_ = 0;
+    bool     active_ = false;
 };
 
 // Validade temporal do quadro, comum à calibração e à fusão. Sem FIFO, o quadro lido é o mais recente

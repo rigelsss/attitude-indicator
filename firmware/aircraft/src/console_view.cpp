@@ -60,19 +60,24 @@ static void printWindow(const WindowReport &r) {
     const SampleWindow &w = r.w;
     const WindowSummary s = summarize(w, r.windowUs);
     if (w.samples == 0) {
-        t.printf("[A] %.0f Hz | nenhuma leitura válida | falhas %lu (seguidas %lu, recuperações %lu)%s\n", s.rateHz,
+        t.printf("[A] %.0f Hz | nenhuma leitura válida | falhas %lu (seguidas %lu, recuperações %lu)%s", s.rateHz,
                  (unsigned long)r.mpu.failTotal, (unsigned long)r.mpu.failStreak, (unsigned long)r.mpu.recoveries,
                  w.pulses == 0 ? " | sem pulsos do INT" : "");
+        // Numa rajada de pulsos falsos, todas as leituras podem ficar sem dado novo: os contadores dizem por quê
+        if (w.spurious || w.noNewData)
+            t.printf(" | falsos %lu | sem dado novo %lu", (unsigned long)w.spurious, (unsigned long)w.noNewData);
+        t.print("\n");
     } else {
         const double *mean = s.mean;
         t.printf("[A] %.0f Hz | a (g) %+.3f %+.3f %+.3f  |a| %.3f | g (°/s) %+.2f %+.2f %+.2f | T %.1f °C\n",
                  s.rateHz, mean[0], mean[1], mean[2], s.accNorm, mean[3], mean[4], mean[5], s.tempC);
         t.printf("    ruído: a %.1f mg, g %.3f °/s | pico |g| %.1f °/s | saturadas a %lu g %lu | perdidas %lu | "
-                 "descartadas %lu | falhas %lu (seguidas %lu, recuperações %lu) | fila cheia %lu\n",
+                 "descartadas %lu | falhas %lu (seguidas %lu, recuperações %lu) | fila cheia %lu | falsos %lu | "
+                 "sem dado novo %lu\n",
                  s.accMaxStdG * 1000.0, s.gyroMaxStdDps, w.peakGyro, (unsigned long)w.satAcc,
                  (unsigned long)w.satGyro, (unsigned long)w.lost, (unsigned long)w.stale,
                  (unsigned long)r.mpu.failTotal, (unsigned long)r.mpu.failStreak, (unsigned long)r.mpu.recoveries,
-                 (unsigned long)r.mpu.intOverflow);
+                 (unsigned long)r.mpu.intOverflow, (unsigned long)w.spurious, (unsigned long)w.noNewData);
         const AngleStats *att = w.att;
         if (att[0].count() == 0)
             t.println("    atitude: não inicializada");
@@ -193,6 +198,11 @@ static void printStatus(const StatusReport &r) {
 
     const SampleWindow &last = r.last;
     const uint32_t n = last.samples;
+    // Antes do retorno sem amostras: é quando todas as leituras foram descartadas que estes contadores explicam
+    t.printf("  pulsos do INT: no último 1 s, perdidos %lu, descartados %lu, falsos %lu e sem dado novo %lu | "
+             "fila cheia %lu desde o boot\n",
+             (unsigned long)last.lost, (unsigned long)last.stale, (unsigned long)last.spurious,
+             (unsigned long)last.noNewData, (unsigned long)r.intOverflow);
     if (n == 0) {
         t.println("  último 1 s: nenhuma leitura válida");
         emit(t);
@@ -203,8 +213,6 @@ static void printStatus(const StatusReport &r) {
     const Vec3 aCor = cal.accelValid ? applyAccelCal(cal.accel, aRaw) : aRaw;
     const Vec3 gCor = applyGyroBias(gRaw, bias);
     const float tNow = last.meanTempC();
-    t.printf("  pulsos do INT: no último 1 s, perdidos %lu e descartados %lu | fila cheia %lu desde o boot\n",
-             (unsigned long)last.lost, (unsigned long)last.stale, (unsigned long)r.intOverflow);
     t.printf("  último 1 s (%lu amostras, %.1f °C):\n", (unsigned long)n, tNow);
     t.printf("    a bruto     %+.4f %+.4f %+.4f g  |a| %.4f\n", aRaw.x, aRaw.y, aRaw.z, norm(aRaw));
     t.printf("    a corrigido %+.4f %+.4f %+.4f g  |a| %.4f\n", aCor.x, aCor.y, aCor.z, norm(aCor));

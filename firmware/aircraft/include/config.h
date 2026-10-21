@@ -53,6 +53,13 @@
 #define MPU_DLPF_HZ             42     // banda do filtro interno (giroscópio 42 Hz, acelerômetro 44 Hz)
 #define MPU_MAX_FALHAS_SEGUIDAS 5      // leituras falhas seguidas antes de reiniciar o barramento
 #define MPU_INT_QUEUE_LEN       16     // pulsos de "data ready" na fila (80 ms a 200 Hz)
+#define MPU_INT_MIN_GAP_US      (500000UL / SAMPLE_RATE_HZ)   // metade do período (2,5 ms): pulso mais perto
+                                       // que isto do anterior aceito é falso (borda captada, pendência 8)
+#define MPU_INT_SPURIOUS_HOLD_US 10000  // quarentena depois de um pulso falso (2 períodos): quadros fora da fusão.
+                                       // Numa rajada contínua, a fusão reinicia e o VAL_ATT desliga
+#define PULSE_TEST_MS           5000   // aircraft_pulsetest (tecla F): duração da injeção de pulsos falsos
+#define PULSE_TEST_MIN_US       300    // e intervalo aleatório entre eles: média de ~700 µs (~1,4 kHz), parte
+#define PULSE_TEST_MAX_US       1100   // abaixo e parte acima dos 2,5 ms do filtro, somados aos pulsos certos
 #define MPU_INT_READ_DELAY_US   100    // espera após o pulso do INT (50 µs) para a borda não cair na leitura
 #define MPU_INT_TIMEOUT_MS      50     // sem pulsos do INT por esse tempo (10 amostras): conferir o MPU
 #define MPU_INT_WAIT_SLICE_MS   10     // espera do pulso em fatias: com o INT parado, o barômetro é

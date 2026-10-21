@@ -5,6 +5,7 @@
 #include "logger.h"
 #include "console_report.h"
 #include "report_queue.h"
+#include "pulse_test.h"
 
 static const uint32_t ATT_PRINT_US = 1000000UL / ATT_PRINT_HZ;
 
@@ -38,6 +39,9 @@ void Console::handleKey(char ch) {
     case '6': d_.cal.startSix(); break;
     case 'h':
     case '?': printHelp(); break;
+#ifdef PULSE_TEST
+    case 'F': pulseTestStart(); break;   // só no ambiente aircraft_pulsetest
+#endif
     default: break;
     }
 }

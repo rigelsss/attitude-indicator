@@ -76,6 +76,13 @@
 #define SENSOR_TASK_CORE        1
 #define SENSOR_TASK_PRIO        4
 #define SENSOR_TASK_STACK       8192   // a mesma da loopTask do Arduino, onde o laço rodava antes
+#define RADIO_TASK_CORE         0      // junto com o Wi-Fi do IDF
+#define RADIO_TASK_PRIO         2
+#define RADIO_TASK_STACK        4096
+#ifndef RADIO_ENABLED
+#define RADIO_ENABLED           1      // 0 só no ambiente aircraft_noradio (A/B de tempo sem o Wi-Fi ligado)
+#endif
+#define RADIO_START_DELAY_MS    1000   // o Wi-Fi liga depois do boot impresso (o pico de corrente pode causar brownout)
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1
 #define SERIAL_TASK_STACK       6144   // formata o c, o r e o a (vsnprintf com float e o relatório copiado)

@@ -5,6 +5,7 @@
 // de comandos (hoje as teclas do console; na semana 5, também os CMD_* do B). refatoracao.md, pendência 7.
 #pragma once
 #include <stdint.h>
+#include "telemetry_pack.h"
 
 enum CmdSource : uint8_t {
     CMD_SRC_CONSOLE = 0,   // tecla da serial
@@ -19,6 +20,9 @@ struct SensorCmd {
 bool sensorTaskStart();
 // Enfileira um comando, sem esperar. false com a fila cheia ou antes do sensorTaskStart()
 bool sensorTaskSend(const SensorCmd &c);
+// Última cópia do estado, publicada a cada ciclo da sensor_task (caixa de correio: fila de 1, sobrescrita).
+// false antes da primeira publicação. Usado pela radio_task
+bool sensorLatestState(TelemetryState &out);
 
 #ifdef PULSE_TEST
 // Só no ambiente aircraft_pulsetest (src/pulse_test.h): põe um instante falso na fila do INT, como a ISR faria.

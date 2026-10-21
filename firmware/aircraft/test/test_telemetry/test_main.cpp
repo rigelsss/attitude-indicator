@@ -167,7 +167,7 @@ static void test_ack_roundtrip_bytes() {
     memcpy(buf + 3, &a, sizeof(a));
     AckPacket b;
     memcpy(&b, buf + 3, sizeof(b));
-    TEST_ASSERT_EQUAL_UINT8(3, b.hdr.version);
+    TEST_ASSERT_EQUAL_UINT8(TELEMETRY_VERSION, b.hdr.version);
     TEST_ASSERT_EQUAL_UINT8(CMD_ZERO_ALTITUDE, b.cmd);
     TEST_ASSERT_EQUAL_UINT8(ACK_DONE, b.result);
     TEST_ASSERT_EQUAL_HEX16(0x1234, b.cmd_seq);

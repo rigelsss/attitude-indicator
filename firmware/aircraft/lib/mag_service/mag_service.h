@@ -78,6 +78,7 @@ public:
 
     // Estado, para o console, a fusão e a validade da telemetria
     bool calibrating() const { return calib_.state() != MagCalibrator::State::Off; }
+    bool ok() const { return ready_ && mag_.ok(); }   // configurado e respondendo (ST_MAG_OK)
     const MagCalData &calData() const { return cal_; }
     // A correção da proa pelo magnetômetro está suspensa (inclinação, distúrbio, atitude degradada, dado inválido)
     bool correctionSuspended() const;

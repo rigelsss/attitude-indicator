@@ -14,9 +14,10 @@
 #include <stdint.h>
 
 #define TELEMETRY_MAGIC    0xA7   // identifica pacotes do projeto
-#define TELEMETRY_VERSION  3      // incrementar ao mudar qualquer struct
+#define TELEMETRY_VERSION  4      // incrementar ao mudar qualquer struct (ou o significado de um campo)
 // v2 (15/10/2026): cabeçalho de 8 bytes (alinhamento) e campo valid (validade dos dados)
 // v3 (15/10/2026): ACK com result e cmd_seq; VAL_HDG exige o magnetômetro calibrado
+// v4 (21/10/2026): loop_us passa a ser a latência do dado (pulso do INT → fim da fusão), sem mudar o layout
 
 // ---------- Tipos de mensagem ----------
 enum MsgType : uint8_t {
@@ -78,7 +79,8 @@ struct __attribute__((packed)) TelemetryPacket {
     // Saúde do sistema
     uint16_t  status;        // StatusFlags
     uint16_t  valid;         // ValidFlags
-    uint16_t  loop_us;       // duração do último ciclo de fusão (medição de jitter)
+    uint16_t  loop_us;       // latência da última amostra fundida: pulso do INT → fim da fusão (µs, satura
+                             // em 65535). Medição de jitter e de latência (semana 6)
     uint16_t  reserved2;     // 0
 };
 

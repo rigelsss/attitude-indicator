@@ -13,6 +13,7 @@
 #include "telemetry_flags.h"
 #include "baro_service.h"
 #include "mag_service.h"
+#include "tasks/radio_task.h"
 
 enum class ReportKind : uint8_t {
     Window,   // r: uma janela de 1 s fechou
@@ -33,6 +34,8 @@ struct WindowReport {
     MpuCounters  mpu;
     BaroSummary  baro;
     MagSummary   mag;
+    RadioCounters radio;       // contadores do rádio no fim da janela
+    RadioCounters radioPrev;   // e no fim da janela anterior (taxas por segundo)
 };
 
 // Uma linha do fluxo de atitude (a), com a estatística da aquisição e do filtro desde a linha anterior
@@ -68,6 +71,7 @@ struct StatusReport {
     ValidityInputs validity;
     SampleWindow   last;          // última janela de 1 s
     uint32_t       intOverflow;
+    RadioCounters  radio;         // desde o boot
 };
 
 static_assert(std::is_trivially_copyable<WindowReport>::value, "WindowReport vai pela fila byte a byte");

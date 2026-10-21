@@ -53,6 +53,30 @@ static void magLine(TextBuf &t, const MagSummary &m) {
              (unsigned long)m.failStreak, (unsigned long)m.recoveries, (unsigned long)m.saturations);
 }
 
+// Rádio no r: taxas na janela; erros e comandos desde o boot
+static void radioWindowLine(TextBuf &t, const RadioCounters &c, const RadioCounters &p) {
+    if (!c.active) {
+        t.print("    radio: desligado\n");
+        return;
+    }
+    t.printf("    radio: %lu enviados/s | entregues %lu/s | falhas MAC %lu/s | erros de envio %lu | comandos aceitos %lu, "
+             "recusados %lu\n",
+             (unsigned long)(c.sent - p.sent), (unsigned long)(c.macOk - p.macOk), (unsigned long)(c.macFail - p.macFail),
+             (unsigned long)c.sendErrors, (unsigned long)c.cmdOk, (unsigned long)c.cmdBad);
+}
+
+// Rádio no c: totais desde o boot
+static void radioStatusLine(TextBuf &t, const RadioCounters &c) {
+    if (!c.active) {
+        t.print("  rádio: desligado (ESP-NOW não iniciado)\n");
+        return;
+    }
+    t.printf("  rádio: ESP-NOW ativo, canal %d, %d Hz | desde o boot: enviados %lu, entregues %lu, falhas MAC %lu, "
+             "erros de envio %lu | comandos aceitos %lu, recusados %lu\n",
+             ESPNOW_CHANNEL, TX_RATE_HZ, (unsigned long)c.sent, (unsigned long)c.macOk, (unsigned long)c.macFail,
+             (unsigned long)c.sendErrors, (unsigned long)c.cmdOk, (unsigned long)c.cmdBad);
+}
+
 // ---------- Resumo por segundo (r) ----------
 
 static void printWindow(const WindowReport &r) {
@@ -87,6 +111,7 @@ static void printWindow(const WindowReport &r) {
     }
     baroLine(t, r.baro);
     magLine(t, r.mag);
+    radioWindowLine(t, r.radio, r.radioPrev);
     emit(t);
 }
 
@@ -194,6 +219,7 @@ static void printStatus(const StatusReport &r) {
     t.printf("  magnetômetro: ±%.1f Ga, %.0f Hz, média de %d, leitura a %d Hz\n", MAG_RANGE_MGA / 1000.0f,
              MAG_OUTPUT_HZ, MAG_AVG_SAMPLES, MAG_READ_HZ);
     magLine(t, r.mag);
+    radioStatusLine(t, r.radio);
     validityLine(t, r);
 
     const SampleWindow &last = r.last;

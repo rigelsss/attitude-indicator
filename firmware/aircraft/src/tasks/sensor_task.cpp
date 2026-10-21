@@ -28,6 +28,12 @@
 #include "../console.h"
 
 static QueueHandle_t g_cmdQueue = nullptr;   // SensorCmd: teclas da serial_task (e, na semana 5, do rádio)
+static QueueHandle_t g_stateBox = nullptr;   // TelemetryState: fila de 1, sobrescrita a cada ciclo (radio_task lê)
+static Vec3 g_lastGyro = {0, 0, 0};          // giroscópio da última amostra fundida (eixos do modelo, corrigido)
+static uint32_t g_loopUs = 0;                // pulso do INT → fim da fusão da última amostra (loop_us)
+// Instante da última amostra fundida em 64 bits (relógio do esp_timer): a idade da atitude não pode dar a
+// volta com o micros() de 32 bits (~71,6 min), senão um ângulo velho voltaria a valer com o MPU parado
+static uint64_t g_attSampleUs64 = 0;
 
 static Mpu6050 g_mpu;
 static QueueHandle_t g_intQueue = nullptr;   // instantes (micros) dos pulsos de "data ready"
@@ -227,31 +233,54 @@ static void fusionSample(const ImuSample &s, uint32_t intUs) {
                                 g_calSvc.level().r);
     const ImuFlags flags = {s.accelSaturated, s.gyroSaturated};
     g_fusion.update(b.acc, b.gyro, flags, intUs, g_magSvc.calibrating());
+    g_lastGyro = b.gyro;
     if (g_att.initialized()) g_acq.cur().addAttitude(g_att.rollDeg(), g_att.pitchDeg());
     g_console.attitudeSample(b.acc, s.tempC, intUs);   // linha do a, se estiver ligado e vencida
+    // Instante do pulso em 64 bits: o carimbo de 32 bits da ISR vem do mesmo relógio, microssegundos antes
+    const uint64_t now64 = (uint64_t)esp_timer_get_time();
+    g_attSampleUs64 = now64 - (uint32_t)((uint32_t)now64 - intUs);
+    g_loopUs = micros() - intUs;   // latência do dado: o pulso do INT até a atitude pronta
 }
 
 // ---------- Validade dos dados (campo valid do TelemetryPacket, lib/telemetry_flags) ----------
 // Entradas no instante da chamada; hoje usadas pelo c, no passo 4 da semana 3 também pela radio_task
 
-static uint32_t ageMs(bool have, uint32_t tMs) {
-    return have ? millis() - tMs : AGE_NEVER;
+// Cópia do estado para a telemetria (e para a validade do c): os instantes das últimas amostras, e não as
+// idades, que são calculadas por quem usa (validityAt, lib/telemetry_pack)
+static TelemetryState makeState() {
+    TelemetryState t;
+    t.attInitialized = g_att.initialized();
+    t.attDegraded = g_att.degraded();
+    t.rollDeg = g_att.rollDeg();
+    t.pitchDeg = g_att.pitchDeg();
+    t.haveAttSample = g_fusion.havePrev();
+    t.attSampleUs64 = g_attSampleUs64;
+    t.hdgInitialized = g_fusion.heading().initialized();
+    t.headingDeg = g_fusion.heading().headingDeg();
+    t.gx = g_lastGyro.x;
+    t.gy = g_lastGyro.y;
+    t.gz = g_lastGyro.z;
+    t.baroOk = g_baroSvc.ok();
+    t.baroZeroValid = g_baroSvc.zeroValid();
+    t.haveBaro = g_baroSvc.have();
+    t.baroMs = g_baroSvc.last().tMs;
+    t.altitudeM = g_baroSvc.altitudeM();
+    t.pressureHpa = g_baroSvc.last().pressHpa;
+    t.tempC = g_baroSvc.last().tempC;
+    t.magOk = g_magSvc.ok();
+    t.magCalibrated = g_magSvc.calData().valid;
+    t.hdgMagSuspended = g_magSvc.correctionSuspended();
+    t.haveMag = g_magSvc.lastReadValid();
+    t.magMs = g_magSvc.lastReadMs();
+    t.mpuOk = g_mpuReady && g_mpu.ok();
+    t.calibrating = g_calSvc.mode() != CalMode::None || g_magSvc.calibrating();
+    t.gyroCalibrated = g_calSvc.gyroDefinitive();
+    t.loopUs = g_loopUs;
+    return t;
 }
 
 static ValidityInputs validityInputs() {
-    ValidityInputs in;
-    in.attInitialized = g_att.initialized();
-    in.attDegraded = g_att.degraded();
-    in.attAgeMs = g_fusion.havePrev() ? (micros() - g_fusion.prevIntUs()) / 1000UL : AGE_NEVER;
-    in.baroOk = g_baroSvc.ok();
-    in.baroZeroValid = g_baroSvc.zeroValid();
-    in.altFinite = isfinite(g_baroSvc.altitudeM());
-    in.baroAgeMs = ageMs(g_baroSvc.have(), g_baroSvc.last().tMs);
-    in.hdgInitialized = g_fusion.heading().initialized();
-    in.magCalibrated = g_magSvc.calData().valid;
-    in.hdgMagSuspended = g_magSvc.correctionSuspended();
-    in.magAgeMs = ageMs(g_magSvc.lastReadValid(), g_magSvc.lastReadMs());
-    return in;
+    return validityAt(makeState(), millis(), (uint64_t)esp_timer_get_time());
 }
 
 static void sensorSetup() {
@@ -393,12 +422,18 @@ static void sensorCycle() {
 
 static void sensorTask(void *) {
     sensorSetup();
-    for (;;) sensorCycle();
+    for (;;) {
+        sensorCycle();
+        // Também nos ciclos sem amostra do MPU: o barômetro e o magnetômetro seguem sendo atendidos
+        const TelemetryState st = makeState();
+        xQueueOverwrite(g_stateBox, &st);
+    }
 }
 
 bool sensorTaskStart() {
     g_cmdQueue = xQueueCreate(CMD_QUEUE_LEN, sizeof(SensorCmd));
-    if (g_cmdQueue == nullptr) return false;
+    g_stateBox = xQueueCreate(1, sizeof(TelemetryState));
+    if (g_cmdQueue == nullptr || g_stateBox == nullptr) return false;
     return xTaskCreatePinnedToCore(sensorTask, "sensor", SENSOR_TASK_STACK, nullptr, SENSOR_TASK_PRIO, nullptr,
                                    SENSOR_TASK_CORE) == pdPASS;
 }
@@ -407,6 +442,10 @@ bool sensorTaskStart() {
 // O g_intOverflow fica só com a ISR (um escritor): quem injeta conta as próprias recusas
 bool sensorInjectPulse(uint32_t tUs) { return g_intQueue != nullptr && xQueueSend(g_intQueue, &tUs, 0) == pdTRUE; }
 #endif
+
+bool sensorLatestState(TelemetryState &out) {
+    return g_stateBox != nullptr && xQueuePeek(g_stateBox, &out, 0) == pdTRUE;
+}
 
 bool sensorTaskSend(const SensorCmd &c) {
     return g_cmdQueue != nullptr && xQueueSend(g_cmdQueue, &c, 0) == pdTRUE;

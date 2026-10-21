@@ -20,7 +20,9 @@ Endpoint: `ws://192.168.4.1:81/` (IP padrão do AP do ESP32). Página: `http://1
 
 Campos de `TelemetryPacket` com nomes curtos, mais o bloco `link`, que é calculado pelo B (pacotes perdidos via `seq`, taxa real, idade do último pacote).
 
-### `status` e `valid` (contrato v3, `TELEMETRY_VERSION` 3)
+### `status` e `valid` (contrato v4, `TELEMETRY_VERSION` 4)
+
+A v4 (21/10/2026) só redefine o `loop_us` do `TelemetryPacket` como a latência do dado (pulso do INT → fim da fusão, em µs), sem mudar o layout. Ele não entra no JSON.
 
 Os dois são números (bitmask), copiados do `TelemetryPacket` ([telemetry.h](../firmware/shared/include/telemetry.h)):
 

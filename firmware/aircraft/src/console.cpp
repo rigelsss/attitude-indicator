@@ -49,8 +49,13 @@ void Console::handleKey(char ch) {
 // ---------- Resumo por segundo (r) ----------
 
 void Console::windowClosed(const SampleWindow &w) const {
+    const RadioCounters radio = radioCounters();
+    const RadioCounters prev = lastRadio_;
+    lastRadio_ = radio;   // a cada janela, com ou sem o r: a primeira linha depois do r já é de 1 s
     if (!summaryOn_) return;
     WindowReport r;
+    r.radio = radio;
+    r.radioPrev = prev;
     r.w = w;
     r.windowUs = d_.acq.windowUs();
     r.mpu = {d_.mpu.failTotal(), d_.mpu.failStreak(), d_.mpu.recoveries(), d_.intOverflow};
@@ -120,5 +125,6 @@ void Console::sendStatus() const {
     r.mag = d_.mag.summary();
     r.last = d_.acq.last();
     r.intOverflow = d_.intOverflow;
+    r.radio = radioCounters();
     reportSend(ReportKind::Status, r);   // fila cheia: a serial_task avisa o descarte
 }

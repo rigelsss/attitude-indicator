@@ -12,6 +12,7 @@
 #include "baro_service.h"
 #include "mag_service.h"
 #include "telemetry_flags.h"
+#include "tasks/radio_task.h"
 
 // O que o console lê e comanda, montado na sensor_task
 struct ConsoleDeps {
@@ -43,6 +44,7 @@ private:
     void toggleAttitude();
 
     ConsoleDeps d_;
+    mutable RadioCounters lastRadio_ = {};   // contadores do rádio no fim da janela anterior (taxas do r)
     bool summaryOn_ = false;   // resumo por segundo (r)
     bool attOn_ = false;       // fluxo de atitude (a)
     Periodic attPrint_;        // próxima linha do a

@@ -411,6 +411,7 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
    - conferir no `a` que o dt volta a 5,00–5,01 ms com as impressões ligadas.
    - se a variação continuar, quantificar o efeito na atitude com a caixa em movimento (giros com velocidade variável, comparando o filtro com o só-giroscópio);
    Registrada em 20/10/2026.
+   - **Feita em 21/10/2026, antes das tasks** (no `loop()`): ISR pelo IDF, em IRAM e no nível 2 (`MPU_INT_INTR_LEVEL`), com o carimbo do `esp_timer_get_time()`. dt de 5,00–5,01 ms em todas as 946 linhas do `a`, inclusive com o `r` ligado. O A/B com o build do passo 5 não reproduziu a variação nem sem a correção, então a causa de 20/10 continua não confirmada. A mudança elimina a dependência do despachante GPIO na flash e permite preempção da UART de nível 1; outras fontes de latência da ISR continuam possíveis (seções críticas, que mascaram até o nível 3, e interrupções de nível mais alto). Detalhes em [hardware.md](hardware.md), "ISR do INT pelo ESP-IDF, em IRAM e no nível 2".
 6. **`s` das seis posições sem conferência na bancada.** No passo 6b, o `6` foi conferido só até a primeira posição, porque gravar o acelerômetro descarta a montagem. Os testes do `SixPoseFlow` cobrem só o núcleo puro, não a integração com a NVS e a fusão. Na próxima calibração em seis posições (modelo final), conferir:
    - a gravação do acelerômetro: `[cal] calibração do acelerômetro gravada na NVS`;
    - o descarte da montagem: `[mont] montagem descartada: …` e o `c` com `montagem: NÃO calibrada`;

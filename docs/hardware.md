@@ -963,6 +963,31 @@ A/B do passo 7 da refatoração (logs `261020-195007`, `195242` e `200224`), com
 - **Passo 8 (log `261020-202749`), com o `a` sozinho:** atraso de 102–197 µs, com 48 % das linhas acima de 150 µs. Nos passos 6b e 7, 1 de 232 linhas passou de 125 µs. É o padrão por build já visto no passo 3+4 (cache da flash), dentro do critério de ~200 µs, mas com pouca margem.
 - Volta a ser medido na semana 3, com a serial numa task própria ([refatoracao.md](refatoracao.md), pendência 2).
 
+### ISR do INT pelo ESP-IDF, em IRAM e no nível 2 (21/10/2026)
+
+Pendência 5 do [refatoracao.md](refatoracao.md). A ISR passou a ser registrada pelo `gpio_install_isr_service(ESP_INTR_FLAG_IRAM | nível 2)` + `gpio_isr_handler_add`, sem o `attachInterrupt`. O carimbo vem do `esp_timer_get_time()`. No binário, `onMpuInt`, `gpio_intr_service`, `esp_timer_get_time` e `xQueueGenericSendFromISR` ficam na IRAM (0x4008…), e o `micros()` do núcleo, usado antes na ISR, fica na flash (0x400d8ebc).
+
+**Bancada (log `261021-112920`, carimbo `2026-10-21 11:28:21`), caixa parada:**
+
+| Rodada | dt fora de 5,00–5,01 ms | Atraso pulso → leitura | Outros |
+|---|---|---|---|
+| `a` sozinho, 127 linhas | 0 | 104–112 µs | filtro méd. 32–93 µs, máx. 69–133 µs; ambíguos, descartados e reinícios em 0 |
+| `r` e `a` juntos, 819 linhas (~82 s) | 0 | até 182 µs em 816 linhas; 301, 504 e 723 µs em 3, todas a 8 linhas de um resumo `r` | `r` com 199–200 Hz e tudo em 0; ambíguos e reinícios em 0 |
+| INT solto ~14 s | — | — | 13 janelas `0 Hz … sem pulsos do INT`; na volta, `perdidas 2896` e depois 199–200 Hz com tudo em 0, sem registrar a ISR de novo; `c` final com `valid = 0x000D` |
+
+- Os 3 picos acima de 200 µs são a formatação do `r` no laço (pendência 2), não a ISR: o carimbo vem da ISR, e o dt não mudou nessas linhas.
+
+**A/B com o build do passo 5** (`ec2c701`, onde a variação apareceu em 75 de 85 linhas em 20/10). Dois worktrees com nomes de mesmo comprimento; só o `a`, por ~20 s:
+
+| Build | Carimbo | Log | Linhas | dt fora de 5,00–5,01 ms | Atraso |
+|---|---|---|---|---|---|
+| A: passo 5 sem correção (flash 365 229 B, igual à de 20/10) | `11:48:15` | `261021-114911` | 185 | **0** | 108–173 µs |
+| B: passo 5 com a correção | `11:50:23` | `261021-115112` | 208 | 0 | 104–185 µs |
+
+- **A variação não se reproduziu no build que a mostrou em 20/10**, com o mesmo tamanho de flash. O A/B não confirma nem descarta a hipótese da ISR da UART. Ele enfraquece a explicação "depende só do build": a condição de 20/10 também dependia de algo da sessão (fase entre a impressão e os pulsos, temperatura ou relógio), que não foi identificado.
+- **O atraso bimodal (~105 ou 150–185 µs) aparece nos dois builds do passo 5, com e sem a correção**, e não no build atual (104–112 µs). Então ele não vem do caminho da ISR, o que é coerente com a hipótese do cache da flash no caminho da leitura (passo 3+4).
+- **Decisão:** a correção fica, porque é o desenho certo para as tasks (ISR curta em IRAM, acima da UART, que funciona com o cache desligado durante as gravações na NVS). A mudança elimina a dependência do despachante GPIO na flash e permite preempção da UART de nível 1; outras fontes de latência da ISR continuam possíveis: as seções críticas (`portENTER_CRITICAL` mascara até o nível 3, o que inclui o nível 2) e as interrupções de nível mais alto. O dt de 5,00–5,01 ms continua como critério em toda bancada.
+
 ### `z` refeito na montagem final (20/10/2026)
 
 Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo `2026-10-20 18:53:13`). A caixa foi encostada pelo nariz e, girada 180°, pela cauda, na mesma referência.

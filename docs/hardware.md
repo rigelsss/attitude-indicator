@@ -1098,7 +1098,7 @@ O distúrbio começa com |m| a mais de 15 % do raio da calibração (`MAG_DISTUR
 - **Correções da revisão (21/10, antes do commit), depois desta bancada:**
   - uma leitura inválida (falha ou saturação) e o início do `m` passaram a zerar a contagem da saída, sem tirar o distúrbio. Antes, a primeira leitura válida depois de uma pausa de mais de 1 s já encerrava o distúrbio;
   - ao gravar uma calibração nova, o detector recomeça. Antes, um distúrbio decidido com o raio antigo continuava com o raio novo, e um campo entre 10 e 15 % do raio novo manteria a correção suspensa;
-  - cobertas pelo `native` (`test_disturbed_exit_interrupted`, `test_disturbed_reset_on_new_calibration`). Na placa, só o caminho normal é conferido; a saturação exige um ímã encostado no módulo, e o `s` exige uma calibração aceita (modelo final, pendência 4).
+  - cobertas pelo `native` (`test_disturbed_exit_interrupted`, `test_disturbed_reset_on_new_calibration`). Na placa, só o caminho normal foi conferido (log `261021-144318`, carimbo `14:42:36`): uma aproximação da chave deu 1 `DISTÚRBIO` (29,6 µT) e 1 `distúrbio terminou` (25,8 µT), este 11 linhas do `p` (~1,1 s) depois de o |m| voltar à faixa, e o `c` deu `valid = 0x000D`. A saturação exige um ímã encostado no módulo, e o `s` exige uma calibração aceita (modelo final, pendência 4).
 
 ### `z` refeito na montagem final (20/10/2026)
 

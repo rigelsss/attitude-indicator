@@ -41,6 +41,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 ## Comandos (PowerShell, a partir de `firmware/aircraft` ou `firmware/ground`)
 - Compilar/gravar: `pio run -e aircraft -t upload` / `pio run -e ground -t upload`
 - Diagnóstico I2C (ESP A): `pio run -e i2cscan -t upload`
+- Teste de pulsos falsos no INT (ESP A, tecla `F`): `pio run -e aircraft_pulsetest -t upload`; depois, regravar o `aircraft`
 - Monitor: `pio device monitor -b 115200`
 - Página web no B: `pio run -e ground -t uploadfs`
 - Testes de lógica: `pio test -e native`

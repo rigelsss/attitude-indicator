@@ -1100,6 +1100,29 @@ O distúrbio começa com |m| a mais de 15 % do raio da calibração (`MAG_DISTUR
   - ao gravar uma calibração nova, o detector recomeça. Antes, um distúrbio decidido com o raio antigo continuava com o raio novo, e um campo entre 10 e 15 % do raio novo manteria a correção suspensa;
   - cobertas pelo `native` (`test_disturbed_exit_interrupted`, `test_disturbed_reset_on_new_calibration`). Na placa, só o caminho normal foi conferido (log `261021-144318`, carimbo `14:42:36`): uma aproximação da chave deu 1 `DISTÚRBIO` (29,6 µT) e 1 `distúrbio terminou` (25,8 µT), este 11 linhas do `p` (~1,1 s) depois de o |m| voltar à faixa, e o `c` deu `valid = 0x000D`. A saturação exige um ímã encostado no módulo, e o `s` exige uma calibração aceita (modelo final, pendência 4).
 
+### Pulsos falsos no INT (21/10/2026)
+
+Pendência 8 do [refatoracao.md](refatoracao.md). Com o fio do INT meio encaixado, a entrada captava de 600 a 3 750 bordas por segundo (log `261021-122153`). São três camadas na `sensor_task` (passo 3 da semana 3, [tasks.md](tasks.md)):
+
+1. **Filtro de intervalo mínimo (`PulseFilter`):** um pulso a menos de `MPU_INT_MIN_GAP_US` (2,5 ms, metade do período) do último aceito é falso. Ele não gera leitura, não conta na taxa nem nas perdas, e entra no contador `falsos`.
+2. **Conferência do `INT_STATUS`:** a leitura do MPU passou a ser uma rajada de 15 bytes a partir do 0x3A (1 byte a mais, ~25 µs). Com `INT_RD_CLEAR = 0`, o bit `DATA_RDY_INT` diz se há uma amostra nova desde a leitura anterior. Uma leitura sem amostra nova é descartada e entra no contador `sem dado novo`.
+3. **Quarentena (`SpuriousHold`):** depois de um pulso recusado, os quadros cujo pulso fica a menos de `MPU_INT_SPURIOUS_HOLD_US` (10 ms) dele, ou antes dele, são ambíguos e ficam fora da fusão e da calibração.
+
+**Teste por injeção** (ambiente `aircraft_pulsetest`, tecla `F`): por 5 s, um `esp_timer` põe instantes falsos na fila do INT, com intervalo aleatório de 300 a 1 100 µs (~1,4 kHz), pelo mesmo caminho da ISR.
+
+| Firmware | Log | Durante a injeção | Depois |
+|---|---|---|---|
+| Filtro + `INT_STATUS`, quadro ambíguo só com falso no mesmo ciclo (carimbo `16:42:38`) | `261021-164321` | 344–350 Hz aceitos, `falsos` ~1 240/s, `sem dado novo` ~148/s; **a fusão seguiu com ~100 quadros por janela, e o `c` deu `ATT ok`** | 199–200 Hz, tudo em 0 |
+| Com a quarentena (carimbo `16:51:01`) | `261021-165328` | 348–349 Hz aceitos, `falsos` ~1 250/s, `sem dado novo` ~149/s; **`atitude: não inicializada`** (fusão fora, `VAL_ATT` desligado) | `c` com o último 1 s em 0, `ATT ok`, `valid = 0x000D` e os mesmos ângulos de antes |
+
+- **Por que a regra do mesmo ciclo não bastava:** como a `sensor_task` acorda a cada pulso, muitos ciclos tinham um pulso só. Pior: um falso aceito em G + 4 ms fazia o verdadeiro de G + 5 ms ser recusado (a 1 ms dele), e a amostra de G + 5 era lida no falso seguinte, em G + 7 ms, com dado novo e o instante errado em 2 ms. A atitude não mudou (caixa parada, giroscópio perto de 0), mas com a caixa girando o dt errado vira erro de ângulo. A quarentena fecha essa rota, e o teste `native` reproduz a sequência.
+- **Firmware de voo** (`aircraft`, carimbo `16:44:03`, log `261021-164446`): `falsos 0 | sem dado novo 0` em todas as janelas; `a` com dt 5,00–5,01 ms e atraso de 102–109 µs; `valid = 0x000D`; a tecla `F` não existe nele.
+- No log `165328`, o `c` do meio da injeção não foi dado (o `r` foi desligado antes). A `atitude: não inicializada` do `r` já implica o `VAL_ATT` desligado.
+- **Correções da revisão (21/10, antes do commit), depois desta bancada:**
+  - a injeção não incrementa mais o contador `fila cheia`, que volta a ter um escritor só, a ISR. Antes, os incrementos dos dois podiam se sobrepor. As recusas da injeção aparecem na linha `[teste] injeção terminada: … (N recusados com a fila do INT cheia)`;
+  - no `c`, a linha `pulsos do INT` (com `falsos` e `sem dado novo`) passou a sair também quando o último 1 s não teve nenhuma leitura válida, que é justamente o caso em que todas foram descartadas.
+  - Conferência (log `261021-170248`, carimbo `17:02:04`): `[teste] injeção terminada: 6972 pulsos falsos (0 recusados com a fila do INT cheia)`. O `c` logo depois mostrou a janela da injeção, `falsos 1249 e sem dado novo 151`, com `valid = 0x000D`. O caminho sem nenhuma leitura válida não foi exercitado: as leituras com dado novo contam como amostras mesmo fora da fusão, então ele só aparece com o INT sem pulso nenhum.
+
 ### `z` refeito na montagem final (20/10/2026)
 
 Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo `2026-10-20 18:53:13`). A caixa foi encostada pelo nariz e, girada 180°, pela cauda, na mesma referência.

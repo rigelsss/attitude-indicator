@@ -411,7 +411,7 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
 | 5 | Carimbo do pulso do INT | feita em 21/10 (ISR em IRAM, nível 2); causa de 20/10 não confirmada |
 | 6 | `s` das seis posições | modelo final |
 | 7 | Console chamando os serviços direto | **feita em 21/10**: teclas pela fila de comandos para a `sensor_task`; `c`, `r` e `a` formatados na `serial_task` a partir de cópias ([tasks.md](tasks.md), passos 1 e 2) |
-| 8 | Pulsos falsos no INT | **semana 3**, junto com a `sensor_task`; teste por `native` e por injeção de pulsos pelo software, sem depender do fio |
+| 8 | Pulsos falsos no INT | **feita em 21/10**: filtro de intervalo mínimo, conferência do `INT_STATUS` e quarentena; teste por injeção no ambiente `aircraft_pulsetest` ([hardware.md](hardware.md), "Pulsos falsos no INT") |
 
 Fora da lista, também em 21/10: histerese e tempo mínimo na saída do distúrbio magnético ([hardware.md](hardware.md), "Histerese do distúrbio magnético").
 

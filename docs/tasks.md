@@ -65,3 +65,5 @@ Os valores ficam no `config.h` (seção "Tasks"). A `loopTask` do Arduino se apa
 - Nenhum relatório descartado, nenhum texto cortado e nenhum `[log] … descartadas`.
 - **Correções da revisão** (contador de descartes atômico; no máximo 2 relatórios por volta, com o logger escoado depois de cada um). Log `261021-162644`, carimbo `16:26:05`: rajada de `c` com o `a` ligado, com 9 blocos inteiros (18 linhas cada, sem linhas do `a` no meio), atraso de 102–109 µs nas 24 linhas do `a` e nenhum relatório ou mensagem descartados.
 - Com isso, as pendências 2 e 7 do [refatoracao.md](refatoracao.md) estão fechadas.
+
+**Passo 3: pulsos falsos no INT** (pendência 8): filtro de intervalo mínimo, conferência do `INT_STATUS` na leitura do MPU e quarentena de 10 ms, na `sensor_task`. Detalhes e bancada em [hardware.md](hardware.md), "Pulsos falsos no INT".

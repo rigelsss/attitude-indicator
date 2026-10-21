@@ -9,6 +9,7 @@
 #include <freertos/ringbuf.h>
 #include <esp_log.h>
 #include <esp32/rom/ets_sys.h>
+#include <esp_rom_uart.h>
 #include "log_core.h"
 #include "log_line.h"
 
@@ -98,6 +99,13 @@ static char s_lineBuf[160];
 static LineAssembler s_line(s_lineBuf, sizeof(s_lineBuf));
 
 static void corePutc(char c) {
+    // Dentro de uma interrupção, o ets_printf é de uma falha grave (brownout, pânico) seguida de reinício: vai
+    // direto para a UART, como antes do buffer, porque a serial_task não chegaria a escoá-lo (21/10/2026: um
+    // laço de brownouts ao ligar o Wi-Fi não deixava nenhuma mensagem)
+    if (xPortInIsrContext()) {
+        esp_rom_uart_tx_one_char((uint8_t)c);
+        return;
+    }
     char out[sizeof(s_lineBuf)];
     size_t n = 0;
     portENTER_CRITICAL_SAFE(&s_lineMux);

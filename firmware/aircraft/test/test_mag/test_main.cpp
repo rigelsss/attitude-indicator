@@ -13,7 +13,7 @@ static const float H_UT = 22.2f;
 static const float V_UT = -13.8f;
 // Mesmos limites do config.h
 static const MagFitLimits LIM = {10.0f, 60.0f, 3.0f, 0.7f, 1.3f, 20, 5};
-static const HeadingParams HP = {1.0f, 70.0f, 15.0f, 0.2f};
+static const HeadingParams HP = {1.0f, 70.0f, 0.2f};
 
 // Ruído determinístico: xorshift32 + aproximação gaussiana (soma de 12 uniformes − 6)
 static uint32_t g_seed = 12345;
@@ -413,13 +413,154 @@ static void test_wrap360() {
     TEST_ASSERT_TRUE(w >= 0.0f && w < 360.0f);
 }
 
+// Distúrbio com histerese, sem tempo mínimo: entra acima de 15 %, sai em 10 % ou menos
 static void test_disturbed() {
-    TEST_ASSERT_FALSE(magDisturbed(26.0f, 26.2f, 15.0f));
-    TEST_ASSERT_TRUE(magDisturbed(31.0f, 26.2f, 15.0f));
-    TEST_ASSERT_TRUE(magDisturbed(21.0f, 26.2f, 15.0f));
-    TEST_ASSERT_FALSE(magDisturbed(80.0f, 0.0f, 15.0f));   // sem calibração: sem detecção
-    TEST_ASSERT_TRUE(magDisturbed(NAN, 26.2f, 15.0f));      // |m| inválido conta como distúrbio
-    TEST_ASSERT_TRUE(magDisturbed(INFINITY, 26.2f, 15.0f));
+    MagDisturbance d(15.0f, 10.0f, 0);
+    TEST_ASSERT_FALSE(d.update(26.0f, 26.2f, 0));
+    TEST_ASSERT_TRUE(d.update(31.0f, 26.2f, 0));
+    TEST_ASSERT_TRUE(d.update(29.0f, 26.2f, 0));    // 10,7 %: entre a saída e a entrada, continua
+    TEST_ASSERT_FALSE(d.update(28.5f, 26.2f, 0));   // 8,8 %: sai
+    TEST_ASSERT_TRUE(d.update(21.0f, 26.2f, 0));    // do lado de baixo também
+    TEST_ASSERT_FALSE(d.update(24.0f, 26.2f, 0));
+    // Limite de saída exato: raio 20, saída com desvio de 2,0 µT
+    TEST_ASSERT_TRUE(d.update(23.5f, 20.0f, 0));
+    TEST_ASSERT_TRUE(d.update(22.1f, 20.0f, 0));
+    TEST_ASSERT_FALSE(d.update(22.0f, 20.0f, 0));
+    // Limite de entrada exato (15 % de 20 = 3,0 µT): igual não entra
+    TEST_ASSERT_FALSE(d.update(23.0f, 20.0f, 0));
+    // Sem calibração (raio 0): nunca, e um distúrbio em curso termina
+    TEST_ASSERT_TRUE(d.update(30.0f, 20.0f, 0));
+    TEST_ASSERT_FALSE(d.update(80.0f, 0.0f, 0));
+    // |m| inválido conta como distúrbio, e só sai com um valor finito dentro da faixa de saída
+    TEST_ASSERT_TRUE(d.update(NAN, 26.2f, 0));
+    TEST_ASSERT_TRUE(d.update(INFINITY, 26.2f, 0));
+    TEST_ASSERT_TRUE(d.update(29.5f, 26.2f, 0));
+    TEST_ASSERT_FALSE(d.update(26.0f, 26.2f, 0));
+    // reset volta a sem distúrbio
+    TEST_ASSERT_TRUE(d.update(40.0f, 26.2f, 0));
+    d.reset();
+    TEST_ASSERT_FALSE(d.disturbed());
+}
+
+// Os valores de 20/10/2026 (raio 25,7 µT; limites de entrada 21,8 e 29,6 µT): sem a histerese, o aviso
+// alternava; com ela, uma entrada só, e a saída só com |m| de volta a 23,1–28,3 µT
+static void test_disturbed_hysteresis_bench_values() {
+    const float R = 25.7f;
+    MagDisturbance d(15.0f, 10.0f, 0);
+    const float upper[] = {28.0f, 31.0f, 28.9f, 30.0f, 28.5f, 29.9f, 28.4f};
+    int changes = 0;
+    bool prev = false;
+    for (float v : upper) {
+        const bool now = d.update(v, R, 0);
+        if (now != prev) changes++;
+        prev = now;
+    }
+    TEST_ASSERT_EQUAL(1, changes);   // entrou em 31,0 e não saiu
+    TEST_ASSERT_FALSE(d.update(28.0f, R, 0));
+    const float lower[] = {21.7f, 21.9f, 21.8f, 21.9f, 22.5f, 23.0f};
+    changes = 0;
+    prev = false;
+    for (float v : lower) {
+        const bool now = d.update(v, R, 0);
+        if (now != prev) changes++;
+        prev = now;
+    }
+    TEST_ASSERT_EQUAL(1, changes);   // entrou em 21,7 e não saiu
+    TEST_ASSERT_FALSE(d.update(23.2f, R, 0));
+}
+
+// Tempo mínimo na faixa de saída: só termina depois de exitHoldMs seguidos dentro dela; uma leitura fora
+// recomeça a contagem
+static void test_disturbed_exit_hold() {
+    const float R = 25.7f;
+    MagDisturbance d(15.0f, 10.0f, 1000);
+    TEST_ASSERT_TRUE(d.update(31.0f, R, 0));
+    TEST_ASSERT_TRUE(d.update(27.0f, R, 40));     // entrou na faixa de saída aos 40 ms
+    TEST_ASSERT_TRUE(d.update(26.0f, R, 1000));   // 960 ms: ainda não
+    TEST_ASSERT_FALSE(d.update(26.0f, R, 1040));  // 1000 ms: termina
+    // Uma leitura fora da faixa no meio recomeça a contagem
+    TEST_ASSERT_TRUE(d.update(31.0f, R, 2000));
+    TEST_ASSERT_TRUE(d.update(27.0f, R, 2040));
+    TEST_ASSERT_TRUE(d.update(28.9f, R, 2800));   // entre a saída e a entrada: fora da faixa de saída
+    TEST_ASSERT_TRUE(d.update(27.0f, R, 2840));
+    TEST_ASSERT_TRUE(d.update(27.0f, R, 3800));   // 960 ms desde 2840
+    TEST_ASSERT_FALSE(d.update(27.0f, R, 3840));
+    // Virada do millis() durante a contagem
+    TEST_ASSERT_TRUE(d.update(31.0f, R, 0xFFFFFE00u));
+    TEST_ASSERT_TRUE(d.update(27.0f, R, 0xFFFFFF00u));
+    TEST_ASSERT_TRUE(d.update(27.0f, R, 0x000002E7u));   // 999 ms
+    TEST_ASSERT_FALSE(d.update(27.0f, R, 0x000002E8u));  // 1000 ms
+}
+
+// Leitura inválida ou pausa no meio da contagem: interruptExit() zera a contagem sem tirar o distúrbio
+static void test_disturbed_exit_interrupted() {
+    const float R = 25.7f;
+    MagDisturbance d(15.0f, 10.0f, 1000);
+    TEST_ASSERT_TRUE(d.update(31.0f, R, 0));
+    TEST_ASSERT_TRUE(d.update(27.0f, R, 40));   // a contagem começa aos 40 ms
+    d.interruptExit();                          // leitura inválida aos 500 ms (saturação, por exemplo)
+    TEST_ASSERT_TRUE(d.disturbed());
+    // 2 s sem leituras válidas; a primeira válida na faixa não encerra: a contagem recomeça nela
+    TEST_ASSERT_TRUE(d.update(27.0f, R, 2500));
+    TEST_ASSERT_TRUE(d.update(27.0f, R, 3480));
+    TEST_ASSERT_FALSE(d.update(27.0f, R, 3500));
+    // Sem a interrupção, a mesma sequência terminaria na primeira leitura depois da pausa
+    MagDisturbance e(15.0f, 10.0f, 1000);
+    e.update(31.0f, R, 0);
+    e.update(27.0f, R, 40);
+    TEST_ASSERT_FALSE(e.update(27.0f, R, 2500));
+}
+
+// Calibração nova: depois do reset(), o estado antigo não passa adiante. Um |m| entre 10 e 15 % do raio
+// novo mantinha o distúrbio decidido com o raio antigo; com o detector reiniciado, não entra
+static void test_disturbed_reset_on_new_calibration() {
+    MagDisturbance d(15.0f, 10.0f, 1000);
+    TEST_ASSERT_TRUE(d.update(31.0f, 25.7f, 0));     // distúrbio com o raio antigo
+    TEST_ASSERT_TRUE(d.update(26.0f, 23.0f, 100));   // raio novo, 13 %: continuaria suspenso
+    d.reset();
+    TEST_ASSERT_FALSE(d.disturbed());
+    TEST_ASSERT_FALSE(d.update(26.0f, 23.0f, 200));
+    TEST_ASSERT_FALSE(d.update(26.4f, 23.0f, 300));  // 14,8 %: abaixo da entrada
+}
+
+// A segunda aproximação da bancada de 21/10/2026 (log 261021-141352): |m| das linhas do fluxo p, a ~10 Hz,
+// com a chave de fenda mexendo perto do módulo. Sem tempo mínimo, 4 entradas; com 1 s, 2, e o fim sem distúrbio
+static void test_disturbed_exit_hold_bench_values() {
+    static const float M[] = {
+        26.4f, 26.7f, 27.1f, 27.5f, 27.3f, 27.3f, 27.3f, 27.7f, 28.1f, 28.3f, 28.4f, 28.8f, 30.1f, 30.3f, 28.8f,
+        28.5f, 29.1f, 29.4f, 29.8f, 29.2f, 30.0f, 29.2f, 30.7f, 30.6f, 31.8f, 30.3f, 30.1f, 30.3f, 31.3f, 32.4f,
+        34.0f, 37.0f, 37.5f, 36.0f, 33.5f, 32.4f, 32.4f, 30.9f, 29.4f, 29.2f, 29.2f, 27.9f, 26.6f, 27.1f, 28.6f,
+        32.6f, 29.1f, 24.3f, 23.3f, 23.2f, 24.2f, 24.5f, 25.4f, 26.0f, 27.3f, 27.7f, 27.0f, 27.0f, 27.6f, 29.9f,
+        34.4f, 36.4f, 26.8f, 25.4f, 36.2f, 35.8f, 33.9f, 37.4f, 43.5f, 28.3f, 27.2f, 25.8f, 25.5f, 25.4f, 25.3f,
+        25.2f, 25.3f, 25.3f, 25.1f, 25.0f, 25.0f, 24.9f,
+    };
+    const int N = sizeof(M) / sizeof(M[0]);
+    const uint32_t holds[] = {0, 1000};
+    const int expectedEntries[] = {4, 2};
+    for (int h = 0; h < 2; h++) {
+        MagDisturbance d(15.0f, 10.0f, holds[h]);
+        int entries = 0;
+        bool prev = false;
+        for (int i = 0; i < N; i++) {
+            const bool now = d.update(M[i], 25.7f, 100u * (uint32_t)i);
+            if (now && !prev) entries++;
+            prev = now;
+        }
+        TEST_ASSERT_EQUAL(expectedEntries[h], entries);
+        TEST_ASSERT_FALSE(prev);
+    }
+}
+
+// O correct() recebe o estado pronto; a ordem das suspensões continua: dado inválido, atitude degradada,
+// inclinação e distúrbio
+static void test_heading_correct_disturbed_flag_order() {
+    HeadingFilter f(HP);
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::BadData, f.correct(NAN, true, 0, 0.04f, true));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::AttitudeDegraded, f.correct(40, true, 75, 0.04f, true));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Tilted, f.correct(40, true, 75, 0.04f));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Disturbed, f.correct(40, true, 0, 0.04f));
+    TEST_ASSERT_FALSE(f.initialized());
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Initialized, f.correct(40, false, 0, 0.04f));
 }
 
 // ---------- Filtro da proa ----------
@@ -429,44 +570,44 @@ static void test_heading_init_from_first_valid() {
     TEST_ASSERT_FALSE(f.initialized());
     f.predict({0, 0, 10}, 0, 0, 0.005f);   // sem referência: nada a integrar
     TEST_ASSERT_FALSE(f.initialized());
-    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Tilted, f.correct(40, 26, 26, 75, 0.04f));
-    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Disturbed, f.correct(40, 35, 26, 0, 0.04f));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Tilted, f.correct(40, false, 75, 0.04f));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Disturbed, f.correct(40, true, 0, 0.04f));
     TEST_ASSERT_FALSE(f.initialized());
-    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Initialized, f.correct(40, 26, 26, 0, 0.04f));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Initialized, f.correct(40, false, 0, 0.04f));
     TEST_ASSERT_EQUAL_FLOAT(40.0f, f.headingDeg());
-    TEST_ASSERT_EQUAL(HeadingFilter::Mag::BadData, f.correct(NAN, 26, 26, 0, 0.04f));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::BadData, f.correct(NAN, false, 0, 0.04f));
 }
 
 static void test_heading_step_converges_with_tau() {
     HeadingFilter f(HP);
-    f.correct(10, 26, 26, 0, 0.04f);
+    f.correct(10, false, 0, 0.04f);
     // Degrau de +30° no magnetômetro, correções a 25 Hz durante τ = 1 s: resta ~e^−1 do erro
-    for (int i = 0; i < 25; i++) TEST_ASSERT_EQUAL(HeadingFilter::Mag::Corrected, f.correct(40, 26, 26, 0, 0.04f));
+    for (int i = 0; i < 25; i++) TEST_ASSERT_EQUAL(HeadingFilter::Mag::Corrected, f.correct(40, false, 0, 0.04f));
     const float k = 0.04f / (1.0f + 0.04f);
     const float expected = 40.0f - 30.0f * powf(1 - k, 25);
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, expected, f.headingDeg());
     TEST_ASSERT_FLOAT_WITHIN(1.0f, 40.0f - 30.0f * expf(-1.0f), f.headingDeg());
-    for (int i = 0; i < 250; i++) f.correct(40, 26, 26, 0, 0.04f);
+    for (int i = 0; i < 250; i++) f.correct(40, false, 0, 0.04f);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 40.0f, f.headingDeg());
 }
 
 static void test_heading_gyro_follows_rotation() {
     HeadingFilter f(HP);
-    f.correct(350, 26, 26, 0, 0.04f);
+    f.correct(350, false, 0, 0.04f);
     // Nariz para a direita a 90 °/s por 1 s, nivelado (r = +90 °/s): 350° → 80°, passando por 0
     for (int i = 0; i < 200; i++) f.predict({0, 0, 90}, 0, 0, 0.005f);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 80.0f, f.headingDeg());
     // Com 30° de roll, a guinada na Terra vem de q·sinφ + r·cosφ: giro só em r dá r·cos30°
     HeadingFilter g(HP);
-    g.correct(0, 26, 26, 0, 0.04f);
+    g.correct(0, false, 0, 0.04f);
     for (int i = 0; i < 200; i++) g.predict({0, 0, 10}, 30, 0, 0.005f);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 10.0f * cosf(30 * D2R), g.headingDeg());
 }
 
 static void test_heading_short_path() {
     HeadingFilter f(HP);
-    f.correct(359, 26, 26, 0, 0.04f);
-    f.correct(1, 26, 26, 0, 0.2f);   // passo grande: k = 0,2/1,2
+    f.correct(359, false, 0, 0.04f);
+    f.correct(1, false, 0, 0.2f);   // passo grande: k = 0,2/1,2
     const float d = wrap180(f.headingDeg() - 359.0f);
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 2.0f * 0.2f / 1.2f, d);   // andou para frente (+), não −358°
     TEST_ASSERT_TRUE(f.headingDeg() < 1.0f || f.headingDeg() > 359.0f);
@@ -474,39 +615,39 @@ static void test_heading_short_path() {
 
 static void test_heading_suspensions_keep_gyro() {
     HeadingFilter f(HP);
-    f.correct(100, 26, 26, 0, 0.04f);
+    f.correct(100, false, 0, 0.04f);
     // Distúrbio: o magnetômetro diz 160°, mas a correção fica suspensa
-    for (int i = 0; i < 50; i++) TEST_ASSERT_EQUAL(HeadingFilter::Mag::Disturbed, f.correct(160, 40, 26, 0, 0.04f));
+    for (int i = 0; i < 50; i++) TEST_ASSERT_EQUAL(HeadingFilter::Mag::Disturbed, f.correct(160, true, 0, 0.04f));
     TEST_ASSERT_EQUAL_FLOAT(100.0f, f.headingDeg());
     // Inclinação alta: idem; o giroscópio continua valendo
     f.predict({0, 0, 20}, 0, 0, 0.1f);
-    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Tilted, f.correct(160, 26, 26, -72, 0.04f));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Tilted, f.correct(160, false, -72, 0.04f));
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 102.0f, f.headingDeg());
 }
 
 static void test_heading_suspended_with_degraded_attitude() {
     HeadingFilter f(HP);
     // Sem referência e com a atitude degradada: não inicializa por uma proa compensada com roll/pitch errados
-    TEST_ASSERT_EQUAL(HeadingFilter::Mag::AttitudeDegraded, f.correct(40, 26, 26, 0, 0.04f, true));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::AttitudeDegraded, f.correct(40, false, 0, 0.04f, true));
     TEST_ASSERT_FALSE(f.initialized());
-    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Initialized, f.correct(40, 26, 26, 0, 0.04f, false));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Initialized, f.correct(40, false, 0, 0.04f, false));
     // Degradada: o magnetômetro diz 90°, a correção fica suspensa e o giroscópio continua valendo
-    for (int i = 0; i < 50; i++) TEST_ASSERT_EQUAL(HeadingFilter::Mag::AttitudeDegraded, f.correct(90, 26, 26, 0, 0.04f, true));
+    for (int i = 0; i < 50; i++) TEST_ASSERT_EQUAL(HeadingFilter::Mag::AttitudeDegraded, f.correct(90, false, 0, 0.04f, true));
     f.predict({0, 0, 10}, 0, 0, 0.1f);
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 41.0f, f.headingDeg());
     // Atitude recuperada: a correção volta
-    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Corrected, f.correct(90, 26, 26, 0, 0.04f, false));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Corrected, f.correct(90, false, 0, 0.04f, false));
     TEST_ASSERT_TRUE(f.headingDeg() > 41.0f);
 }
 
 static void test_heading_gap_resets() {
     HeadingFilter f(HP);
-    f.correct(100, 26, 26, 0, 0.04f);
+    f.correct(100, false, 0, 0.04f);
     f.predict({0, 0, 10}, 0, 0, 0.0f);   // dt nulo: ignorado
     TEST_ASSERT_EQUAL_FLOAT(100.0f, f.headingDeg());
     f.predict({0, 0, 10}, 0, 0, 0.5f);   // lacuna acima de maxDtS: reinicia
     TEST_ASSERT_FALSE(f.initialized());
-    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Initialized, f.correct(200, 26, 26, 0, 0.04f));
+    TEST_ASSERT_EQUAL(HeadingFilter::Mag::Initialized, f.correct(200, false, 0, 0.04f));
     f.predict({0, 0, 10}, 0, 89.9f, 0.005f);   // perto da vertical: finito (guarda de 85°)
     TEST_ASSERT_TRUE(isfinite(f.headingDeg()));
 }
@@ -728,6 +869,12 @@ int main(int, char **) {
     RUN_TEST(test_flat_heading_error_with_tilt);
     RUN_TEST(test_wrap360);
     RUN_TEST(test_disturbed);
+    RUN_TEST(test_disturbed_hysteresis_bench_values);
+    RUN_TEST(test_disturbed_exit_hold);
+    RUN_TEST(test_disturbed_exit_hold_bench_values);
+    RUN_TEST(test_disturbed_exit_interrupted);
+    RUN_TEST(test_disturbed_reset_on_new_calibration);
+    RUN_TEST(test_heading_correct_disturbed_flag_order);
     RUN_TEST(test_heading_init_from_first_valid);
     RUN_TEST(test_heading_step_converges_with_tau);
     RUN_TEST(test_heading_gyro_follows_rotation);

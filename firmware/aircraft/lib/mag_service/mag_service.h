@@ -18,7 +18,9 @@ struct MagServiceConfig {
     uint32_t readHz;         // leituras por segundo com o chip respondendo
     uint32_t retryMs;        // chip ausente no boot: nova tentativa de configuração
     uint32_t failRetryMs;    // chip falhando (ok() falso): uma leitura por intervalo
-    float    disturbPct;     // |m| afastado do raio da calibração mais que isto: distúrbio
+    float    disturbPct;     // |m| afastado do raio da calibração mais que isto: começa o distúrbio
+    float    disturbExitPct; // e volta a no máximo isto: termina (histerese, menor que disturbPct)
+    uint32_t disturbExitMs;  // por este tempo seguido, para terminar
     float    refFieldUt;     // |B| do modelo geomagnético na bancada (só informativo, no fim da calibração)
     uint32_t printHz;        // fluxo p
     uint32_t keyHintMs;      // calibração: intervalo mínimo entre os avisos de tecla ignorada
@@ -93,7 +95,7 @@ private:
     bool haveTilt_ = false;    // proa compensada calculada (atitude disponível)
     MagTilt tilt_ = {0, 0};
     HeadingFilter::Mag step_ = HeadingFilter::Mag::Corrected;   // resultado da última correção
-    bool disturbWarned_ = false;
+    MagDisturbance disturb_;   // distúrbio com histerese: suspende a correção e gera o aviso
     uint32_t winReads_ = 0;    // leituras válidas na janela do resumo
     uint32_t lastWinReads_ = 0;
     MagCalibrator calib_;

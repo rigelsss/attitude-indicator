@@ -6,7 +6,7 @@
 
 MagService::MagService(const MagServiceConfig &cfg, const AttitudeFilter &att, HeadingFilter &hdg)
     : cfg_(cfg), att_(att), hdg_(hdg), periodUs_(1000000UL / cfg.readHz), printUs_(1000000UL / cfg.printHz),
-      calib_(cfg.cal) {}
+      disturb_(cfg.disturbPct, cfg.disturbExitPct, cfg.disturbExitMs), calib_(cfg.cal) {}
 
 void MagService::loadCalibration() {
     uint8_t crb;
@@ -127,6 +127,7 @@ void MagService::startCalibration(bool otherCalRunning) {
     }
     calib_.start(pts_, millis());
     keyHinted_ = false;
+    disturb_.interruptExit();   // a coleta e a revisão não passam pelo detector: a contagem recomeça depois
     hdg_.reset();
     logPrintf("[mag] calibração: gire a caixa devagar em TODAS as orientações por até %lu s (x cancela).\n",
               (unsigned long)(cfg_.cal.maxMs / 1000));
@@ -200,7 +201,10 @@ void MagService::service(uint32_t nowUs) {
         logPrintf("[mag] HMC5883L perdeu a configuração (queda de alimentação?): %s\n",
                   mag_.configured() ? "reconfigurado" : "reconfiguração falhou, nova tentativa a cada leitura");
     }
-    if (!ok) return;
+    if (!ok) {
+        disturb_.interruptExit();   // leitura inválida (falha ou saturação) não conta como tempo na faixa
+        return;
+    }
     winReads_++;
     const Vec3 raw = magChipToBody(ms.chipUt);
     have_ = true;
@@ -226,18 +230,19 @@ void MagService::service(uint32_t nowUs) {
     if (calib_.state() == MagCalibrator::State::Review) return;   // proa suspensa até gravar ou descartar
 
     corr_ = magApplyCal(cal_.cal, raw);
+    // Um estado só para a correção e o aviso. O aviso segue o próprio estado, e não o resultado de correct():
+    // com outra suspensão ativa (atitude degradada, inclinação alta), correct() devolve outro estado mesmo
+    // com o campo fora do limite
+    const bool wasDisturbed = disturb_.disturbed();
+    const bool disturbed = disturb_.update(norm(corr_), cal_.cal.radiusUt, ms.tMs);
     if (att_.initialized()) {
         tilt_ = magTiltCompensate(corr_, att_.rollDeg(), att_.pitchDeg());
         haveTilt_ = true;
-        step_ = hdg_.correct(tilt_.headingDeg, norm(corr_), cal_.cal.radiusUt, att_.pitchDeg(), dt, att_.degraded());
+        step_ = hdg_.correct(tilt_.headingDeg, disturbed, att_.pitchDeg(), dt, att_.degraded());
     } else {
         haveTilt_ = false;
     }
-    // Aviso de distúrbio pelo próprio |m|, e não pelo resultado de correct(): com outra suspensão ativa
-    // (atitude degradada, inclinação alta), correct() devolve outro estado mesmo com o campo fora do limite
-    const bool disturbed = magDisturbed(norm(corr_), cal_.cal.radiusUt, cfg_.disturbPct);
-    if (disturbed != disturbWarned_) {
-        disturbWarned_ = disturbed;
+    if (disturbed != wasDisturbed) {
         if (disturbed)
             logPrintf("[mag] DISTÚRBIO: |m| %.1f µT, raio da calibração %.1f µT (limite %.0f %%): correção "
                       "pelo magnetômetro suspensa\n", norm(corr_), cal_.cal.radiusUt, cfg_.disturbPct);
@@ -298,6 +303,9 @@ MagKey MagService::handleKey(char ch) {
             cal_.residPct = f.residPct;
             cal_.sectors = (uint8_t)f.sectors;
             hdg_.reset();
+            // O distúrbio foi decidido com o raio antigo: o detector recomeça, e um distúrbio em curso é fechado
+            if (disturb_.disturbed()) logPrintln("[mag] distúrbio encerrado: calibração nova gravada");
+            disturb_.reset();
             logPrintln("[mag] calibração do magnetômetro gravada na NVS");
             freeCalibration();
         } else {

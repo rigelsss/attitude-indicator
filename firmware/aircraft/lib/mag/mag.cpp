@@ -427,10 +427,31 @@ MagTilt magTiltCompensate(const Vec3 &m, float rollDeg, float pitchDeg) {
     return {wrap360(atan2f(-yh, xh) * RAD2DEG), atan2f(zh, sqrtf(xh * xh + yh * yh)) * RAD2DEG};
 }
 
-bool magDisturbed(float normUt, float refRadiusUt, float pct) {
-    if (!(refRadiusUt > 0)) return false;
-    if (!isfinite(normUt)) return true;   // |m| inválido não pode ser tratado como campo limpo
-    return fabsf(normUt - refRadiusUt) > refRadiusUt * pct / 100.0f;
+bool MagDisturbance::update(float normUt, float refRadiusUt, uint32_t tMs) {
+    if (!(refRadiusUt > 0)) {
+        reset();
+        return false;
+    }
+    if (!isfinite(normUt)) {   // |m| inválido não pode ser tratado como campo limpo
+        on_ = true;
+        inBand_ = false;
+        return true;
+    }
+    const float dev = fabsf(normUt - refRadiusUt);
+    if (!on_) {
+        if (dev > refRadiusUt * enterPct_ / 100.0f) on_ = true;
+        return on_;
+    }
+    if (dev > refRadiusUt * exitPct_ / 100.0f) {
+        inBand_ = false;   // fora da faixa de saída: a contagem recomeça na próxima leitura dentro dela
+        return true;
+    }
+    if (!inBand_) {
+        inBand_ = true;
+        bandSinceMs_ = tMs;
+    }
+    if (tMs - bandSinceMs_ >= exitHoldMs_) reset();
+    return on_;
 }
 
 void HeadingFilter::reset() {
@@ -452,12 +473,12 @@ void HeadingFilter::predict(const Vec3 &gyroBodyDps, float rollDeg, float pitchD
     psi_ = wrap360(psi_ + rate * dtS);
 }
 
-HeadingFilter::Mag HeadingFilter::correct(float magHeadingDeg, float normUt, float refRadiusUt, float pitchDeg,
-                                          float dtS, bool attitudeDegraded) {
-    if (!isfinite(magHeadingDeg) || !isfinite(normUt) || !isfinite(pitchDeg)) return Mag::BadData;
+HeadingFilter::Mag HeadingFilter::correct(float magHeadingDeg, bool disturbed, float pitchDeg, float dtS,
+                                          bool attitudeDegraded) {
+    if (!isfinite(magHeadingDeg) || !isfinite(pitchDeg)) return Mag::BadData;
     if (attitudeDegraded) return Mag::AttitudeDegraded;
     if (fabsf(pitchDeg) > p_.maxPitchDeg) return Mag::Tilted;
-    if (magDisturbed(normUt, refRadiusUt, p_.disturbPct)) return Mag::Disturbed;
+    if (disturbed) return Mag::Disturbed;
     if (!init_) {
         psi_ = wrap360(magHeadingDeg);
         init_ = true;

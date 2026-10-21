@@ -81,8 +81,7 @@ static CalService g_calSvc(CAL_CFG);
 static const FusionParams FUSION_PARAMS = {COMP_FILTER_TAU_S, FUSION_ACC_FULL_DEV_G, FUSION_ACC_ZERO_DEV_G,
                                            FUSION_ROLL_MIN_G, FUSION_MAX_DT_MS / 1000.0f, FUSION_INIT_SAMPLES,
                                            FUSION_INIT_MAX_RATE_DPS};
-static const HeadingParams HEADING_PARAMS = {MAG_HEADING_TAU_S, MAG_MAX_PITCH_DEG, MAG_DISTURB_PCT,
-                                             MAG_MAX_DT_MS / 1000.0f};
+static const HeadingParams HEADING_PARAMS = {MAG_HEADING_TAU_S, MAG_MAX_PITCH_DEG, MAG_MAX_DT_MS / 1000.0f};
 // Atitude, diagnóstico só de giroscópio e proa (predição aqui, correção pelo serviço do magnetômetro)
 static FusionCore g_fusion(FUSION_PARAMS, HEADING_PARAMS);
 static const AttitudeFilter &g_att = g_fusion.att();
@@ -109,9 +108,11 @@ static const MagServiceConfig MAG_CFG = {
      {MAG_CAL_MIN_RADIUS_UT, MAG_CAL_MAX_RADIUS_UT, MAG_CAL_MAX_RESID_PCT, MAG_CAL_MIN_SCALE, MAG_CAL_MAX_SCALE,
       MAG_CAL_MIN_SECTORS, MAG_CAL_MIN_PTS_SECTOR},
      MAG_CAL_COVER_MIN_UT},
-    MAG_READ_HZ, MAG_RETRY_MS, MAG_FAIL_RETRY_MS, MAG_DISTURB_PCT, MAG_REF_FIELD_UT, MAG_PRINT_HZ,
+    MAG_READ_HZ, MAG_RETRY_MS, MAG_FAIL_RETRY_MS, MAG_DISTURB_PCT, MAG_DISTURB_EXIT_PCT,
+    MAG_DISTURB_EXIT_MS, MAG_REF_FIELD_UT, MAG_PRINT_HZ,
     MAG_KEY_HINT_MS,
 };
+static_assert(MAG_DISTURB_EXIT_PCT < MAG_DISTURB_PCT, "histerese do distúrbio: a saída fica abaixo da entrada");
 static MagService g_magSvc(MAG_CFG, g_fusion.att(), g_fusion.heading());
 
 static void fusionReset() { g_fusion.reset(); }

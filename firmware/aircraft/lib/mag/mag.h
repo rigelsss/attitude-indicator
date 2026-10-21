@@ -199,13 +199,40 @@ struct MagTilt {
 // Xh = mx·cosθ + my·sinφ·sinθ + mz·cosφ·sinθ, Yh = my·cosφ − mz·sinφ, proa = atan2(−Yh, Xh).
 MagTilt magTiltCompensate(const Vec3 &m, float rollDeg, float pitchDeg);
 
-// |m| afastado do raio da calibração mais que pct %. Sem calibração (raio 0), nunca.
-bool magDisturbed(float normUt, float refRadiusUt, float pct);
+// Distúrbio magnético com histerese: começa com |m| afastado do raio da calibração mais que enterPct % e só
+// termina com ele de volta a no máximo exitPct % (exitPct < enterPct) por exitHoldMs seguidos; uma leitura
+// fora dessa faixa recomeça a contagem. Sem a folga, um campo passando devagar pelo limite alternava o aviso
+// e a correção da proa (20/10/2026); sem o tempo, um campo oscilando rápido perto do módulo (ferramenta na
+// mão) ainda alternava, com trocas a 0,3 s uma da outra (21/10/2026). Sem calibração (raio 0), nunca há
+// distúrbio; |m| não finito conta como distúrbio. Instantes em millis(), virada dos 32 bits tratada.
+class MagDisturbance {
+public:
+    MagDisturbance(float enterPct, float exitPct, uint32_t exitHoldMs)
+        : enterPct_(enterPct), exitPct_(exitPct), exitHoldMs_(exitHoldMs) {}
+    // Uma leitura no instante tMs; devolve o estado depois dela
+    bool update(float normUt, float refRadiusUt, uint32_t tMs);
+    bool disturbed() const { return on_; }
+    // Interrompe a contagem da faixa de saída sem tirar o distúrbio: leitura inválida (falha, saturação) ou
+    // pausa nas leituras (calibração). A saída volta a exigir exitHoldMs seguidos de leituras válidas
+    void interruptExit() { inBand_ = false; }
+    // Volta a sem distúrbio (calibração nova: o estado decidido com o raio antigo não vale mais)
+    void reset() {
+        on_ = false;
+        inBand_ = false;
+    }
+
+private:
+    float    enterPct_;
+    float    exitPct_;
+    uint32_t exitHoldMs_;
+    bool     on_ = false;
+    bool     inBand_ = false;     // em distúrbio, com |m| dentro da faixa de saída desde bandSinceMs_
+    uint32_t bandSinceMs_ = 0;
+};
 
 struct HeadingParams {
     float tauS;          // constante de tempo da correção pelo magnetômetro
     float maxPitchDeg;   // acima disto, sem correção (proa mal definida perto de ±90°)
-    float disturbPct;    // desvio de |m| que suspende a correção
     float maxDtS;        // maior intervalo integrável na predição; na correção, limita o passo
 };
 
@@ -231,8 +258,8 @@ public:
     // dtS: intervalo desde a leitura anterior do magnetômetro (limitado a maxDtS no ganho).
     // attitudeDegraded: a fusão marcou a atitude como degradada (AttitudeFilter::degraded()); a proa
     // compensada usa roll e pitch, então a correção fica suspensa, e o giroscópio mantém a proa.
-    Mag correct(float magHeadingDeg, float normUt, float refRadiusUt, float pitchDeg, float dtS,
-                bool attitudeDegraded = false);
+    // disturbed: estado do MagDisturbance (com histerese), decidido por quem chama a cada leitura
+    Mag correct(float magHeadingDeg, bool disturbed, float pitchDeg, float dtS, bool attitudeDegraded = false);
 
     bool  initialized() const { return init_; }
     float headingDeg() const { return psi_; }

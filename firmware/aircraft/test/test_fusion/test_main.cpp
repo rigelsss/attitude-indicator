@@ -9,7 +9,7 @@ void tearDown() {}
 
 // Mesmos valores do config.h (20 amostras na média inicial)
 static const FusionParams FP = {1.0f, 0.05f, 0.15f, 0.3f, 0.050f, 20, 5.0f};
-static const HeadingParams HP = {1.0f, 70.0f, 15.0f, 0.2f};
+static const HeadingParams HP = {1.0f, 70.0f, 0.2f};
 static const ImuFlags NO_SAT = {false, false};
 static const Vec3 LEVEL = {0, 0, -1};   // força específica em repouso nivelado, eixos do modelo
 static const Vec3 ZERO = {0, 0, 0};
@@ -128,7 +128,7 @@ static void test_gap_counts_reset() {
 static void test_reset_clears_everything() {
     FusionCore f(FP, HP);
     feedLevel(f, 0, 30);
-    f.heading().correct(100.0f, 26.0f, 26.0f, 0.0f, 0.04f);
+    f.heading().correct(100.0f, false, 0.0f, 0.04f);
     TEST_ASSERT_TRUE(f.att().initialized());
     TEST_ASSERT_TRUE(f.gyroOnly().initialized());
     TEST_ASSERT_TRUE(f.heading().initialized());
@@ -161,7 +161,7 @@ static void test_gyro_only_starts_from_filter() {
 static void test_heading_predict_and_hold() {
     FusionCore f(FP, HP);
     uint32_t t = feedLevel(f, 0, 30);
-    f.heading().correct(100.0f, 26.0f, 26.0f, 0.0f, 0.04f);
+    f.heading().correct(100.0f, false, 0.0f, 0.04f);
     TEST_ASSERT_TRUE(f.heading().initialized());
     // 1 s de guinada a 20 °/s (eixo z do modelo, para baixo: nariz para a direita)
     for (int i = 0; i < 200; i++, t += PERIOD_US) f.update(LEVEL, {0, 0, 20}, NO_SAT, t, false);
@@ -173,7 +173,7 @@ static void test_heading_predict_and_hold() {
 // Sem atitude, a proa recomeça
 static void test_heading_resets_without_attitude() {
     FusionCore f(FP, HP);
-    f.heading().correct(100.0f, 26.0f, 26.0f, 0.0f, 0.04f);
+    f.heading().correct(100.0f, false, 0.0f, 0.04f);
     f.update(LEVEL, ZERO, NO_SAT, 0, false);
     TEST_ASSERT_FALSE(f.heading().initialized());
 }

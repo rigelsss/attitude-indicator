@@ -160,6 +160,11 @@
 #define MAG_CAL_MAX_SCALE        1.3f
 #define MAG_REF_FIELD_UT         26.2f    // |B| do WMM2025 na bancada (João Pessoa): só informativo
 #define MAG_DISTURB_PCT          15.0f    // |m| corrigido afastado do raio mais que isto: correção suspensa
+#define MAG_DISTURB_EXIT_PCT     10.0f    // e só termina com |m| de volta a no máximo isto (histerese: com o raio de
+                                          // 25,7 µT, 23,1–28,3 µT). Sem a folga, o aviso alternava perto do limite
+#define MAG_DISTURB_EXIT_MS      1000     // e por este tempo seguido: um campo oscilando rápido perto do módulo
+                                          // (ferramenta na mão) não alterna o aviso (21/10/2026). A correção volta
+                                          // até 1 s mais tarde; nesse tempo a proa segue pelo giroscópio
 #define MAG_HEADING_TAU_S        1.0f     // filtro da proa: constante de tempo da correção pelo magnetômetro
 #define MAG_MAX_PITCH_DEG        70.0f    // acima disto, sem correção pelo magnetômetro (faixa validada da fusão)
 #define MAG_MAX_DT_MS            200      // correção: maior passo considerado no ganho

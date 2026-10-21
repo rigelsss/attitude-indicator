@@ -44,6 +44,11 @@ Itens de uma revisão externa (numeração dela), distribuídos pela etapa em qu
   - **Depois disso:** decidir sobre a refatoração do `main.cpp` provisório (seção "Decisões para a semana 3"), que é pré-requisito das tasks da semana 3.
 - **20/10/2026, refatoração retomada:** plano aprovado e andamento em [refatoracao.md](refatoracao.md) (passos 0–8, um módulo por vez). As tasks da semana 3 começam depois dela.
 - **20/10/2026, refatoração concluída:** os passos 0–8 foram validados na bancada, e o `main.cpp` provisório tem 341 linhas: inicialização, ISR e laço de aquisição. A lógica está em `lib/`, e o console em `src/console.cpp`. Para a migração, as pendências 2, 5 e 7 do [refatoracao.md](refatoracao.md) tratam da serial fora do laço, da ISR do INT em IRAM e do console acessando os serviços entre tasks.
+- **21/10/2026, pendências antes da semana 3** ([refatoracao.md](refatoracao.md), "Situação em 21/10/2026"):
+  - feitas e conferidas na bancada: a ISR do INT pelo ESP-IDF em IRAM, no nível 2 (pendência 5), o logger com buffer próprio e o log do núcleo redirecionado (parte da pendência 2), o aviso de tecla ignorada no `m` (1), a cobertura do `m` com distância mínima (3) e a histerese do distúrbio magnético;
+  - ficam para a semana 3, junto com a `sensor_task`: a formatação do `c`, do `r` e do `a` fora do laço (resto da 2), a fila de comandos e o estado publicado (7) e os pulsos falsos no INT (8);
+  - ficam para o modelo final: o `s` do magnetômetro (4) e o das seis posições (6);
+  - **item 5 da revisão de 15/10 (reinício da fusão): a definir.** O texto do item não está no repositório (só o título, no commit `9c12d4c`). Se não for recuperado até a semana 6, rever o reinício da fusão a partir dos registros do [fusao.md](fusao.md) antes da montagem no modelo.
 - **Semana 3 (tasks e rádio):** 7 (perdas pelo `seq`), 8 (camada única de comandos), 11 (callback de envio do ESP-NOW) e a primeira parte do 3 (filtrar o remetente pelo `PEER_MAC` no callback de recepção do A).
 - **Semana 4 (TFT):** 1 (sprite e heap) e 13 (GPIO 5 como CS do TFT).
 - **Semana 5 (web e comandos):** a segunda parte do 3 (validar o `arg` do `CMD_SET_RATE_HZ`), 15 (senha do AP) e a lógica dos estados do ACK (aceito, concluído, recusado).

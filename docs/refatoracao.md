@@ -400,6 +400,21 @@ O barômetro não voltou até o fim do log: o SDA não foi recolocado, ou ficou 
 
 ## Pendências (fora da refatoração)
 
+**Situação em 21/10/2026, antes da semana 3:**
+
+| # | Pendência | Situação |
+|---|---|---|
+| 1 | Teclas ignoradas no `m` | feita em 21/10 |
+| 2 | Log do núcleo e formatação no laço | log do núcleo feito em 21/10; **o atraso com o `r` e o `a` juntos ficou em 104–118 µs com as tasks (passo 1, [tasks.md](tasks.md))**: vinha da escrita no `Serial`, não da formatação. Falta conferir o atraso depois de um `c` (passo 2) |
+| 3 | Cobertura do `m` pelo ruído | feita em 21/10 |
+| 4 | `s` de uma calibração aceita do magnetômetro | modelo final (calibração real no lugar) |
+| 5 | Carimbo do pulso do INT | feita em 21/10 (ISR em IRAM, nível 2); causa de 20/10 não confirmada |
+| 6 | `s` das seis posições | modelo final |
+| 7 | Console chamando os serviços direto | **semana 3**, com a `sensor_task` (fila de comandos e estado publicado) |
+| 8 | Pulsos falsos no INT | **semana 3**, junto com a `sensor_task`; teste por `native` e por injeção de pulsos pelo software, sem depender do fio |
+
+Fora da lista, também em 21/10: histerese e tempo mínimo na saída do distúrbio magnético ([hardware.md](hardware.md), "Histerese do distúrbio magnético").
+
 1. **Teclas ignoradas na calibração do magnetômetro.** Na coleta do `m` (até 180 s), o firmware ignora as teclas sem dizer nada, e o terminal parece travado. A revisão que vem depois, que só aceita `s`, `x` e `d`, também. Proposta: ao ignorar uma tecla, imprimir uma linha curta, por exemplo `[mag] calibração em andamento: x cancela`, no máximo uma vez por segundo. Fica para depois do passo 4, num commit à parte, porque muda o comportamento. Vista em 20/10, log `261020-133830`.
    - **Feita em 21/10/2026.** Avisos `[mag] calibração em andamento: x cancela` (coleta) e `[mag] revisão da calibração: s = gravar | x = sair | d = pontos em CSV` (revisão), no máximo um por `MAG_KEY_HINT_MS` (1 s), sem aviso para Enter e espaço. Bancada em [hardware.md](hardware.md), "Aviso de tecla ignorada na calibração do magnetômetro".
 2. **Log de erro do núcleo parando o laço.** Com um sensor falhando e uma impressão longa em curso (o resumo `r`, o `c`), cada `[E][Wire.cpp]` pode parar o laço por ~50 ms. Isso descarta 10 amostras e reinicia a fusão a cada tentativa, quando a fase coincide. Já estava previsto para a semana 3 ([plano.md](plano.md): serial numa task de baixa prioridade e revisão do nível de log do núcleo). Agora há a medida do efeito na fusão. Decidir na migração: baixar o `CORE_DEBUG_LEVEL` ou redirecionar o log do núcleo para a fila do `lib/logger`. Vista em 20/10, log `261020-134704`.

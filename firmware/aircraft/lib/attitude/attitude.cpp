@@ -1,6 +1,7 @@
 // attitude.cpp — filtro complementar de roll e pitch em lógica pura (sem dependência de Arduino)
 #include "attitude.h"
 #include <math.h>
+#include "hot_path.h"
 
 static const float PI_F = (float)M_PI;
 static const float DEG2RAD = PI_F / 180.0f;
@@ -9,15 +10,15 @@ static const float RAD2DEG = 180.0f / PI_F;
 // singularidade em 90°; a faixa validada é |pitch| ≤ 70° (docs/fusao.md).
 static const float COS_PITCH_MIN = 0.0871557f;   // cos 85°
 
-static bool finite3(const Vec3 &v) {
+static HOT_PATH bool finite3(const Vec3 &v) {
     return isfinite(v.x) && isfinite(v.y) && isfinite(v.z);
 }
 
-static float wrapPi(float a) {
+static HOT_PATH float wrapPi(float a) {
     return atan2f(sinf(a), cosf(a));
 }
 
-static Vec3 scaled(const Vec3 &v, float k) {
+static HOT_PATH Vec3 scaled(const Vec3 &v, float k) {
     return {v.x * k, v.y * k, v.z * k};
 }
 
@@ -48,7 +49,7 @@ Angles accelRollPitch(const Vec3 &f) {
     return {atan2f(-f.y, -f.z) * RAD2DEG, atan2f(f.x, sqrtf(f.y * f.y + f.z * f.z)) * RAD2DEG};
 }
 
-float accWeight(float accNormG, bool accSaturated, const FusionParams &p) {
+HOT_PATH float accWeight(float accNormG, bool accSaturated, const FusionParams &p) {
     if (accSaturated || !isfinite(accNormG)) return 0.0f;
     const float dev = fabsf(accNormG - 1.0f);
     if (dev <= p.accFullDevG) return 1.0f;
@@ -83,7 +84,8 @@ float AttitudeFilter::pitchDeg() const {
     return pitch_ * RAD2DEG;
 }
 
-AttitudeFilter::Step AttitudeFilter::update(const Vec3 &acc, const Vec3 &gyro, float dtS, const ImuFlags &flags) {
+HOT_PATH AttitudeFilter::Step AttitudeFilter::update(const Vec3 &acc, const Vec3 &gyro, float dtS,
+                                               const ImuFlags &flags) {
     if (!finite3(acc) || !finite3(gyro) || !isfinite(dtS)) {
         if (!init_) initN_ = 0;   // a média parcial não atravessa um dado inválido
         return Step::BadData;

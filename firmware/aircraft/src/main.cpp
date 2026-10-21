@@ -261,10 +261,12 @@ void setup() {
     // até sobrar só a FIFO de 128 bytes da UART (~10 ms por linha longa a 115200) e descarta amostras
     Serial.setTxBufferSize(SERIAL_TX_BUFFER_BYTES);
     Serial.begin(115200);
+    const bool logBuffered = logBegin(LOG_BUFFER_BYTES);   // também redireciona os logs do núcleo e do IDF
     delay(500);
     pinMode(PIN_LED_STATUS, OUTPUT);
     logPrintf("[A] boot — compilado em %s — TelemetryPacket = %u bytes (main provisório: MPU6050 e "
               "calibração)\n", BUILD_STAMP, (unsigned)sizeof(TelemetryPacket));
+    if (!logBuffered) logPrintln("[A] AVISO: sem memória para o buffer do logger; impressões direto no Serial");
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_FREQ_HZ);
     Wire.setTimeOut(I2C_TIMEOUT_MS);   // vale para o barramento inteiro e sobrevive a Wire.end()/begin()
     g_intQueue = xQueueCreate(MPU_INT_QUEUE_LEN, sizeof(uint32_t));
@@ -295,12 +297,14 @@ static bool waitPulse(uint32_t &tInt) {
     for (;;) {
         if (xQueueReceive(g_intQueue, &tInt, pdMS_TO_TICKS(MPU_INT_WAIT_SLICE_MS)) == pdTRUE) return true;
         if (millis() - t0 >= MPU_INT_TIMEOUT_MS) return false;
+        logPump();
         g_baroSvc.service(micros());
         g_magSvc.service(micros());
     }
 }
 
 void loop() {
+    logPump();   // mensagens do ciclo anterior, no espaço livre do Serial, sem esperar
     g_console.poll();
     if (!g_mpuReady) {
         // Sem MPU, o barômetro continua sendo atendido; a configuração é tentada a cada MPU_RETRY_MS

@@ -63,6 +63,9 @@
                                        // (resumo + fluxo a 10 Hz ≈ 4 kB/s, abaixo dos ~11,5 kB/s de 115200).
                                        // O c imprime ~1,4 kB de uma vez: com 1 kB, o laço bloqueava ~30 ms,
                                        // perto do reinício da fusão (FUSION_MAX_DT_MS)
+#define LOG_BUFFER_BYTES        8192   // buffer do lib/logger, antes do Serial: quem imprime não espera a UART;
+                                       // cheio, a mensagem é descartada e contada. Com o do Serial, ~12 kB
+                                       // (~1 s a 115200): cabe o c (~1,4 kB) junto com o r e o a
 
 // ---------- Calibração do MPU6050 (docs/calibracao.md) ----------
 #define CAL_WINDOW_MS                 2000    // janela de média: 400 amostras a 200 Hz

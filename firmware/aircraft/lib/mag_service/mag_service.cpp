@@ -165,6 +165,7 @@ void MagService::dumpPoints() {
     const MagCal &c = f.cal;
     const Vec3 *p = calib_.points();
     const size_t n = calib_.count();
+    logWaitRoom(512);   // cabeçalho (~300 bytes) inteiro, mesmo depois de outras mensagens
     logPrintf("# mag_cal inicio: %lu pontos (µT, eixos do modelo, sem calibração)\n", (unsigned long)n);
     logPrintf("# firmware status=%s b=%.4f,%.4f,%.4f w=%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f R=%.4f "
               "resid=%.3f setores=%d\n",
@@ -172,7 +173,12 @@ void MagService::dumpPoints() {
               c.w.m[0][2], c.w.m[1][0], c.w.m[1][1], c.w.m[1][2], c.w.m[2][0], c.w.m[2][1], c.w.m[2][2],
               c.radiusUt, f.residPct, f.sectors);
     logPrintln("x,y,z");
-    for (size_t i = 0; i < n; i++) logPrintf("%.3f,%.3f,%.3f\n", p[i].x, p[i].y, p[i].z);
+    // ~45 kB, bem mais que o buffer do logger: cada linha espera espaço, em vez de ser descartada.
+    // O laço fica parado, como antes (MagKey::HandledLoopStalled)
+    for (size_t i = 0; i < n; i++) {
+        logWaitRoom(64);
+        logPrintf("%.3f,%.3f,%.3f\n", p[i].x, p[i].y, p[i].z);
+    }
     logPrintln("# mag_cal fim");
     logFlush();
 }

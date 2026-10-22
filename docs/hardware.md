@@ -16,15 +16,16 @@ O diagnóstico varre o barramento, identifica os chips pelos registradores de ID
 
 | Tecla | Ação |
 |---|---|
-| `s` | Varre o barramento de novo (depois de mexer em cabos) |
+| `s` | Varre de novo os dois barramentos (depois de mexer em cabos). O barramento 1 (`Wire1`, GPIO 32 e 33, só o OLED) é varrido depois do 0, com o teste de pull-up antes: com o `Wire1` parado e o pull-down interno (~45 kΩ) ligado, cada linha com pull-up externo lê 1 (`pull-ups externos: SDA sim, SCL sim`) |
 | `l` | Liga ou pausa o fluxo de leituras brutas do MPU (`DIAG_PRINT_HZ` leituras por segundo, hoje 1; começa pausado) |
 | `m` | Média e desvio padrão de 400 leituras (2 s) com a placa parada; informa quantas leituras foram válidas e a frequência I2C |
-| `f` | Alterna o I2C entre 100 kHz (`I2C_FREQ_DIAG_HZ`) e 400 kHz (`I2C_FREQ_HZ`, a frequência do firmware de voo) |
+| `f` | Alterna o I2C dos dois barramentos entre 100 kHz (`I2C_FREQ_DIAG_HZ`) e 400 kHz (`I2C_FREQ_HZ`, a frequência do firmware de voo) |
 | `t` | Teste de contato: lê sem pausa por 5 s e conta falhas e quadros suspeitos (todos os bytes iguais a 0x00 ou a 0xFF). Mexa nos fios durante o teste |
 | `i` | Teste do pino INT: configura "data ready" a 200 Hz e conta os pulsos no GPIO 19 por 2 s; ao final, volta à configuração padrão |
 | `b` | Liga ou pausa o fluxo do BME280 (1 leitura por segundo): temperatura (°C), pressão (hPa), umidade (%) e a variação de pressão (Pa) e de altura (m) desde a primeira leitura do fluxo. Cada leitura é uma medição forçada com oversampling x1 e sem filtro, compensada com os coeficientes de fábrica do chip. A cada scan, o BME280 passa por um soft reset antes da leitura dos coeficientes, para que nenhuma configuração anterior (filtro IIR, por exemplo) fique no chip quando só o ESP reinicia |
 | `h` | Medida do HMC5883L: contagem regressiva de 10 s (para soltar a caixa), 10 leituras (1 por segundo) e a média delas, e termina sozinha; outro `h` cancela. Cada linha mostra o campo em X, Y e Z (µT), o módulo \|B\| e o ângulo no plano XY (atan2(Y, X), sem calibração nem compensação de inclinação). Modo contínuo a 15 Hz, média de 8 amostras, ganho de ±1,3 Ga; um eixo saturado mostra `SATURADO` |
 | `x` | Autoteste do HMC5883L: média de 4 saídas com o campo interno positivo e de 4 com o negativo, no ganho de 390 LSB/Ga. Com a polarização ligada, o próprio chip subtrai o campo externo. Cada polarização de cada eixo deve ficar entre 243 e 575 LSB em módulo, faixa do datasheet no ganho de 390 LSB/Ga, comparada diretamente em LSB (equivale a ±62,3 a ±147,4 µT; nominal ~116 µT em X e Y e ~108 µT em Z); (positivo − negativo)/2 aparece só como informação. Ao final, volta à configuração do `h`; se a restauração falhar, o HMC fica indisponível até um novo scan |
+| `o` | Teste do OLED de status (barramento 1): sequência de início do SSD1306 por comandos, todos os pixels acesos por 3 s (`DIAG_OLED_ON_MS`, sem depender da RAM) e display desligado. Tenta ler o byte de status antes, aceso e depois (bit 6 = display desligado); nem todo SSD1306 responde à leitura no I2C, e um NACK aparece como `[E][Wire.cpp] … i2cRead returned Error` |
 
 Para sair do monitor, use `Ctrl+C`; não é preciso desconectar a placa. Para voltar ao firmware normal, grave o ambiente `aircraft`.
 
@@ -35,7 +36,7 @@ Para sair do monitor, use `Ctrl+C`; não é preciso desconectar a placa. Para vo
 | IMU | MPU6050 (GY-521) | 0x68 | 0x68 (09/10) | WHO_AM_I = 0x68 |
 | Barômetro | BMP280 (desde 19/10; antes BME280) | 0x76 | 0x76 (19/10). O BME280 (0x76 em 11/10) foi danificado num curto em 14/10 (ver "Montagem final na caixa") | chip_id = 0x58 (BMP280, sem umidade). O BME280 anterior tinha chip_id 0x60 |
 | Magnetômetro | GY-273 com HMC5883L | 0x1E | 0x1E (11/10) | "H43" (HMC5883L legítimo, não o clone QMC5883L) |
-| OLED de status | SSD1306 0,91" 128x32 | 0x3C | ausente (09/10) | não tem ID |
+| OLED de status | SSD1306 0,91" 128x32, placa `M091-12832-4-V1.2` (verso em [img/oled-091-verso.jpeg](img/oled-091-verso.jpeg)), no barramento 1 (`Wire1`) | 0x3C | 0x3C no barramento 1 (22/10); ausente no barramento 0 (09/10) | não tem ID; o byte de status responde à leitura |
 
 Alguns GY-273 vendidos como HMC5883L trazem um QMC5883L, que responde em 0x0D e precisa de outra biblioteca. O diagnóstico detecta esse caso.
 
@@ -1132,6 +1133,23 @@ Primeira gravação com a `radio_task` (passo 4 da semana 3): a placa A entrou n
 - **Causa:** a partida do RF (calibração e primeiras transmissões) puxa picos de ~300–400 mA, que a alimentação da montagem (USB → regulador da NodeMCU → protoboard com os módulos) não sustenta. Isso é coerente com os episódios de mau contato no VCC de 19/10 e de hoje.
 - **Resolvido com o cabo USB** (log `261021-173149`, mesmo firmware): um cabo mais curto e de melhor qualidade, numa porta direta do PC. Os dois boots saíram com `reinício anterior: energia ligada` e `[radio] ESP-NOW ativo: MAC 1C:69:20:A4:E9:44, canal 1, peer 14:33:5C:03:8A:B4, 50 Hz | heap livre 168 kB, maior bloco 107 kB`. Sem capacitor e sem reduzir a potência de transmissão.
 - **Para o modelo final e para o B:** a alimentação precisa sustentar os picos do rádio. Com o powerbank, conferir a linha `reinício anterior` no primeiro boot. Se houver brownout, as opções são o capacitor de 100–470 µF entre o 5V e o GND, perto da placa, e a potência de transmissão menor.
+
+### OLED de status no `Wire1` (22/10/2026)
+
+Passo 6 da semana 3 ([tasks.md](tasks.md)). Dois módulos 0,91" iguais, placa `M091-12832-4-V1.2` ([foto do verso](img/oled-091-verso.jpeg)):
+
+- **Pull-ups no módulo:** R2, R3 e R4 são `472` (4,7 kΩ); pelo esquema comum desse módulo, dois deles são os pull-ups do SDA e do SCL. Confirmado pelo teste de pull-up do `i2cscan`.
+- **Endereço fixo em 0x3C:** a placa não tem jumper nem resistor de endereço (o pino que o define vem ligado no cabo flexível do display). Os dois módulos não cabem no mesmo barramento, e o barramento 0 é dos sensores. **Decisão:** um OLED só no A; o status cabe nas 4 linhas.
+- **Ligação:** VCC no 3V3, GND, SDA no GPIO 32 e SCL no GPIO 33 (no módulo, o SCL vem marcado como SCK).
+
+| Teste | Log | Resultado |
+|---|---|---|
+| `i2cscan`, `s` e `o` | `261022-095232` | Barramento 0 sem mudança (0x1E "H43", 0x68 WHO_AM_I 0x68, 0x76 chip_id 0x58). Barramento 1: `pull-ups externos: SDA sim, SCL sim` e `0x3C OLED`. No `o`, a tela acendeu inteira por 3 s; **o byte de status responde**: `0x02` com o display ligado e `0x42` desligado (bit 6) |
+| Boot do `aircraft` | `261022-095357` (carimbo `09:53:11`) | `[status] OLED iniciado no Wire1 (0x3C, SDA 32, SCL 33, 400 kHz), 5 quadros/s`, sem `[E]` nem `[W]`; tela legível e na orientação certa (`OLED_FLIP` 0) |
+| VCC do OLED solto com a placa ligada | `261022-102424` e `102545` | **A placa inteira reiniciou** (`SW_CPU_RESET`, `IllegalInstruction`, `TG0WDT_SYS_RESET`; depois `BROWNOUT`, com o BMP280 e o HMC5883L perdendo a configuração ao mexer nos fios). O OLED divide o 3V3 com os sensores e o ESP: abrir e fechar o contato do VCC derruba a linha. Resolvido tirando a USB por 5 s e reencaixando os fios. **Este teste saiu do roteiro:** na caixa fechada, com os fios presos, um VCC solto é improvável, e o firmware não tem como tratar uma queda da alimentação de tudo |
+| SDA e depois SCL soltos por ~10 s, com o `r` ligado | `261022-103811` (`10:37:18`) | Cada um: `[status] OLED parou de responder…` e, ao recolocar, `OLED de volta: reiniciado`. `r` com 199–200 Hz e tudo em 0 nas 71 janelas; nenhum `[E]`; `c` com `ausências 2, reinícios 2`. O SCL solto também é percebido: sem o clock, o display não confirma os bytes |
+
+- **Não feito:** reiniciar o display quando só ele perde a energia e volta entre dois quadros (ele volta apagado, e a sondagem não percebe). O byte de status permitiria detectar isso, mas o caso é improvável com a caixa fechada, e testá-lo exige soltar o VCC. Fica como melhoria só de firmware, se for preciso.
 
 ### `z` refeito na montagem final (20/10/2026)
 

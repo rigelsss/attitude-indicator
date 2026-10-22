@@ -32,6 +32,8 @@ struct TelemetryState {
     bool     mpuOk;
     bool     calibrating;       // giroscópio, seis posições, montagem ou magnetômetro em curso
     bool     gyroCalibrated;    // bias medido neste boot
+    // Pulsos falsos no INT desde o boot (só para o OLED de status; não vai no pacote)
+    uint32_t intSpurious;
     // Latência da última amostra fundida: pulso do INT → fim da fusão (loop_us)
     uint32_t loopUs;
 };

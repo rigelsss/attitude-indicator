@@ -14,7 +14,7 @@
 
 static const ValidityLimits VALIDITY_LIMITS = {FUSION_MAX_DT_MS, BARO_STALE_MS, MAG_STALE_MS};
 
-static std::atomic<bool> s_active{false};
+static std::atomic<bool> s_starting{false}, s_active{false};
 static std::atomic<uint32_t> s_sent{0}, s_sendErrors{0}, s_macOk{0}, s_macFail{0}, s_cmdOk{0}, s_cmdBad{0};
 
 // ---------- Callbacks do ESP-NOW (task do Wi-Fi): só contam ----------
@@ -72,11 +72,13 @@ static void radioTask(void *) {
     vTaskDelay(pdMS_TO_TICKS(RADIO_START_DELAY_MS));
     logPrintln("[radio] ligando o Wi-Fi...");
     logFlush();   // a linha sai antes do pico de corrente
-    if (!startRadio()) {
+    const bool ok = startRadio();
+    s_active.store(ok);
+    s_starting.store(false);
+    if (!ok) {
         vTaskDelete(nullptr);
         return;
     }
-    s_active.store(true);
     uint16_t seq = 0;
     TickType_t last = xTaskGetTickCount();
     for (;;) {
@@ -91,12 +93,16 @@ static void radioTask(void *) {
 }
 
 bool radioTaskStart() {
-    return xTaskCreatePinnedToCore(radioTask, "radio", RADIO_TASK_STACK, nullptr, RADIO_TASK_PRIO, nullptr,
-                                   RADIO_TASK_CORE) == pdPASS;
+    s_starting.store(true);   // antes da task: ela pode terminar o início antes do retorno
+    const bool ok = xTaskCreatePinnedToCore(radioTask, "radio", RADIO_TASK_STACK, nullptr, RADIO_TASK_PRIO, nullptr,
+                                            RADIO_TASK_CORE) == pdPASS;
+    if (!ok) s_starting.store(false);
+    return ok;
 }
 
 RadioCounters radioCounters() {
     RadioCounters c;
+    c.starting = s_starting.load();
     c.active = s_active.load();
     c.sent = s_sent.load(std::memory_order_relaxed);
     c.sendErrors = s_sendErrors.load(std::memory_order_relaxed);

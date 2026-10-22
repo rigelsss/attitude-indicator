@@ -14,6 +14,7 @@
 #include "baro_service.h"
 #include "mag_service.h"
 #include "tasks/radio_task.h"
+#include "tasks/status_task.h"
 
 enum class ReportKind : uint8_t {
     Window,   // r: uma janela de 1 s fechou
@@ -72,6 +73,7 @@ struct StatusReport {
     SampleWindow   last;          // última janela de 1 s
     uint32_t       intOverflow;
     RadioCounters  radio;         // desde o boot
+    StatusCounters oled;          // OLED de status, desde o boot
 };
 
 static_assert(std::is_trivially_copyable<WindowReport>::value, "WindowReport vai pela fila byte a byte");

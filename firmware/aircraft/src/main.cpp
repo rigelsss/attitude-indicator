@@ -6,7 +6,8 @@
 //                os comandos (console)
 //   radio_task   (prio 2, núcleo 0) — a TX_RATE_HZ, monta o TelemetryPacket a partir do estado publicado pela
 //                sensor_task e o envia pelo ESP-NOW ao ESP B (docs/radio.md)
-//   próximo passo da semana 3: status_task (OLED de status no Wire1 + LED)
+//   status_task  (prio 1, núcleo 0) — a OLED_RATE_HZ, OLED de status no Wire1 (sensores, link, tempo ligado e
+//                avisos) e LED, a partir das mesmas cópias (docs/tasks.md, passo 6)
 // Serial: c = estado | 6 = seis posições | g = calibrar giroscópio | z = calibrar montagem |
 //         m = calibrar magnetômetro | a = fluxo de atitude | b = fluxo de altitude | p = fluxo de proa |
 //         0 = zerar altitude | r = resumo por segundo.
@@ -18,6 +19,7 @@
 #include "tasks/serial_task.h"
 #include "tasks/sensor_task.h"
 #include "tasks/radio_task.h"
+#include "tasks/status_task.h"
 #include "report_queue.h"
 
 extern const char *const BUILD_STAMP;   // build_info.cpp: data e hora da compilação
@@ -52,7 +54,7 @@ void setup() {
     // Sem a serial não há como avisar. A espera vale também para o modo degradado do logger (sem buffer), em
     // que uma mensagem anterior ao Serial pronto seria perdida
     if (!serialTaskStart() || !logWaitSerial(SERIAL_READY_TIMEOUT_MS)) ESP.restart();
-    logPrintf("[A] boot — compilado em %s — TelemetryPacket = %u bytes (tasks: serial e sensor)\n", BUILD_STAMP,
+    logPrintf("[A] boot — compilado em %s — TelemetryPacket = %u bytes (tasks: serial, sensor, rádio e status)\n", BUILD_STAMP,
               (unsigned)sizeof(TelemetryPacket));
     logPrintf("[A] reinício anterior: %s\n", resetReasonText(esp_reset_reason()));
     if (!logBuffered)
@@ -65,6 +67,8 @@ void setup() {
     static volatile bool radioEnabled = RADIO_ENABLED;
     if (!radioEnabled) logPrintln("[A] rádio desligado neste firmware (RADIO_ENABLED 0, diagnóstico)");
     else if (!radioTaskStart()) logPrintln("[A] ERRO: sem memória para a radio_task; seguindo sem rádio");
+    // Sem o OLED e o LED, o resto segue: o c mostra "oled: task não iniciada"
+    if (!statusTaskStart()) logPrintln("[A] ERRO: sem memória para a status_task; seguindo sem o OLED e o LED");
 }
 
 // A loopTask do Arduino não tem trabalho: tudo roda nas tasks criadas no setup()

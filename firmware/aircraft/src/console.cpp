@@ -126,5 +126,6 @@ void Console::sendStatus() const {
     r.last = d_.acq.last();
     r.intOverflow = d_.intOverflow;
     r.radio = radioCounters();
+    r.oled = statusCounters();
     reportSend(ReportKind::Status, r);   // fila cheia: a serial_task avisa o descarte
 }

@@ -77,6 +77,19 @@ static void radioStatusLine(TextBuf &t, const RadioCounters &c) {
              (unsigned long)c.sendErrors, (unsigned long)c.cmdOk, (unsigned long)c.cmdBad);
 }
 
+// OLED de status no c: tempo do quadro e ausências desde o boot
+static void oledStatusLine(TextBuf &t, const StatusCounters &c) {
+    if (!c.started) {
+        t.print("  oled: task não iniciada\n");
+        return;
+    }
+    t.printf("  oled: %s (0x%02X, Wire1)", c.present ? "presente" : "AUSENTE", ADDR_OLED_STATUS);
+    if (c.frames > 0)
+        t.printf(" | %lu quadros, méd. %.1f ms (mín. %.1f, máx. %.1f)", (unsigned long)c.frames,
+                 c.frameUsMean / 1000.0f, c.frameUsMin / 1000.0f, c.frameUsMax / 1000.0f);
+    t.printf(" | ausências %lu, reinícios %lu\n", (unsigned long)c.absences, (unsigned long)c.reinits);
+}
+
 // ---------- Resumo por segundo (r) ----------
 
 static void printWindow(const WindowReport &r) {
@@ -220,6 +233,7 @@ static void printStatus(const StatusReport &r) {
              MAG_OUTPUT_HZ, MAG_AVG_SAMPLES, MAG_READ_HZ);
     magLine(t, r.mag);
     radioStatusLine(t, r.radio);
+    oledStatusLine(t, r.oled);
     validityLine(t, r);
 
     const SampleWindow &last = r.last;

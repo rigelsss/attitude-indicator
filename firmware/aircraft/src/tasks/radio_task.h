@@ -8,6 +8,7 @@
 
 // Contadores desde o boot (cópia; cada um é lido de forma atômica, sem ordem entre eles)
 struct RadioCounters {
+    bool     starting;     // task criada, Wi-Fi ainda não iniciado (RADIO_START_DELAY_MS)
     bool     active;       // Wi-Fi e ESP-NOW iniciados
     uint32_t sent;         // esp_now_send aceito
     uint32_t sendErrors;   // esp_now_send recusado (fila do ESP-NOW cheia, por exemplo)

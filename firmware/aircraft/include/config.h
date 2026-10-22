@@ -6,9 +6,11 @@
 #define PIN_I2C_SDA      21
 #define PIN_I2C_SCL      22
 // Barramento 1 (Wire1): OLED de status, separado para um quadro (~12 ms) não atrasar o MPU (plano.md,
-// semana 3). GPIO 32 e 33: uso geral, fora dos pinos de strapping e da flash. Ainda sem uso
+// semana 3). GPIO 32 e 33: uso geral, fora dos pinos de strapping e da flash. Usado pela status_task
 #define PIN_I2C1_SDA     32
 #define PIN_I2C1_SCL     33
+#define I2C1_FREQ_HZ     400000   // OLED: quadro de 512 bytes em ~13 ms
+#define I2C1_TIMEOUT_MS  20       // limite por transação do Wire1 (o U8g2 manda o quadro em pedaços de até 32 bytes)
 #define I2C_FREQ_HZ      400000
 #define I2C_FREQ_DIAG_HZ 100000   // diagnóstico: mais tolerante a fios longos e soldas ruins
 #define I2C_TIMEOUT_MS   5        // limite por transação (padrão do Wire: 50 ms); 128 bytes a 400 kHz ≈ 3 ms
@@ -24,12 +26,21 @@
 #define MPU_INT_INTR_LEVEL 2      // nível da interrupção do INT (1–3; C não atende níveis acima de 3):
                                   // acima do nível 1 da UART, para o carimbo do pulso não esperar a ISR
                                   // de transmissão (refatoracao.md, pendência 5)
-#define PIN_LED_STATUS   2        // LED onboard: pisca = transmitindo
+#define PIN_LED_STATUS   2        // LED onboard (status_task): apagado = rádio inativo; piscada curta a cada 2 s =
+                                  // enviando sem entregas; 1 Hz = enviando com o B confirmando
 
 // ---------- Temporização ----------
 #define SAMPLE_RATE_HZ   200      // leitura do IMU / fusão
 #define TX_RATE_HZ       50       // envio ESP-NOW
-#define OLED_RATE_HZ     5
+#define OLED_RATE_HZ     5        // quadros do OLED de status por segundo
+#define OLED_RETRY_MS    2000     // OLED ausente ou solto: nova tentativa
+#define OLED_FLIP        0        // 1: tela girada 180° (conforme o OLED ficar preso na caixa)
+#define OLED_WARN_ROTATE_MS 2000  // OLED: tempo de cada aviso quando há mais de um
+#define OLED_SPURIOUS_SHOW_MS 10000   // OLED: aviso dos pulsos falsos no INT até este tempo depois do último
+#define LED_LINK_ON_MS   500      // LED com o B confirmando: aceso por LED_LINK_ON_MS a cada LED_LINK_PERIOD_MS
+#define LED_LINK_PERIOD_MS 1000
+#define LED_IDLE_ON_MS   100      // LED enviando sem entregas: piscada curta
+#define LED_IDLE_PERIOD_MS 2000
 #define DIAG_PRINT_HZ    1        // diagnóstico: taxa de impressão das leituras brutas
 #define DIAG_AVG_SAMPLES 400      // diagnóstico: leituras na média com a placa parada (2 s)
 #define DIAG_STRESS_MS   5000     // diagnóstico: duração do teste de contato
@@ -42,6 +53,7 @@
 #define DIAG_HMC_ST_SAMPLES 4     // diagnóstico: saídas na média de cada polarização do autoteste
 #define DIAG_HMC_DELAY_S    10    // diagnóstico: contagem regressiva do h antes da medida (tempo de afastar a mão)
 #define DIAG_HMC_LINES      10    // diagnóstico: linhas por medida do h (a DIAG_PRINT_HZ), seguidas da média
+#define DIAG_OLED_ON_MS     3000  // diagnóstico: tempo com todos os pixels do OLED acesos (o)
 #define DIAG_HMC_ST_MIN_LSB 243     // autoteste: módulo aceito em cada polarização e eixo (datasheet).
 #define DIAG_HMC_ST_MAX_LSB 575     // Exceção à regra de limiares em unidades físicas: o datasheet define a faixa
                                     // em LSB no ganho de 390 LSB/Ga, que o próprio autoteste fixa
@@ -71,7 +83,7 @@
                                        // O c imprime ~1,4 kB de uma vez: com 1 kB, o laço bloqueava ~30 ms,
                                        // perto do reinício da fusão (FUSION_MAX_DT_MS)
 // ---------- Tasks (FreeRTOS, docs/plano.md semana 3) ----------
-// A sensor_task fica sozinha no núcleo 1 com a ISR do INT e a do I2C; a serial (e depois o rádio e o OLED),
+// A sensor_task fica sozinha no núcleo 1 com a ISR do INT e a do I2C; a serial, o rádio e o OLED,
 // no núcleo 0, junto com o Wi-Fi do IDF. Pilhas em bytes (no ESP32, o xTaskCreate conta bytes)
 #define SENSOR_TASK_CORE        1
 #define SENSOR_TASK_PRIO        4
@@ -83,6 +95,10 @@
 #define RADIO_ENABLED           1      // 0 só no ambiente aircraft_noradio (A/B de tempo sem o Wi-Fi ligado)
 #endif
 #define RADIO_START_DELAY_MS    1000   // o Wi-Fi liga depois do boot impresso (o pico de corrente pode causar brownout)
+#define STATUS_TASK_CORE        0      // OLED no Wire1 (a ISR do I2C1 fica neste núcleo) e LED
+#define STATUS_TASK_PRIO        1
+#define STATUS_TASK_STACK       4096   // o buffer do quadro (512 bytes) é estático, fora da pilha
+#define STATUS_TASK_PERIOD_MS   50     // volta da status_task: o LED; o OLED a cada 1000 / OLED_RATE_HZ ms
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1
 #define SERIAL_TASK_STACK       6144   // formata o c, o r e o a (vsnprintf com float e o relatório copiado)

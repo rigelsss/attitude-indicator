@@ -53,6 +53,7 @@ static SpuriousHold g_spuriousHold(MPU_INT_SPURIOUS_HOLD_US);   // quadros ambí
 // Após configurar o MPU, calibração e fusão descartam amostras por CAL_MPU_SETTLE_MS
 static SettleGate g_settle;
 static uint32_t g_lastRecoveries = 0;
+static uint32_t g_intSpuriousTotal = 0;      // pulsos falsos desde o boot (OLED de status, pelo estado publicado)
 
 // ---------- Calibração (lib/cal_service, lib/cal_flow, docs/calibracao.md) ----------
 
@@ -197,7 +198,6 @@ static void closeWindowsUntil(uint32_t nowUs) {
         g_magSvc.closeWindow();
         g_console.windowClosed(w);   // resumo, se o r estiver ligado
         if (w.samples > 0) g_calSvc.checkTempDrift(w.meanTempC());
-        digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS));
         g_acq.rotate();
     }
 }
@@ -275,6 +275,7 @@ static TelemetryState makeState() {
     t.mpuOk = g_mpuReady && g_mpu.ok();
     t.calibrating = g_calSvc.mode() != CalMode::None || g_magSvc.calibrating();
     t.gyroCalibrated = g_calSvc.gyroDefinitive();
+    t.intSpurious = g_intSpuriousTotal;
     t.loopUs = g_loopUs;
     return t;
 }
@@ -284,7 +285,6 @@ static ValidityInputs validityInputs() {
 }
 
 static void sensorSetup() {
-    pinMode(PIN_LED_STATUS, OUTPUT);
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_FREQ_HZ);   // nesta task: a ISR do I2C fica no núcleo dela
     Wire.setTimeOut(I2C_TIMEOUT_MS);   // vale para o barramento inteiro e sobrevive a Wire.end()/begin()
     g_intQueue = xQueueCreate(MPU_INT_QUEUE_LEN, sizeof(uint32_t));
@@ -366,6 +366,7 @@ static void sensorCycle() {
         }
         if (++k >= MPU_INT_QUEUE_LEN || xQueueReceive(g_intQueue, &t, 0) != pdTRUE) break;
     }
+    g_intSpuriousTotal += spurious;
     if (n == 0) {   // só pulsos falsos: nada a ler
         g_acq.cur().spurious += spurious;
         return;

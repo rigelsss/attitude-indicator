@@ -15,6 +15,11 @@
 //      h  medida do campo magnético: contagem de DIAG_HMC_DELAY_S s, DIAG_HMC_LINES linhas a DIAG_PRINT_HZ
 //         e a média delas; outro h cancela
 //      x  autoteste do HMC5883L com o campo interno de polarização
+// 6) Barramento 1 (Wire1, PIN_I2C1_SDA/SCL, OLED de status): a cada scan, confere os pull-ups externos (antes
+//    de iniciar o Wire1) e varre os endereços. Se o OLED responder, aceita também:
+//      o  teste do OLED: sequência de início do SSD1306, todos os pixels acesos por DIAG_OLED_ON_MS e
+//         display desligado; tenta ler o byte de status antes e depois
+// O s e o f valem para os dois barramentos.
 // Acesso direto por registrador, sem bibliotecas, para isolar problemas de hardware.
 #include <Arduino.h>
 #include <Wire.h>
@@ -53,6 +58,17 @@ static const uint8_t HMC_MODE_CONT      = 0x00;   // medição contínua
 static const int16_t HMC_OVERFLOW       = -4096;  // valor gravado no eixo saturado
 static const float HMC_LSB_PER_GA_1090  = 1090.0f;
 static const float HMC_LSB_PER_GA_390   = 390.0f;
+static const uint8_t OLED_CTRL_CMD      = 0x00;   // byte de controle do SSD1306: seguem comandos
+static const uint8_t OLED_STATUS_OFF    = 0x40;   // byte de status, bit 6: display desligado
+// Início do SSD1306 128x32 (datasheet e notas de aplicação do módulo): display desligado, clock, multiplex de
+// 32 linhas, sem deslocamento, linha inicial 0, bomba de carga ligada, endereçamento horizontal, segmento e COM
+// espelhados, pinos COM do 128x32, contraste, pré-carga, VCOMH, saída pela RAM, sem inversão
+static const uint8_t OLED_INIT[] = {0xAE, 0xD5, 0x80, 0xA8, 0x1F, 0xD3, 0x00, 0x40, 0x8D, 0x14, 0x20, 0x00,
+                                    0xA1, 0xC8, 0xDA, 0x02, 0x81, 0x8F, 0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6};
+static const uint8_t OLED_CMD_ON        = 0xAF;
+static const uint8_t OLED_CMD_OFF       = 0xAE;
+static const uint8_t OLED_CMD_ALL_ON    = 0xA5;   // todos os pixels acesos, sem usar a RAM
+static const uint8_t OLED_CMD_RAM       = 0xA4;   // volta a mostrar a RAM
 
 // Coeficientes de fábrica do BME280, gravados em cada chip (datasheet, seção 4.2.2)
 struct BmeCalib {
@@ -71,6 +87,7 @@ static bool g_mpuOk = false;
 static bool g_bmeOk = false;
 static bool g_bmeIsBmp = false;                   // BMP280: sem umidade (0xF2, 0xE1.. e 0xFD.. ausentes)
 static bool g_hmcOk = false;
+static bool g_oledOk = false;                     // OLED respondendo no barramento 1
 static BmeCalib g_bmeCal;
 static float g_bmeRefHpa = NAN;                   // pressão da primeira leitura do fluxo: referência do Δh
 static StreamMode g_stream = STREAM_OFF;
@@ -307,6 +324,81 @@ static void checkExpected(const char *name, uint8_t addr) {
     Serial.printf("  %-12s 0x%02X  %s\n", name, addr, probe(addr) ? "OK" : "AUSENTE");
 }
 
+// ---------- Barramento 1 (Wire1): OLED de status ----------
+
+static bool probe1(uint8_t addr) {
+    Wire1.beginTransmission(addr);
+    return Wire1.endTransmission() == 0;
+}
+
+// Pull-ups externos do barramento 1, com o Wire1 parado (ele liga os pull-ups internos nos pinos): com o
+// pull-down interno (~45 kΩ), uma linha com pull-up externo (4,7–10 kΩ) lê 1; sem ele, lê 0
+static void pullupTest() {
+    Wire1.end();
+    pinMode(PIN_I2C1_SDA, INPUT_PULLDOWN);
+    pinMode(PIN_I2C1_SCL, INPUT_PULLDOWN);
+    delay(2);
+    const bool sda = digitalRead(PIN_I2C1_SDA) == HIGH;
+    const bool scl = digitalRead(PIN_I2C1_SCL) == HIGH;
+    Serial.printf("[diag] pull-ups externos: SDA %s, SCL %s%s\n", sda ? "sim" : "NÃO", scl ? "sim" : "NÃO",
+                  sda && scl ? "" : "  (os internos, de ~45 kΩ, não bastam a 400 kHz)");
+}
+
+static void scanBus1() {
+    Serial.printf("\n[diag] scan I2C, barramento 1 (Wire1)  SDA=%d SCL=%d  %lu Hz\n", PIN_I2C1_SDA, PIN_I2C1_SCL,
+                  (unsigned long)g_i2cFreq);
+    pullupTest();
+    Wire1.begin(PIN_I2C1_SDA, PIN_I2C1_SCL, g_i2cFreq);
+    unsigned found = 0;
+    for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
+        if (!probe1(addr)) continue;
+        found++;
+        Serial.printf("  0x%02X  %s\n", addr,
+                      (addr == 0x3C || addr == 0x3D) ? "OLED SSD1306 (sem registrador de ID)" : "desconhecido");
+    }
+    Serial.printf("[diag] %u dispositivo(s)\n", found);
+    Serial.println("[diag] esperados em config.h:");
+    g_oledOk = probe1(ADDR_OLED_STATUS);
+    Serial.printf("  %-12s 0x%02X  %s\n", "OLED", ADDR_OLED_STATUS, g_oledOk ? "OK" : "AUSENTE");
+    if (g_oledOk) Serial.println("[diag] OLED: o = teste dos pixels");
+    else Serial.println("[diag] OLED indisponível: sem teste (s = novo scan)");
+}
+
+static bool oledCmds(const uint8_t *c, size_t n) {
+    Wire1.beginTransmission(ADDR_OLED_STATUS);
+    Wire1.write(OLED_CTRL_CMD);
+    Wire1.write(c, n);
+    return Wire1.endTransmission() == 0;
+}
+
+static bool oledCmd(uint8_t c) { return oledCmds(&c, 1); }
+
+// Byte de status (leitura de 1 byte): nem todo SSD1306 responde à leitura no I2C
+static void oledStatus(const char *when) {
+    if (Wire1.requestFrom((uint8_t)ADDR_OLED_STATUS, (uint8_t)1) == 1) {
+        const uint8_t st = Wire1.read();
+        Serial.printf("[diag] OLED %s: status 0x%02X (display %s)\n", when, st,
+                      (st & OLED_STATUS_OFF) ? "desligado" : "ligado");
+    } else {
+        Serial.printf("[diag] OLED %s: leitura do status sem resposta\n", when);
+    }
+}
+
+// Liga o display com todos os pixels acesos (não depende da RAM, que tem lixo depois de ligar) e o desliga
+static void oledTest() {
+    oledStatus("antes do teste");
+    if (!oledCmds(OLED_INIT, sizeof(OLED_INIT)) || !oledCmd(OLED_CMD_ALL_ON) || !oledCmd(OLED_CMD_ON)) {
+        Serial.println("[diag] OLED: falha ao enviar a sequência de início");
+        return;
+    }
+    Serial.printf("[diag] OLED: todos os pixels acesos por %d s\n", DIAG_OLED_ON_MS / 1000);
+    oledStatus("aceso");
+    delay(DIAG_OLED_ON_MS);
+    const bool off = oledCmd(OLED_CMD_RAM) && oledCmd(OLED_CMD_OFF);
+    oledStatus("depois do teste");
+    Serial.println(off ? "[diag] OLED: display desligado, fim do teste" : "[diag] OLED: falha ao desligar o display");
+}
+
 static void scan() {
     Serial.printf("\n[diag] scan I2C  SDA=%d SCL=%d  %lu Hz\n", PIN_I2C_SDA, PIN_I2C_SCL,
                   (unsigned long)g_i2cFreq);
@@ -324,7 +416,6 @@ static void scan() {
     checkExpected("MPU6050", ADDR_MPU6050);
     checkExpected("BME280", ADDR_BME280);
     checkExpected("HMC5883L", ADDR_HMC5883L);
-    checkExpected("OLED", ADDR_OLED_STATUS);
 
     // Tira o MPU do modo sleep; faixas padrão: ±2 g e ±250 °/s
     g_mpuOk = probe(ADDR_MPU6050) && writeReg(ADDR_MPU6050, MPU_REG_PWR_MGMT_1, 0x00);
@@ -343,6 +434,8 @@ static void scan() {
     g_hmcOk = hmcInit();
     if (g_hmcOk) Serial.println("[diag] HMC5883L: h = campo magnético | x = autoteste");
     else Serial.println("[diag] HMC5883L indisponível: sem medidas (s = novo scan)");
+
+    scanBus1();
 }
 
 // Lê accel, temp e gyro; v: ax ay az temp gx gy gz
@@ -387,7 +480,8 @@ static void average() {
 static void toggleFreq() {
     g_i2cFreq = (g_i2cFreq == I2C_FREQ_DIAG_HZ) ? I2C_FREQ_HZ : I2C_FREQ_DIAG_HZ;
     Wire.setClock(g_i2cFreq);
-    Serial.printf("[diag] I2C agora em %lu Hz\n", (unsigned long)g_i2cFreq);
+    Wire1.setClock(g_i2cFreq);
+    Serial.printf("[diag] I2C agora em %lu Hz (nos dois barramentos)\n", (unsigned long)g_i2cFreq);
 }
 
 // Lê sem pausa e conta falhas de transação e quadros suspeitos (todos os bytes 0x00 ou 0xFF,
@@ -542,6 +636,7 @@ void loop() {
         case 'f': toggleFreq(); break;
         case 't': if (g_mpuOk) { g_stream = STREAM_OFF; stressTest(); } break;
         case 'i': if (g_mpuOk) { g_stream = STREAM_OFF; intTest(); } break;
+        case 'o': if (g_oledOk) { g_stream = STREAM_OFF; oledTest(); } break;
         }
     }
     if (g_stream == STREAM_OFF) return;

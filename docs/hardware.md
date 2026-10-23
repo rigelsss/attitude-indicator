@@ -1184,6 +1184,22 @@ Depois de refazer e prender toda a fiação, os três sensores sumiram juntos, e
 - **Diagnóstico:** um sintoma em todos os módulos de um barramento indica um fio comum (SDA, SCL, VCC ou GND). O `Error -1` (NACK) com o barramento vazio combina com uma linha aberta, e não com uma linha presa em 0.
 - **Lição:** depois de mexer na fiação, conferir a continuidade **do pino do ESP até o pino de cada módulo** e rodar o `t` mexendo nos fios. Isso também vale para o barramento 1: o fio do OLED se soltou durante o próprio conserto.
 
+### Conferência da montagem depois de prender a fiação (23/10/2026)
+
+Teste dos 180° do [plano.md](plano.md) ("Antes de fechar a caixa do ESP A"), pelo mesmo método do `z`. Log `261023-081823`, firmware do A sem mudança (carimbo `2026-10-23 01:45:03`). A caixa ficou em pé, encostada numa referência, e foi lida pelo resumo `r` (média de 1 s). O B estava desligado.
+
+| Posição | Linhas do `r` | Roll | Pitch |
+|---|---|---|---|
+| Nariz na referência | 10 | −1,39 a −1,41° | −0,06 a −0,07° |
+| Girada 180°, cauda na referência | 16 | +0,73 a +0,79° | +0,40 a +0,42° |
+| Nariz de novo | 19 | −1,31 a −1,39° | −0,05 a −0,08° |
+
+- **Erro de montagem que sobra**, (nariz + cauda)/2: roll **−0,31°**, pitch **+0,18°**. Fica abaixo do critério de ~0,5°: o módulo não se mexeu ao prender a fiação, e o `z` gravado continua valendo.
+- **Mesa**, (nariz − cauda)/2: roll −1,09°, pitch −0,24°.
+- **Repetibilidade do assento:** a repetição do nariz ficou a 0,01–0,09° da primeira medida.
+- **As leituras de 22 e 23/10:** a medida do nariz bate com a de 22/10 (−1,42° / +0,07°). Os +0,65° / −0,59° de 23/10 vinham então da caixa em outro lugar ou com outro apoio, e não do módulo.
+- **Rádio durante o teste:** com o B desligado, o `r` do A mostrou ~45 enviados/s, 0 entregues, ~45 falhas MAC/s e o total de erros de envio subindo ~6 por segundo, de 32 a 402. É o comportamento esperado sem o B, o mesmo do passo 4 da semana 3 ([radio.md](radio.md)).
+
 ### ESP-NOW do A para o B, com o B recebendo (23/10/2026)
 
 Passo 5 da semana 3 ([radio.md](radio.md), "Passo 5"). O A ficou no power bank e o B no USB do PC. Logs em `firmware/ground/logs`: `261023-060428` e `261023-061939`.

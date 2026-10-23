@@ -77,6 +77,8 @@ Conferências a fazer com a fiação já presa, antes de fechar a caixa (depois 
   3. Com a correção de montagem certa, as duas medidas ficam opostas (± a inclinação da mesa), e a média delas fica perto de 0°.
   4. Se a média passar de ~0,5° em roll ou em pitch (o dobro da repetibilidade do assento, 0,26°, medida em 13/10), o módulo se mexeu: refaça o `z`. Se ficar abaixo, a montagem gravada continua valendo.
 
+  **Feito em 23/10/2026: a montagem gravada continua valendo** ([hardware.md](hardware.md), "Conferência da montagem depois de prender a fiação"). A média nariz/cauda deu roll −0,31° e pitch +0,18°. A caixa pode ser fechada.
+
 ## Opcionais (só se sobrar tempo)
 - Indicador de curva (gz) e variômetro (derivada da altitude) no PFD
 - Gravação de "caixa-preta" na flash do A

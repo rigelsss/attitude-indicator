@@ -8,17 +8,19 @@
 //                botão curto reconhece o alarme, longo reservado (docs/solo.md, passo 2)
 //   oled_task    (prio 1, núcleo 0) — única dona do Wire: OLED com as páginas de dados e de link a 5 Hz
 //                (docs/solo.md, passo 3)
+//   display_task (prio 2, núcleo 1) — horizonte no TFT com o sprite de 8 bits, a DISPLAY_FPS (docs/solo.md,
+//                passo 5); o TFT e o sprite são iniciados no setup(), antes do Wi-Fi
 //   serial_task  (prio 1, núcleo 0) — única dona do Serial depois do boot: teclas e impressão
 // Serial: c = estado | r = resumo por segundo (começa ligado) | a = fluxo de pacotes (10 Hz) | k = reconhecer o
 // alarme.
-// Previstas (semanas 4 e 5): display_task (TFT) e web_task (HTTP + WebSocket), lendo as caixas de correio da
-// link_task.
+// Prevista (semana 5): web_task (HTTP + WebSocket), lendo as caixas de correio da link_task.
 #include <Arduino.h>
 #include "config.h"
 #include "telemetry.h"
 #include "tasks/alarm_task.h"
 #include "tasks/input_task.h"
 #include "tasks/link_task.h"
+#include "tasks/display_task.h"
 #include "tasks/oled_task.h"
 #include "tasks/radio_rx.h"
 #include "tasks/serial_task.h"
@@ -55,9 +57,12 @@ void setup() {
     Serial.begin(115200);
     delay(SERIAL_START_DELAY_MS);   // tempo para o monitor reabrir depois do reset
     // Até a serial_task começar, só o setup() escreve no Serial
-    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, alarme, encoder, OLED e serial)\n",
+    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, alarme, encoder, OLED, TFT e serial)\n",
                   BUILD_STAMP, (unsigned)sizeof(TelemetryPacket), TELEMETRY_VERSION);
     Serial.printf("[B] reinício anterior: %s\n", resetReasonText(esp_reset_reason()));
+    // O sprite do TFT (57,6 kB contíguos) é alocado antes do Wi-Fi, com o heap ainda sem fragmentar. Sem ele, o
+    // resto segue, e o TFT mostra a mensagem de erro
+    const bool tftOk = displayInit();
     // Sem o rádio, a serial segue: o c mostra "rádio: DESLIGADO" e o r, "sem sinal"
     if (!radioRxStart()) Serial.println("[B] seguindo sem rádio");
     if (!linkTaskStart()) fatal("[B] ERRO: sem memória para a link_task; reiniciando em 1 s");
@@ -66,6 +71,8 @@ void setup() {
     // Sem o encoder, o resto segue: a tecla k ainda reconhece o alarme
     if (!inputTaskStart()) Serial.println("[B] ERRO: encoder não iniciado (memória ou ISR); seguindo sem encoder");
     if (!oledTaskStart()) Serial.println("[B] ERRO: sem memória para a oled_task; seguindo sem o OLED");
+    if (!displayTaskStart()) Serial.println("[B] ERRO: sem memória para a display_task; seguindo sem o TFT");
+    else if (!tftOk) Serial.println("[B] TFT sem sprite: só a mensagem de erro na tela");
     if (!serialTaskStart()) fatal("[B] ERRO: sem memória para a serial_task; reiniciando em 1 s");
 }
 

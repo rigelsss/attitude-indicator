@@ -4,6 +4,7 @@
 #include <esp_timer.h>
 #include "config.h"
 #include "alarm_task.h"
+#include "display_task.h"
 #include "input_task.h"
 #include "link_task.h"
 #include "oled_task.h"
@@ -88,8 +89,12 @@ static void printReport(const LinkReport &r) {
     if (r.havePacket)
         Serial.printf(" | idade %lu ms | atraso %lu (máx %lu) ms | seq %u", (unsigned long)r.ageMs,
                       (unsigned long)r.delayMs, (unsigned long)r.delayMaxMs, r.lastSeq);
-    Serial.printf(" | total: %lu rec, %lu perd (%.3f %%), %lu quedas\n", (unsigned long)r.totals.received,
+    Serial.printf(" | total: %lu rec, %lu perd (%.3f %%), %lu quedas", (unsigned long)r.totals.received,
                   (unsigned long)r.totals.lost, lossPct(r.totals), (unsigned long)r.totals.timeouts);
+    DisplayStatus ds;   // quadros do TFT no mesmo resumo: o passo 6 compara a recepção com e sem carga do TFT
+    if (displayCurrent(ds) && ds.spriteOk)
+        Serial.printf(" | tft %.0f q/s, maior %.0f ms", ds.fps, ds.maxFrameUs / 1000.0f);
+    Serial.println();
 }
 
 static void printPacket(const RxItem &it) {
@@ -167,6 +172,16 @@ static void printState(bool streamR, bool streamA) {
                       OLED_HEADING_TRUE ? "verdadeira (VERD)" : "magnética (MAG)");
     else
         Serial.printf("oled: AUSENTE em 0x%02X (nova tentativa a cada %d ms)\n", ADDR_OLED_DATA, OLED_RETRY_MS);
+    DisplayStatus ds;
+    if (!displayCurrent(ds))
+        Serial.println("tft: task não iniciada (ou ainda sem janela de 1 s)");
+    else if (!ds.spriteOk)
+        Serial.println("tft: SEM SPRITE (sem memória no boot): só a mensagem de erro");
+    else
+        Serial.printf("tft: %.1f quadros/s (meta %d) | desenho %.1f ms, envio %.1f ms, maior quadro %.1f ms | "
+                      "quadros %lu, acima do período %lu\n",
+                      ds.fps, DISPLAY_FPS, ds.drawUs / 1000.0f, ds.pushUs / 1000.0f, ds.maxFrameUs / 1000.0f,
+                      (unsigned long)ds.frames, (unsigned long)ds.overruns);
     Serial.printf("fluxos: r %s, a %s | heap livre %u kB\n", streamR ? "ligado" : "desligado",
                   streamA ? "ligado" : "desligado", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024));
     Serial.println("----------------------------------------------");

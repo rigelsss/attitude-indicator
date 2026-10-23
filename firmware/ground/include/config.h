@@ -4,7 +4,13 @@
 
 // ---------- SPI (TFT ST7789) ----------
 // Pinos definidos em platformio.ini (build_flags do TFT_eSPI):
-// MOSI 23, SCLK 18, CS 5, DC 16, RST 17, BL 4
+// MOSI 23, SCLK 18, CS 5, DC 16, RST 17 (o BLK do módulo vai no 3V3)
+
+// ---------- Horizonte no TFT (docs/solo.md, passo 5) ----------
+#define DISPLAY_FPS        25     // quadros por segundo: maior quadro de 36–39 ms no período de 40 ms (bancada de 23/10/2026)
+#define PFD_PX_PER_DEG     4.0f   // escala do pitch: ±30° visíveis
+#define PFD_LADDER_SPAN_DEG 25    // escala de pitch desenhada até ±isto em torno do pitch atual
+#define PFD_ROLL_RADIUS_PX 100    // raio da escala de roll (centro no avião)
 
 // ---------- I2C (OLED 0,96") ----------
 #define PIN_I2C_SDA      21
@@ -89,6 +95,9 @@
 #define INPUT_TASK_STACK        3072
 #define INPUT_TASK_WAIT_MS      5      // espera máxima pela fila do encoder: o botão é lido nesse ritmo
 #define INPUT_EVENT_QUEUE_LEN   8      // eventos do encoder para a serial
+#define DISPLAY_TASK_CORE       1      // fora do núcleo do Wi-Fi; abaixo da link_task (prioridade 3)
+#define DISPLAY_TASK_PRIO       2
+#define DISPLAY_TASK_STACK      6144   // desenho com fontes e vsnprintf
 #define OLED_TASK_CORE          0
 #define OLED_TASK_PRIO          1
 #define OLED_TASK_STACK         4096

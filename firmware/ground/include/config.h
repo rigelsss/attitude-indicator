@@ -14,7 +14,14 @@
 // ---------- Encoder KY-040 (interrupção) ----------
 #define PIN_ENC_CLK      32
 #define PIN_ENC_DT       33
-#define PIN_ENC_SW       25       // botão: confirmar / calibrar (pressão longa)
+#define PIN_ENC_SW       25       // botão: curto = reconhecer o alarme; longo = reservado (comandos, semana 5)
+#define ENC_STEPS_PER_CLICK 2     // o KY-040 da bancada: 2 passos por clique, repouso em 11 e 00 (hardware.md)
+#define ENC_DIR          1        // +1: horário = próxima página; −1 inverte
+#define ENC_QUEUE_LEN    64       // estados lidos pela ISR até a input_task decodificar. Com 32, o repique de um
+                                  // giro rápido encheu a fila uma vez (hardware.md, 23/10/2026)
+#define BTN_DEBOUNCE_MS  20       // botão: estado estável por este tempo
+#define BTN_LONG_MS      1000     // pressão longa (comandos da semana 5: não disparar sem querer)
+#define OLED_PAGES       2        // páginas do OLED trocadas pelo giro: dados; link e saúde do A
 
 // ---------- Alarmes (docs/solo.md) ----------
 #define PIN_BUZZER       26       // buzzer ativo, ADIADO (sem transistor; usar um se a corrente passar de ~12 mA)
@@ -68,6 +75,11 @@
 #define ALARM_TASK_STACK        3072
 #define ALARM_TASK_PERIOD_MS    20     // volta da alarm_task (LEDs e condições)
 #define ALARM_EVENT_QUEUE_LEN   8      // mudanças de alarme para a serial
+#define INPUT_TASK_CORE         0
+#define INPUT_TASK_PRIO         2
+#define INPUT_TASK_STACK        3072
+#define INPUT_TASK_WAIT_MS      5      // espera máxima pela fila do encoder: o botão é lido nesse ritmo
+#define INPUT_EVENT_QUEUE_LEN   8      // eventos do encoder para a serial
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1
 #define SERIAL_TASK_STACK       4096

@@ -4,6 +4,7 @@
 #include <esp_timer.h>
 #include "config.h"
 #include "alarm_task.h"
+#include "input_task.h"
 #include "link_task.h"
 #include "radio_rx.h"
 
@@ -46,6 +47,25 @@ static void printAlarmEvent(const AlarmEventMsg &e) {
         break;
     case AlarmEventMsg::NothingToAck:
         Serial.printf("[alarme] %lu ms: nada a reconhecer\n", (unsigned long)e.atMs);
+        break;
+    }
+}
+
+static void printInputEvent(const InputEventMsg &e) {
+    switch (e.type) {
+    case InputEventMsg::Click:
+        Serial.printf("[enc] %lu ms: clique %s, página %u/%d\n", (unsigned long)e.atMs,
+                      e.dir > 0 ? "horário" : "anti-horário", e.page + 1, OLED_PAGES);
+        break;
+    case InputEventMsg::ShortPress:
+        Serial.printf("[enc] %lu ms: botão curto: reconhecer o alarme\n", (unsigned long)e.atMs);
+        break;
+    case InputEventMsg::LongPress:
+        Serial.printf("[enc] %lu ms: pressão longa (reservada para os comandos da semana 5)\n", (unsigned long)e.atMs);
+        break;
+    case InputEventMsg::AckDropped:
+        Serial.printf("[enc] %lu ms: botão curto descartado: fila de reconhecimento do alarme cheia\n",
+                      (unsigned long)e.atMs);
         break;
     }
 }
@@ -124,19 +144,29 @@ static void printState(bool streamR, bool streamA) {
                       ALARM_BANK_CAUTION_DEG, ALARM_BANK_DEG, ALARM_PITCH_UP_DEG, ALARM_PITCH_DOWN_DEG, ALARM_HYST_DEG);
     else
         Serial.println("alarme: task não iniciada");
+    InputStatus in;
+    if (inputCurrent(in))
+        Serial.printf("encoder: página %u/%d | cliques horário %lu, anti-horário %lu | inválidas %lu | fila da ISR "
+                      "cheia %lu (lacunas %lu) | eventos descartados %lu\n",
+                      in.page + 1, OLED_PAGES, (unsigned long)in.clicksCw, (unsigned long)in.clicksCcw,
+                      (unsigned long)in.invalid, (unsigned long)in.isrDropped, (unsigned long)in.gaps,
+                      (unsigned long)inputEventsDropped());
+    else
+        Serial.println("encoder: task não iniciada");
     Serial.printf("fluxos: r %s, a %s | heap livre %u kB\n", streamR ? "ligado" : "desligado",
                   streamA ? "ligado" : "desligado", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024));
     Serial.println("----------------------------------------------");
 }
 
 static void printHelp() {
-    Serial.println("[B] teclas: c = estado | r = resumo por segundo | a = fluxo de pacotes (10 Hz) | k = reconhecer o alarme");
+    Serial.println("[B] teclas: c = estado | r = resumo por segundo | a = fluxo de pacotes (10 Hz) | k = reconhecer o "
+                   "alarme (o mesmo que o botão do encoder)");
 }
 
 static void serialTask(void *) {
     bool streamR = true;   // o resumo começa ligado: é o que a bancada do rádio acompanha
     bool streamA = false;
-    uint32_t reportSeen = 0, droppedSeen = 0, alarmDroppedSeen = 0;
+    uint32_t reportSeen = 0, droppedSeen = 0, alarmDroppedSeen = 0, inputDroppedSeen = 0;
     uint16_t lastSeqPrinted = 0;
     bool printedAny = false;
     TickType_t lastPkt = xTaskGetTickCount();
@@ -156,6 +186,14 @@ static void serialTask(void *) {
             Serial.printf("[alarme] %lu mudanças descartadas: fila de alarmes cheia (o c mostra o estado atual)\n",
                           (unsigned long)(alarmDropped - alarmDroppedSeen));
             alarmDroppedSeen = alarmDropped;
+        }
+        InputEventMsg ie;
+        while (inputEventReceive(ie)) printInputEvent(ie);
+        const uint32_t inputDropped = inputEventsDropped();
+        if (inputDropped != inputDroppedSeen) {
+            Serial.printf("[enc] %lu eventos descartados: fila do encoder cheia (o c mostra a página atual)\n",
+                          (unsigned long)(inputDropped - inputDroppedSeen));
+            inputDroppedSeen = inputDropped;
         }
 
         LinkReport r;

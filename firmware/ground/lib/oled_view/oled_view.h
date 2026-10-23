@@ -4,8 +4,8 @@
 //   Página 1 (dados):   ROLL/PIT, PROA (MAG ou VERD), ALT, pressão e temperatura, CURVA (gz)
 //   Página 2 (link):    estado e taxa, perdas e quedas, intervalo entre chegadas, sensores do A, calibração e
 //                       loop_us, alarme
-// A primeira linha é o título com a página ("1/2"); sem link, vira uma faixa (vídeo inverso) com SEM SINAL ou
-// LINK PERDIDO, e os valores da página 1 vão para "---". Cada valor com a flag valid desligada também é "---":
+// A primeira linha é o título com a página ("1/2"); sem dado atual, vira uma faixa (vídeo inverso) com SEM SINAL,
+// LINK PERDIDO ou DADO ATRASADO, e os valores da página 1 vão para "---". Cada valor com a flag valid desligada também é "---":
 // nunca o último valor congelado. Pressão e temperatura seguem a VAL_ALT (leitura recente), e não só o ST_BARO_OK.
 // Atitude degradada (VAL_ATT_DEGRADED): o título da página 1 vira "ATT DEGRADADA".
 #pragma once
@@ -29,6 +29,8 @@ struct OledLinkStats {
 struct OledInputs {
     bool            everLinked;    // já chegou um pacote aceito
     bool            linkOk;        // o último pacote tem no máximo o timeout de idade
+    bool            dataLate;      // a idade estimada do dado passa do limite (dataAgeMs): faixa DADO ATRASADO
+    uint32_t        delayMs;       // atraso estimado do último pacote (página 2, "at")
     TelemetryPacket pkt;           // o último pacote aceito (vale com everLinked)
     OledLinkStats   link;
     const char     *alarmText;     // texto curto do alarme atual (alarmKindShort)

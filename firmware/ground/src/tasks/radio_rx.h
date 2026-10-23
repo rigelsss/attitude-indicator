@@ -13,6 +13,7 @@
 struct RxItem {
     TelemetryPacket pkt;
     uint64_t        arrivalUs;   // esp_timer_get_time() na chegada
+    uint32_t        delayMs;     // atraso estimado (lib/delay_estimator), preenchido pela link_task
 };
 
 // Contadores do callback desde o boot (cada um lido de forma atômica, sem ordem entre eles)

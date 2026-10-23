@@ -7,6 +7,7 @@
 #include "alarm_task.h"
 #include "config.h"
 #include "input_task.h"
+#include "delay_estimator.h"
 #include "link_task.h"
 #include "oled_view.h"
 
@@ -48,6 +49,8 @@ static void gather(OledInputs &in) {
         const uint64_t nowUs = (uint64_t)esp_timer_get_time();
         const uint64_t ageUs = nowUs > last.arrivalUs ? nowUs - last.arrivalUs : 0;
         in.linkOk = ageUs <= (uint64_t)LINK_TIMEOUT_MS * 1000;   // a mesma regra do timeout da link_task
+        in.delayMs = last.delayMs;
+        in.dataLate = dataAgeMs(last.delayMs, ageUs / 1000) > LINK_STALE_DELAY_MS;   // a mesma regra do alarme
     }
     LinkReport r;
     if (linkLatestReport(r)) {

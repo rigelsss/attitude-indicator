@@ -4,6 +4,7 @@
 #include <atomic>
 #include <esp_timer.h>
 #include "config.h"
+#include "delay_estimator.h"
 #include "link_task.h"
 
 static QueueHandle_t s_ack = nullptr, s_events = nullptr, s_status = nullptr;
@@ -50,6 +51,8 @@ static void alarmTask(void *) {
             const uint64_t nowUs = (uint64_t)esp_timer_get_time();
             const uint64_t ageUs = nowUs > last.arrivalUs ? nowUs - last.arrivalUs : 0;
             in.linkOk = ageUs <= (uint64_t)LINK_TIMEOUT_MS * 1000;
+            // Idade total do dado (atraso na chegada + tempo desde a chegada): a mesma regra do OLED
+            in.dataLate = dataAgeMs(last.delayMs, ageUs / 1000) > LINK_STALE_DELAY_MS;
             in.attValid = (last.pkt.valid & VAL_ATT) != 0;
             in.calibrating = (last.pkt.status & ST_CALIBRATING) != 0;
             in.rollDeg = last.pkt.roll;

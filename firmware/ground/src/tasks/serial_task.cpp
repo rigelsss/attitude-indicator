@@ -73,7 +73,7 @@ static void printInputEvent(const InputEventMsg &e) {
 
 static void printReport(const LinkReport &r) {
     const LinkCounts &w = r.win.counts;
-    Serial.printf("[r] link %s | rec %lu em %lu ms | perdidos %lu | dup %lu | atrasados %lu | ressinc %lu | "
+    Serial.printf("[r] link %s | rec %lu em %lu ms | perdidos %lu | dup %lu | fora de ordem %lu | ressinc %lu | "
                   "recusados %lu | outro remetente %lu | fila cheia %lu",
                   linkStateText(r.state), (unsigned long)w.received, (unsigned long)r.windowMs, (unsigned long)w.lost,
                   (unsigned long)w.duplicates, (unsigned long)w.late, (unsigned long)w.resyncs,
@@ -85,7 +85,9 @@ static void printReport(const LinkReport &r) {
                       (unsigned long)r.win.srcIntervalMinMs, (unsigned long)r.win.srcIntervalMaxMs);
     else
         Serial.print(" | intervalo -");
-    if (r.havePacket) Serial.printf(" | idade %lu ms | seq %u", (unsigned long)r.ageMs, r.lastSeq);
+    if (r.havePacket)
+        Serial.printf(" | idade %lu ms | atraso %lu (máx %lu) ms | seq %u", (unsigned long)r.ageMs,
+                      (unsigned long)r.delayMs, (unsigned long)r.delayMaxMs, r.lastSeq);
     Serial.printf(" | total: %lu rec, %lu perd (%.3f %%), %lu quedas\n", (unsigned long)r.totals.received,
                   (unsigned long)r.totals.lost, lossPct(r.totals), (unsigned long)r.totals.timeouts);
 }
@@ -95,9 +97,9 @@ static void printPacket(const RxItem &it) {
     const uint64_t nowUs = (uint64_t)esp_timer_get_time();
     const unsigned long ageMs = nowUs > it.arrivalUs ? (unsigned long)((nowUs - it.arrivalUs) / 1000) : 0;
     Serial.printf("[a] seq %u | t %lu ms | roll %.2f pitch %.2f | proa %.1f | alt %.2f m | %.2f hPa | %.1f C | "
-                  "status 0x%04X | valid 0x%04X | loop %u us | idade %lu ms\n",
+                  "status 0x%04X | valid 0x%04X | loop %u us | idade %lu ms | atraso %lu ms\n",
                   p.hdr.seq, (unsigned long)p.t_ms, p.roll, p.pitch, p.heading, p.altitude_m, p.pressure_hpa,
-                  p.temp_c, p.status, p.valid, p.loop_us, ageMs);
+                  p.temp_c, p.status, p.valid, p.loop_us, ageMs, (unsigned long)it.delayMs);
 }
 
 static void printState(bool streamR, bool streamA) {
@@ -113,17 +115,19 @@ static void printState(bool streamR, bool streamA) {
                       PEER_MAC[4], PEER_MAC[5]);
     else
         Serial.println("rádio: DESLIGADO (falha no boot; ver as linhas [radio])");
-    Serial.printf("link: timeout %d ms, ressincroniza acima de %d pacotes, atrasado até %d pacotes e %d ms, resumo a "
-                  "cada %d ms\n",
+    Serial.printf("link: timeout %d ms, ressincroniza acima de %d pacotes, fora de ordem até %d pacotes e %d ms, "
+                  "resumo a cada %d ms\n",
                   LINK_TIMEOUT_MS, LINK_RESYNC_GAP, LINK_LATE_MAX_PKTS, LINK_LATE_MAX_MS, LINK_REPORT_MS);
+    Serial.printf("atraso: DADO ATRASADO acima de %d ms; base = menor offset em %d faixas de %d ms\n",
+                  LINK_STALE_DELAY_MS, DELAY_BUCKETS, DELAY_BUCKET_MS);
     LinkReport r;
     if (linkLatestReport(r)) {
         Serial.printf("estado (último resumo): %s", linkStateText(r.state));
         if (r.havePacket)
-            Serial.printf(" | último seq %u, t_ms do A %lu, idade %lu ms", r.lastSeq, (unsigned long)r.lastTms,
-                          (unsigned long)r.ageMs);
+            Serial.printf(" | último seq %u, t_ms do A %lu, idade %lu ms, atraso %lu ms", r.lastSeq,
+                          (unsigned long)r.lastTms, (unsigned long)r.ageMs, (unsigned long)r.delayMs);
         Serial.println();
-        Serial.printf("desde o boot: %lu rec | %lu perdidos (%.3f %%) | %lu dup | %lu atrasados | %lu ressinc | "
+        Serial.printf("desde o boot: %lu rec | %lu perdidos (%.3f %%) | %lu dup | %lu fora de ordem | %lu ressinc | "
                       "%lu quedas\n",
                       (unsigned long)r.totals.received, (unsigned long)r.totals.lost, lossPct(r.totals),
                       (unsigned long)r.totals.duplicates, (unsigned long)r.totals.late, (unsigned long)r.totals.resyncs,

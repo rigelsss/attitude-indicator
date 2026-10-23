@@ -8,6 +8,7 @@ const char *alarmKindText(AlarmKind k) {
     case AlarmKind::BankCaution:     return "AVISO DE BANK";
     case AlarmKind::AttitudeWarning: return "ATITUDE ANORMAL";
     case AlarmKind::AttInvalid:      return "ATITUDE INVÁLIDA";
+    case AlarmKind::DataLate:        return "DADO ATRASADO";
     case AlarmKind::LinkLost:        return "LINK PERDIDO";
     }
     return "?";
@@ -19,6 +20,7 @@ const char *alarmKindShort(AlarmKind k) {
     case AlarmKind::BankCaution:     return "AVISO BANK";
     case AlarmKind::AttitudeWarning: return "ATIT ANORMAL";
     case AlarmKind::AttInvalid:      return "ATIT INVALIDA";
+    case AlarmKind::DataLate:        return "DADO ATRASADO";
     case AlarmKind::LinkLost:        return "LINK PERDIDO";
     }
     return "?";
@@ -29,7 +31,8 @@ AlarmLogic::AlarmLogic(const AlarmConfig &cfg) : cfg_(cfg) {}
 AlarmOutput AlarmLogic::update(const AlarmInputs &in, uint32_t nowMs) {
     // Ângulo não finito com VAL_ATT ligada é pacote incoerente: conta como atitude inválida
     const bool attValid = in.attValid && isfinite(in.rollDeg) && isfinite(in.pitchDeg);
-    const bool attUsable = in.linkOk && attValid;
+    const bool current = in.linkOk && !in.dataLate;   // há um dado atual
+    const bool attUsable = current && attValid;
     if (attUsable) {
         const float bank = fabsf(in.rollDeg), pitch = in.pitchDeg;
         const float h = cfg_.hystDeg;
@@ -46,7 +49,7 @@ AlarmOutput AlarmLogic::update(const AlarmInputs &in, uint32_t nowMs) {
 
     // Atitude inválida: conta o tempo só com o link OK e fora das calibrações
     bool invalid = false;
-    if (in.linkOk && !attValid && !in.calibrating) {
+    if (current && !attValid && !in.calibrating) {
         if (!invalidTiming_) {
             invalidTiming_ = true;
             invalidSinceMs_ = nowMs;
@@ -58,6 +61,7 @@ AlarmOutput AlarmLogic::update(const AlarmInputs &in, uint32_t nowMs) {
 
     AlarmKind k = AlarmKind::None;
     if (in.everLinked && !in.linkOk) k = AlarmKind::LinkLost;
+    else if (in.linkOk && in.dataLate) k = AlarmKind::DataLate;
     else if (invalid) k = AlarmKind::AttInvalid;
     else if (warning_) k = AlarmKind::AttitudeWarning;
     else if (caution_) k = AlarmKind::BankCaution;
@@ -87,7 +91,8 @@ bool AlarmLogic::ledOn(uint32_t nowMs) const {
     const uint32_t phase = nowMs - kindSinceMs_;   // começa aceso
     uint32_t half = 0;
     switch (kind_) {
-    case AlarmKind::LinkLost:        half = cfg_.linkBlinkMs; break;
+    case AlarmKind::LinkLost:
+    case AlarmKind::DataLate:        half = cfg_.linkBlinkMs; break;   // os dois: o dado na tela não é atual
     case AlarmKind::BankCaution:     half = cfg_.cautionBlinkMs; break;
     case AlarmKind::AttitudeWarning: half = cfg_.warningBlinkMs; break;
     case AlarmKind::AttInvalid: {

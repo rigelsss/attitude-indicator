@@ -14,6 +14,7 @@ static AlarmInputs level() {
     AlarmInputs in;
     in.everLinked = true;
     in.linkOk = true;
+    in.dataLate = false;
     in.attValid = true;
     in.calibrating = false;
     in.rollDeg = 0.0f;
@@ -235,7 +236,40 @@ static void test_non_finite_angles_are_invalid() {
     TEST_ASSERT_EQUAL(AlarmKind::AttitudeWarning, b.update(att(50.0f, 0), 1020).kind);
 }
 
+// Dado atrasado: alarme próprio, no ritmo do link perdido, acima dos limites de atitude; o LED do link fica
+// aceso (o link está vivo)
+static void test_data_late() {
+    AlarmLogic a(CFG);
+    AlarmInputs in = att(50.0f, 0);   // atitude anormal no pacote, mas o dado não é atual
+    in.dataLate = true;
+    AlarmOutput o = a.update(in, 1000);
+    TEST_ASSERT_EQUAL(AlarmKind::DataLate, o.kind);
+    TEST_ASSERT_TRUE(o.linkLed);
+    TEST_ASSERT_TRUE(o.alarmLed);
+    TEST_ASSERT_FALSE(a.update(in, 1500).alarmLed);   // 1 Hz, como o link perdido
+    TEST_ASSERT_TRUE(a.update(in, 2000).alarmLed);
+    // Link perdido tem prioridade
+    in.linkOk = false;
+    TEST_ASSERT_EQUAL(AlarmKind::LinkLost, a.update(in, 2100).kind);
+    // Em dia de novo: a atitude volta a ser avaliada
+    TEST_ASSERT_EQUAL(AlarmKind::AttitudeWarning, a.update(att(50.0f, 0), 2200).kind);
+}
+
+// Dado atrasado não conta o tempo da atitude inválida (o dado não é atual)
+static void test_data_late_pauses_invalid_timer() {
+    AlarmLogic a(CFG);
+    AlarmInputs in = level();
+    in.attValid = false;
+    in.dataLate = true;
+    a.update(in, 0);
+    TEST_ASSERT_EQUAL(AlarmKind::DataLate, a.update(in, 5000).kind);
+    in.dataLate = false;
+    TEST_ASSERT_EQUAL(AlarmKind::None, a.update(in, 5100).kind);
+    TEST_ASSERT_EQUAL(AlarmKind::AttInvalid, a.update(in, 6100).kind);
+}
+
 static void test_kind_text() {
+    TEST_ASSERT_EQUAL_STRING("DADO ATRASADO", alarmKindText(AlarmKind::DataLate));
     TEST_ASSERT_EQUAL_STRING("nenhum", alarmKindText(AlarmKind::None));
     TEST_ASSERT_EQUAL_STRING("LINK PERDIDO", alarmKindText(AlarmKind::LinkLost));
     TEST_ASSERT_EQUAL_STRING("ATITUDE ANORMAL", alarmKindText(AlarmKind::AttitudeWarning));
@@ -259,6 +293,8 @@ int main() {
     RUN_TEST(test_hysteresis_reset_on_invalid);
     RUN_TEST(test_new_alarm_starts_on);
     RUN_TEST(test_non_finite_angles_are_invalid);
+    RUN_TEST(test_data_late);
+    RUN_TEST(test_data_late_pauses_invalid_timer);
     RUN_TEST(test_kind_text);
     return UNITY_END();
 }

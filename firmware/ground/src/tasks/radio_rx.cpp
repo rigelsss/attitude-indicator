@@ -25,6 +25,7 @@ static void onRecv(const uint8_t *mac, const uint8_t *data, int len) {
     }
     RxItem item;
     item.arrivalUs = arrivalUs;
+    item.delayMs = 0;
     switch (decodeTelemetry(data, len > 0 ? (size_t)len : 0, item.pkt)) {
     case RxDecode::Ok:
         // Não é ISR: xQueueSend, sem espera

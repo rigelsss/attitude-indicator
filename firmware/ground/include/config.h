@@ -68,6 +68,10 @@
 #define LINK_LATE_MAX_PKTS 100    // seq até isto atrás (2 s a 50 Hz) e t_ms até LINK_LATE_MAX_MS atrás:
 #define LINK_LATE_MAX_MS   2000   // pacote atrasado, descartado (e não reinício do A). Rajadas de ~1 s na bancada
 #define LINK_REPORT_MS   1000     // janela do resumo (r)
+#define LINK_STALE_DELAY_MS 250   // idade estimada do dado (atraso na chegada + tempo desde a chegada) acima disto:
+                                  // DADO ATRASADO (metade do LINK_TIMEOUT_MS)
+#define DELAY_BUCKET_MS  1000     // atraso estimado: menor offset em DELAY_BUCKETS faixas de DELAY_BUCKET_MS
+#define DELAY_BUCKETS    10       // (10 s: acompanha a deriva entre os cristais; lib/delay_estimator)
 #define LINK_EVENT_QUEUE_LEN 8    // eventos do link (perdido, restabelecido, ressincronizado) para a serial
 
 // ---------- Tasks ----------

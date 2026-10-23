@@ -65,7 +65,7 @@ static void test_link_page() {
     TEST_ASSERT_FALSE(p.banner);
     TEST_ASSERT_EQUAL_STRING("LINK OK 50/s      2/2", p.lines[0]);
     TEST_ASSERT_EQUAL_STRING("perd 1 0.02% q0", p.lines[1]);
-    TEST_ASSERT_EQUAL_STRING("interv 12/20/28 ms", p.lines[2]);
+    TEST_ASSERT_EQUAL_STRING("int 12/20/28 at 0", p.lines[2]);
     TEST_ASSERT_EQUAL_STRING("MPU ok BAR ok MAG ok", p.lines[3]);
     TEST_ASSERT_EQUAL_STRING("cal: - loop 180us", p.lines[4]);
     TEST_ASSERT_EQUAL_STRING("ALARME nenhum", p.lines[5]);
@@ -89,6 +89,7 @@ static void test_no_signal() {
     TEST_ASSERT_TRUE(p.banner);
     TEST_ASSERT_EQUAL_STRING("SEM SINAL         2/2", p.lines[0]);
     TEST_ASSERT_EQUAL_STRING("perd ---", p.lines[1]);
+    TEST_ASSERT_EQUAL_STRING("int --- at ---", p.lines[2]);
     TEST_ASSERT_EQUAL_STRING("MPU ? BAR ? MAG ?", p.lines[3]);
     TEST_ASSERT_EQUAL_STRING("cal: ---", p.lines[4]);
 }
@@ -107,6 +108,45 @@ static void test_link_lost() {
     TEST_ASSERT_EQUAL_STRING("LINK PERDIDO      2/2", p.lines[0]);
     TEST_ASSERT_EQUAL_STRING("perd 1 0.02% q0", p.lines[1]);
     TEST_ASSERT_EQUAL_STRING("MPU ok BAR ok MAG ok", p.lines[3]);   // do último pacote
+}
+
+// Dado atrasado: faixa própria e "---" na página 1; o atraso aparece na página 2
+// Atraso sempre inteiro: com três intervalos de três dígitos, o intervalo vira mín-máx (caso da revisão)
+static void test_delay_never_cut() {
+    OledInputs in = base();
+    in.page = 1;
+    in.link.intMinMs = 100.0f;
+    in.link.intAvgMs = 200.0f;
+    in.link.intMaxMs = 400.0f;
+    in.delayMs = 412;
+    TEST_ASSERT_EQUAL_STRING("int 100-400 at 412", build(in).lines[2]);   // "int 100/200/400 at 412" teria 22
+    in.delayMs = 41;
+    TEST_ASSERT_EQUAL_STRING("int 100/200/400 at 41", build(in).lines[2]);   // 21: cabe completo
+    // Pior caso: tudo limitado a 9999
+    in.link.intMinMs = 12000.0f;
+    in.link.intAvgMs = 15000.0f;
+    in.link.intMaxMs = 20000.0f;
+    in.delayMs = 50000;
+    TEST_ASSERT_EQUAL_STRING("int 9999-9999 at 9999", build(in).lines[2]);
+}
+
+static void test_data_late() {
+    OledInputs in = base();
+    in.dataLate = true;
+    in.delayMs = 412;
+    OledPage p = build(in);
+    TEST_ASSERT_TRUE(p.banner);
+    TEST_ASSERT_EQUAL_STRING("DADO ATRASADO     1/2", p.lines[0]);
+    TEST_ASSERT_EQUAL_STRING("ROLL   --- PIT   ---", p.lines[1]);
+    TEST_ASSERT_EQUAL_STRING("PROA --- MAG", p.lines[2]);
+    in.page = 1;
+    p = build(in);
+    TEST_ASSERT_TRUE(p.banner);
+    TEST_ASSERT_EQUAL_STRING("DADO ATRASADO     2/2", p.lines[0]);
+    TEST_ASSERT_EQUAL_STRING("int 12/20/28 at 412", p.lines[2]);
+    // Link perdido tem prioridade no título
+    in.linkOk = false;
+    TEST_ASSERT_EQUAL_STRING("LINK PERDIDO      2/2", build(in).lines[0]);
 }
 
 static void test_invalid_flags() {
@@ -196,7 +236,7 @@ static void test_link_page_states() {
     in.link.haveIntervals = false;
     in.alarmText = alarmKindShort(AlarmKind::AttInvalid);
     const OledPage p = build(in);
-    TEST_ASSERT_EQUAL_STRING("interv ---", p.lines[2]);
+    TEST_ASSERT_EQUAL_STRING("int --- at 0", p.lines[2]);
     TEST_ASSERT_EQUAL_STRING("MPU ok BAR ok MAG --", p.lines[3]);
     TEST_ASSERT_EQUAL_STRING("cal: SIM loop 180us", p.lines[4]);
     TEST_ASSERT_EQUAL_STRING("ALARME ATIT INVALIDA", p.lines[5]);
@@ -221,6 +261,7 @@ static void test_lines_fit() {
     in.link.intAvgMs = 165.2f;
     in.link.intMaxMs = 450.6f;
     in.alarmText = alarmKindShort(AlarmKind::AttInvalid);
+    in.delayMs = 123456;   // mostrado como 9999
     in.page = 0;
     const OledPage p0 = build(in);
     TEST_ASSERT_EQUAL_STRING("ROLL-179.9 PIT -89.9", p0.lines[1]);
@@ -231,14 +272,14 @@ static void test_lines_fit() {
     const OledPage p1 = build(in);
     TEST_ASSERT_EQUAL_STRING("LINK OK 100/s     2/2", p1.lines[0]);
     TEST_ASSERT_EQUAL_STRING("perd 1049 17.0% q11", p1.lines[1]);
-    TEST_ASSERT_EQUAL_STRING("interv 1/165/451 ms", p1.lines[2]);
+    TEST_ASSERT_EQUAL_STRING("int 1/165/451 at 9999", p1.lines[2]);
     TEST_ASSERT_EQUAL_STRING("cal: SIM loop 65535us", p1.lines[4]);
     TEST_ASSERT_EQUAL_STRING("ALARME ATIT INVALIDA", p1.lines[5]);
 }
 
 static void test_alarm_short_texts_fit() {
     const AlarmKind kinds[] = {AlarmKind::None, AlarmKind::BankCaution, AlarmKind::AttitudeWarning,
-                               AlarmKind::AttInvalid, AlarmKind::LinkLost};
+                               AlarmKind::AttInvalid, AlarmKind::DataLate, AlarmKind::LinkLost};
     for (AlarmKind k : kinds) TEST_ASSERT_TRUE(strlen("ALARME ") + strlen(alarmKindShort(k)) <= (size_t)OLED_COLS);
 }
 
@@ -248,6 +289,8 @@ int main() {
     RUN_TEST(test_link_page);
     RUN_TEST(test_no_signal);
     RUN_TEST(test_link_lost);
+    RUN_TEST(test_delay_never_cut);
+    RUN_TEST(test_data_late);
     RUN_TEST(test_invalid_flags);
     RUN_TEST(test_pressure_needs_val_alt);
     RUN_TEST(test_attitude_degraded);

@@ -4,6 +4,8 @@
 // Condições, em ordem de prioridade:
 //   1. link perdido: sem pacote aceito há mais que o timeout, depois de o link ter funcionado uma vez (antes do
 //      primeiro pacote não há alarme; o LED do link apagado já mostra a situação);
+//   1b. dado atrasado: o link está vivo, mas a idade estimada do dado (atraso na chegada + tempo desde a
+//      chegada; lib/delay_estimator) passa do limite; o dado na tela não é atual, como no link perdido (mesmo ritmo do LED);
 //   2. atitude inválida: link OK, VAL_ATT desligada por mais de invalidDelayMs, fora de uma calibração
 //      (ST_CALIBRATING): no boot do A e nas calibrações a atitude fica inválida por instantes, o que é esperado;
 //   3. alarme de atitude anormal (warning): |roll| > bankWarningDeg, pitch > pitchUpDeg ou pitch < −pitchDownDeg;
@@ -27,13 +29,14 @@ struct AlarmConfig {
 struct AlarmInputs {
     bool  everLinked;    // já chegou pelo menos um pacote aceito
     bool  linkOk;        // o último pacote aceito tem no máximo o timeout de idade
+    bool  dataLate;      // a idade estimada do dado (dataAgeMs) passa de LINK_STALE_DELAY_MS
     bool  attValid;      // VAL_ATT do último pacote
     bool  calibrating;   // ST_CALIBRATING do último pacote
     float rollDeg, pitchDeg;
 };
 
 // Em ordem crescente de prioridade
-enum class AlarmKind : uint8_t { None, BankCaution, AttitudeWarning, AttInvalid, LinkLost };
+enum class AlarmKind : uint8_t { None, BankCaution, AttitudeWarning, AttInvalid, DataLate, LinkLost };
 const char *alarmKindText(AlarmKind k);
 // Versão curta, só ASCII, até 13 caracteres (OLED: "ALARME " + texto cabe em 21)
 const char *alarmKindShort(AlarmKind k);

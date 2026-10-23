@@ -4,6 +4,7 @@
 #include <atomic>
 #include <esp_timer.h>
 #include "config.h"
+#include "delay_estimator.h"
 
 static QueueHandle_t s_latestPkt = nullptr, s_latestReport = nullptr, s_events = nullptr;
 static std::atomic<uint32_t> s_eventsDropped{0};
@@ -28,6 +29,8 @@ static RxCounters rxDelta(const RxCounters &now, const RxCounters &before) {
 static void linkTask(void *) {
     const LinkConfig cfg = {(uint64_t)LINK_TIMEOUT_MS * 1000, LINK_RESYNC_GAP, LINK_LATE_MAX_PKTS, LINK_LATE_MAX_MS};
     LinkStats stats(cfg);
+    DelayEstimator delay({DELAY_BUCKET_MS, DELAY_BUCKETS});
+    uint32_t delayMaxWin = 0, delayLast = 0;
     QueueHandle_t rxQueue = radioRxQueue();
     uint64_t windowStartUs = (uint64_t)esp_timer_get_time();
     RxCounters rxBefore = radioRxCounters();
@@ -39,7 +42,14 @@ static void linkTask(void *) {
             const LinkUpdate u = stats.onPacket(item.pkt.hdr.seq, item.pkt.t_ms, item.arrivalUs);
             publishEvent(u);
             // Duplicados e atrasados não renovam o último pacote (nem o instante de chegada) dos consumidores
-            if (u.accepted) xQueueOverwrite(s_latestPkt, &item);
+            if (u.accepted) {
+                // A reiniciado: o relógio dele voltou a zero, e a base do atraso recomeça
+                if (u.events & LINK_EV_RESYNC) delay.reset();
+                item.delayMs = delay.feed(item.pkt.t_ms, item.arrivalUs / 1000);
+                delayLast = item.delayMs;
+                if (item.delayMs > delayMaxWin) delayMaxWin = item.delayMs;
+                xQueueOverwrite(s_latestPkt, &item);
+            }
         } else if (rxQueue == nullptr) {
             vTaskDelay(pdMS_TO_TICKS(LINK_TASK_WAIT_MS));
         }
@@ -62,6 +72,9 @@ static void linkTask(void *) {
             r.ageMs = r.havePacket && nowUs > stats.lastArrivalUs()
                           ? (uint32_t)((nowUs - stats.lastArrivalUs()) / 1000)
                           : 0;
+            r.delayMs = delayLast;
+            r.delayMaxMs = delayMaxWin;
+            delayMaxWin = 0;
             xQueueOverwrite(s_latestReport, &r);
             rxBefore = rxNow;
             windowStartUs = nowUs;

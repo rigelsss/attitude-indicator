@@ -22,6 +22,8 @@ struct LinkReport {
     uint16_t   lastSeq;
     uint32_t   lastTms;    // t_ms do A no último pacote
     uint32_t   ageMs;      // idade do último pacote no fim da janela
+    uint32_t   delayMs;    // atraso estimado do último pacote
+    uint32_t   delayMaxMs; // maior atraso estimado na janela
 };
 
 struct LinkEventMsg {

@@ -35,15 +35,22 @@ static void title(OledPage &out, const char *text, const OledInputs &in) {
     setLine(out, 0, line);
 }
 
+// Título da faixa sem dado atual
+static const char *noDataTitle(const OledInputs &in) {
+    if (!in.everLinked) return "SEM SINAL";
+    if (!in.linkOk) return "LINK PERDIDO";
+    return "DADO ATRASADO";
+}
+
 static void buildData(const OledInputs &in, OledPage &out) {
     const TelemetryPacket &p = in.pkt;
-    const bool have = in.everLinked && in.linkOk;
+    const bool have = in.everLinked && in.linkOk && !in.dataLate;   // há um dado atual
     const bool att = have && (p.valid & VAL_ATT) && isfinite(p.roll) && isfinite(p.pitch);
     char a[12], b[12], line[OLED_COLS + 8];
 
     // Atitude degradada (giroscópio saturou, correção se recuperando): no título, para não parecer a normal
     const bool degraded = att && (p.valid & VAL_ATT_DEGRADED);
-    title(out, have ? (degraded ? "ATT DEGRADADA" : "DADOS") : (in.everLinked ? "LINK PERDIDO" : "SEM SINAL"), in);
+    title(out, have ? (degraded ? "ATT DEGRADADA" : "DADOS") : noDataTitle(in), in);
     out.banner = !have;
 
     if (att) {
@@ -96,11 +103,11 @@ static const char *okText(bool have, bool ok) { return !have ? "?" : (ok ? "ok" 
 
 static void buildLink(const OledInputs &in, OledPage &out) {
     const TelemetryPacket &p = in.pkt;
-    const bool have = in.everLinked && in.linkOk;
+    const bool have = in.everLinked && in.linkOk && !in.dataLate;
     char line[OLED_COLS + 8];
 
     if (have && in.link.valid) snprintf(line, sizeof(line), "LINK OK %lu/s", (unsigned long)in.link.recPerS);
-    else snprintf(line, sizeof(line), "%s", have ? "LINK OK" : (in.everLinked ? "LINK PERDIDO" : "SEM SINAL"));
+    else snprintf(line, sizeof(line), "%s", have ? "LINK OK" : noDataTitle(in));
     title(out, line, in);
     out.banner = !have;
 
@@ -112,11 +119,22 @@ static void buildLink(const OledInputs &in, OledPage &out) {
         snprintf(line, sizeof(line), "perd %s", NA);
     setLine(out, 1, line);
 
-    if (in.link.valid && in.link.haveIntervals)
-        snprintf(line, sizeof(line), "interv %.0f/%.0f/%.0f ms", (double)in.link.intMinMs, (double)in.link.intAvgMs,
-                 (double)in.link.intMaxMs);
-    else
-        snprintf(line, sizeof(line), "interv %s", NA);
+    // Intervalo entre chegadas (mín/médio/máx da janela) e atraso estimado do último pacote ("at", ms)
+    // O atraso sempre cabe inteiro: se mín/médio/máx não couberem, o intervalo vira só mín-máx (cada valor
+    // limitado a 9999, o pior caso "int 9999-9999 at 9999" tem 21 colunas)
+    char late[8], ints[24];
+    if (in.everLinked) snprintf(late, sizeof(late), "%lu", (unsigned long)(in.delayMs > 9999 ? 9999 : in.delayMs));
+    else snprintf(late, sizeof(late), "%s", NA);
+    const int room = OLED_COLS - (int)strlen("int  at ") - (int)strlen(late);
+    if (in.link.valid && in.link.haveIntervals) {
+        const float mn = fminf(in.link.intMinMs, 9999.0f), av = fminf(in.link.intAvgMs, 9999.0f),
+                    mx = fminf(in.link.intMaxMs, 9999.0f);
+        snprintf(ints, sizeof(ints), "%.0f/%.0f/%.0f", (double)mn, (double)av, (double)mx);
+        if ((int)strlen(ints) > room) snprintf(ints, sizeof(ints), "%.0f-%.0f", (double)mn, (double)mx);
+    } else {
+        snprintf(ints, sizeof(ints), "%s", NA);
+    }
+    snprintf(line, sizeof(line), "int %s at %s", ints, late);
     setLine(out, 2, line);
 
     // Saúde do A: do último pacote, mesmo antigo ("?" antes do primeiro)

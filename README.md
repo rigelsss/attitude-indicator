@@ -138,7 +138,7 @@ O ESP B recebe a telemetria por ESP-NOW, cria o AP `Horizonte-ESP` (ainda sem p�
 | `a` | Liga ou desliga o fluxo de pacotes (10 Hz): `seq`, roll, pitch, proa, altitude, `status`, `valid` e `loop_us` |
 | `k` | Reconhece o alarme ativo: o LED de alarme para de piscar e fica aceso enquanto a condição durar. O botão do encoder (pressão curta) faz o mesmo |
 
-Os eventos do link (`estabelecido`, `PERDIDO`, `restabelecido`, `ressincronizado`) e as mudanças de alarme são sempre impressos. O OLED de 0,96" mostra duas páginas, dados e link com a saúde do A, com `---` para todo dado inválido ou sem link ([solo.md](docs/solo.md), passo 3). O giro do encoder troca a página, e a pressão longa (1 s) fica reservada para os comandos ([solo.md](docs/solo.md), passo 2). O LED vermelho (GPIO 13) avisa link perdido, atitude inválida, atitude anormal (bank > 45°, pitch > +25° ou < −10°) e bank > 35°, cada um com um ritmo; o LED azul da placa fica aceso com o link OK ([solo.md](docs/solo.md), passo 1).
+Os eventos do link (`estabelecido`, `PERDIDO`, `restabelecido`, `ressincronizado`) e as mudanças de alarme são sempre impressos. O TFT mostra o horizonte artificial (escala de pitch, escala de roll e proa; a altitude fica no OLED), com uma bandeira de falha (X vermelho) quando o dado não é atual ou a atitude é inválida, e `BANK ANGLE` / `ATTITUDE` nos alarmes ([solo.md](docs/solo.md), passo 5). O OLED de 0,96" mostra duas páginas, dados e link com a saúde do A, com `---` para todo dado inválido ou sem link ([solo.md](docs/solo.md), passo 3). O giro do encoder troca a página, e a pressão longa (1 s) fica reservada para os comandos ([solo.md](docs/solo.md), passo 2). O LED vermelho (GPIO 13) avisa link perdido, atitude inválida, atitude anormal (bank > 45°, pitch > +25° ou < −10°) e bank > 35°, cada um com um ritmo; o LED azul da placa fica aceso com o link OK ([solo.md](docs/solo.md), passo 1).
 
 Feche o monitor antes de gravar: ele prende a porta, e o `upload` falha. A primeira linha do boot mostra `compilado em AAAA-MM-DD HH:MM:SS`, o que confirma que a placa está com o firmware que acabou de ser gravado.
 
@@ -198,7 +198,7 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 - [x] OLED de status no ESP A ([tasks.md](docs/tasks.md), passo 6)
 - [x] Tasks FreeRTOS no ESP A acionadas pelo INT ([tasks.md](docs/tasks.md))
 - [x] ESP-NOW A → B com detecção de perda de pacotes ([radio.md](docs/radio.md))
-- [ ] ESP B: horizonte no TFT, OLED, encoder e alarmes
+- [ ] ESP B: horizonte no TFT, OLED, encoder e alarmes (OLED, encoder e alarmes feitos; TFT na bancada)
 - [ ] ESP B: AP Wi-Fi, página web e WebSocket; comandos com confirmação (ACK)
 - [ ] Cliente Python e métricas (jitter, perda e latência)
 

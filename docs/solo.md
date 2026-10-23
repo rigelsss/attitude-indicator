@@ -22,7 +22,7 @@ Plano aprovado em 23/10/2026.
   - não há DMA: a TFT_eSPI só usa DMA com sprites de 16 bits. **Medido no passo 0:** o envio leva 28,3 ms (a conversão de 8 para 16 bits soma ~5 ms aos 23,4 ms de uma tela cheia), ~34,7 quadros/s no máximo. Sem DMA, a task que envia fica ocupada durante a transferência, então **a estimativa** é de ~71 % do núcleo 1 a 25 quadros/s e ~57 % a 20 (a duração do envio não é exatamente o tempo de processador; o passo 6 mede). A `link_task` tem prioridade maior, então **a expectativa** é que a recepção não seja afetada, a validar na bancada integrada (passo 6: fila cheia e intervalos no `r` do B). O passo 6 também decide entre 25 e 20 quadros/s;
   - alocar o sprite no início do boot, antes que o heap se fragmente (com o Wi-Fi, o maior bloco livre é de 107 kB);
   - se faltar folga: menos quadros/s, 4 bits com paleta (28,8 kB) ou faixas de 16 bits com DMA. A troca fica restrita à `display_task`.
-- **Meta de 25 quadros/s** no TFT.
+- **25 quadros/s no TFT, decidido em 23/10/2026** pela bancada do passo 5 ([hardware.md](hardware.md), "Horizonte no TFT"): maior quadro de 30–32 ms (período de 40 ms) e recepção sem mudança (`fila cheia 0`, intervalos e atraso como antes). Os 20 quadros/s só fariam sentido se a recepção sofresse.
 - **O OLED numa task própria, de baixa prioridade:** um quadro de 128×64 leva **32,7 ms** a 400 kHz (medido no B; no A, 18 ms para 128×32) e derrubaria a taxa do horizonte. A 5 Hz, as chamadas de atualização somam ~164 ms por segundo. Isso não equivale necessariamente a 16 % de CPU, pois inclui a espera pela transferência I2C; o uso efetivo será verificado na bancada integrada.
 - **O atraso dos pacotes vem antes do TFT** (pendência da semana 3, [radio.md](radio.md)). O TFT precisa saber se o dado está velho.
 
@@ -170,3 +170,23 @@ Pendência da semana 3 ([radio.md](radio.md), "Passo 5"): com o link ruim, os pa
   - **OLED, página 2:** a linha do intervalo virou `int 12/20/28 at 3` (mín/médio/máx do intervalo; "at" = atraso do último pacote, em ms). O atraso sempre aparece inteiro: se a linha não couber, o intervalo vira mín-máx (`int 100-400 at 412`).
 - **Regravar os dois:** o A (pela USB, com o B desconectado) e o B.
 - **Bancada** ([hardware.md](hardware.md), "Atraso dos pacotes"): sem o B, o A envia ~29/s e pula ~21/s, com 0 erros de envio (antes, ~10/s). No trajeto até a varanda, o **atraso máximo foi de 76 ms** (antes, ~1 s), sem rajadas longas e sem `DADO ATRASADO`.
+
+## Passo 5: horizonte no TFT
+
+`lib/pfd_geometry` (testes `native`) e `src/tasks/display_task.cpp` (núcleo 1, prioridade 2, abaixo da `link_task`). Decisões de 23/10/2026.
+
+- **Layout** (aprovado "por enquanto"): céu e terra com o horizonte branco, uma faixa cheia de 3 px; escala de pitch a **4 px/°** (±30° visíveis), traço a cada 5° e número a cada 10°, desenhada até ±25° do pitch atual; **escala de roll fixa** em cima (0, ±10, ±20, ±30, ±45, ±60) com o **ponteiro do lado do céu** (estilo Boeing: com roll à direita, ele vai para a esquerda); avião fixo amarelo no centro; **proa** embaixo (`095`, `095~` só pelo giroscópio, `---`; rótulo MAG); **sem altitude** (retirada na bancada de 23/10/2026: fica só no OLED); ponto do link no canto (verde com dado atual, vermelho sem).
+- **Sinais** (testes de geometria): roll à direita gira o horizonte no sentido anti-horário (lado esquerdo desce); nariz para cima desce o horizonte; roll de 90° deixa a terra à direita; em dorso, a terra fica em cima.
+- **Estado visual em `lib/pfd_state`** (testes `native`, revisão de 23/10/2026): a escolha entre horizonte e bandeira, o motivo, a marca de degradada e a validade da proa saíram da `display_task` para uma função pura. **A proa só vale com a atitude mostrada:** um pacote incoerente (roll NaN com `VAL_ATT` e `VAL_HDG` ligadas) mostrava o X vermelho com a proa numérica; agora mostra `---`.
+- **Bandeira de falha:** sem dado atual (a mesma regra do alarme e do OLED, `linkSnapshot`) ou com `VAL_ATT` desligada, a atitude some: fundo preto, **X vermelho** de canto a canto, `ATT` em vermelho e o motivo (`SEM SINAL`, `LINK PERDIDO`, `DADO ATRASADO`, `ATT INVALIDA`). A caixa de proa continua, com `---`.
+- **Alarmes no TFT, com os termos da aviação:** `BANK ANGLE` em âmbar (aviso, > 35°) e `ATTITUDE` em vermelho (alarme de atitude anormal). `ATT DEGRADADA` em âmbar com a `VAL_ATT_DEGRADED`.
+- **Linhas suavizadas** (bancada de 23/10/2026): com a caixa a −1,4° de roll na mesa, os traços de 60 px da escala de pitch apareciam quebrados por um degrau de 1 px no meio, e o horizonte de 2 px (duas linhas deslocadas) tinha degraus desencontrados. Agora os traços das escalas têm 2 px, com o `drawWideLine` da TFT_eSPI, que mistura a borda com o fundo lido do sprite (no RGB332 há poucos tons intermediários, então a suavização é discreta). O horizonte é uma faixa cheia de 3 px (dois triângulos), com as bordas paralelas e **sem** suavização: suavizado, ele levou o maior quadro a 40–42 ms com a caixa inclinada (24 quadros/s), contra 38 ms parada e 30–32 ms antes da suavização.
+- **Cores** escolhidas no RGB332 e convertidas com o `color8to16` da TFT_eSPI, para cada cor ser representada exatamente no sprite de 8 bits. Fontes de bitmap (1, 2 e 4).
+- **O sprite é alocado no `setup()`, antes do Wi-Fi** (`displayInit`), com o heap ainda sem fragmentar; sem memória, o TFT mostra `SEM MEMORIA PARA O SPRITE`, e o resto do firmware segue.
+- **Ritmo:** `DISPLAY_FPS` = 25 pelo próprio relógio (`vTaskDelayUntil`). O `c` mostra quadros/s, desenho, envio, maior quadro e quadros acima do período; o `r` mostra os quadros/s e o maior quadro, para o passo 6 comparar a recepção com o TFT ligado.
+- **Consulta única do estado do link** (`linkSnapshot`, na `link_task`): o alarme, o OLED e o TFT usam a mesma função para decidir se há dado atual (timeout de 500 ms e idade total acima de 250 ms), em vez de três cópias da conta.
+- **`TFT_BL` saiu do `platformio.ini`:** o BLK está no 3V3, e a biblioteca ligava o GPIO 4 à toa.
+
+## Passo 6: bancada integrada
+
+Coberto pela rodada de desempenho do passo 5 ([hardware.md](hardware.md), "Horizonte no TFT"): quadros/s, tempos de quadro, recepção com o TFT ligado e alarmes com a caixa inclinada. **Decisão:** ficar com 25 quadros/s (item 1 da revisão de 15/10, sprite e heap, fechado). Opcional: uma rodada de distância com o TFT ligado, para ver `DADO ATRASADO` e `LINK PERDIDO` na bandeira em uso real.

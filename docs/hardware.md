@@ -1282,6 +1282,28 @@ Passo 3 da semana 4 ([solo.md](solo.md), "Passo 3"). Log `firmware/ground/logs/2
 - **`c`:** `oled: presente | página 2/2 | último quadro 36 572 us | quadros 749`. O quadro, medido dentro da task de prioridade 1, inclui as interrupções pelas tasks de prioridade maior e pelo Wi-Fi; no diagnóstico, sozinho, foram 32,7 ms. Nenhum `[oled] AUSENTE`.
 - **Três linhas embaralhadas pela USB**, de novo: o clique do encoder, um `terminou` e o cabeçalho do `c` perderam o começo, mas o resto do texto ficou legível.
 
+### Horizonte no TFT (23/10/2026)
+
+Passo 5 da semana 4 ([solo.md](solo.md), "Passo 5"). Conferido a olho na primeira gravação: sentidos do roll e do pitch, ponteiro de roll, bandeira de falha (`SEM SINAL`, `DADO ATRASADO`, `LINK PERDIDO`) e `BANK ANGLE` / `ATTITUDE`, tudo como previsto. A altitude foi retirada do TFT depois dessa conferência (fica no OLED).
+
+Desempenho (log `firmware/ground/logs/261023-190255`, carimbo `2026-10-23 18:58:47`, sem a altitude): ~30 s com a caixa parada e ~30 s mexendo, com alarmes de bank e de pitch.
+
+- **Sprite:** alocado no boot, antes do Wi-Fi, com o maior bloco livre em 110 580 B.
+- **TFT:** **25 quadros/s** em 50 das 51 janelas (24 numa); **maior quadro de 30 a 32 ms**, abaixo do período de 40 ms.
+- **Recepção com o TFT ligado:** 50–51 rec/s, `fila cheia 0` em todas as janelas, intervalo entre chegadas como antes do TFT (~9–15 / ~27–34 ms) e atraso máximo de 24 ms. **4 perdidos em 3 009 (0,13 %)**, todos em janelas com a caixa sendo mexida na mão; nas janelas com a caixa parada, 0.
+- **Alarmes:** aviso aos ±35,3–35,8°, alarme de bank aos +45,1–45,6°, de pitch aos +25,1–25,2° e −10,1–10,4°, com as saídas pela histerese.
+
+**Linhas suavizadas** (logs `261023-195522`, carimbo `19:52:31`, e `261023-200144`, carimbo `19:59:21`; caixa parada e depois inclinada 30–45°):
+
+| Versão | Maior quadro, parada | Maior quadro, inclinada | Quadros/s |
+|---|---|---|---|
+| Sem suavização (19:02) | 30–32 ms | — | 25 |
+| Horizonte e traços suavizados | 38 ms | **40–42 ms** | 24 em várias janelas |
+| Só os traços suavizados; horizonte em faixa cheia | 36–38 ms | 36–39 ms | 25 (24 numa janela) |
+
+- A aparência ficou boa nas duas versões suavizadas. O horizonte suavizado estourava o período de 40 ms com a caixa inclinada; a versão final fica dentro, mas com **1 a 4 ms de folga**.
+- Recepção sem mudança nas três: `fila cheia 0` em todas as janelas.
+
 ### Atraso dos pacotes: envio em voo no A e atraso estimado no B (23/10/2026)
 
 Passo 4 da semana 4 ([solo.md](solo.md), "Passo 4"). A com carimbo `2026-10-23 18:09:08`; B com `18:12:42`.

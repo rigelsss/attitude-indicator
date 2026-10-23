@@ -7,7 +7,6 @@
 #include "alarm_task.h"
 #include "config.h"
 #include "input_task.h"
-#include "delay_estimator.h"
 #include "link_task.h"
 #include "oled_view.h"
 
@@ -42,15 +41,14 @@ static bool tryStart(bool wireStarted) {
 
 static void gather(OledInputs &in) {
     memset(&in, 0, sizeof(in));
-    RxItem last;
-    in.everLinked = linkLatestPacket(last);
+    // A regra única de "dado atual" (link_task), a mesma do alarme e do TFT
+    const LinkSnapshot snap = linkSnapshot((uint64_t)esp_timer_get_time());
+    in.everLinked = snap.everLinked;
     if (in.everLinked) {
-        in.pkt = last.pkt;
-        const uint64_t nowUs = (uint64_t)esp_timer_get_time();
-        const uint64_t ageUs = nowUs > last.arrivalUs ? nowUs - last.arrivalUs : 0;
-        in.linkOk = ageUs <= (uint64_t)LINK_TIMEOUT_MS * 1000;   // a mesma regra do timeout da link_task
-        in.delayMs = last.delayMs;
-        in.dataLate = dataAgeMs(last.delayMs, ageUs / 1000) > LINK_STALE_DELAY_MS;   // a mesma regra do alarme
+        in.pkt = snap.item.pkt;
+        in.linkOk = snap.linkOk;
+        in.delayMs = snap.item.delayMs;
+        in.dataLate = snap.dataLate;
     }
     LinkReport r;
     if (linkLatestReport(r)) {

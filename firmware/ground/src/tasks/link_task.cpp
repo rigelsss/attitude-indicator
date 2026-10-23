@@ -91,6 +91,18 @@ bool linkTaskStart() {
                                    LINK_TASK_CORE) == pdPASS;
 }
 
+LinkSnapshot linkSnapshot(uint64_t nowUs) {
+    LinkSnapshot s = {};
+    s.everLinked = linkLatestPacket(s.item);
+    if (s.everLinked) {
+        const uint64_t ageUs = nowUs > s.item.arrivalUs ? nowUs - s.item.arrivalUs : 0;
+        s.ageMs = ageUs > (uint64_t)UINT32_MAX * 1000 ? UINT32_MAX : (uint32_t)(ageUs / 1000);
+        s.linkOk = ageUs <= (uint64_t)LINK_TIMEOUT_MS * 1000;
+        s.dataLate = dataAgeMs(s.item.delayMs, s.ageMs) > LINK_STALE_DELAY_MS;
+    }
+    return s;
+}
+
 bool linkLatestPacket(RxItem &out) { return s_latestPkt != nullptr && xQueuePeek(s_latestPkt, &out, 0) == pdTRUE; }
 
 bool linkLatestReport(LinkReport &out) {

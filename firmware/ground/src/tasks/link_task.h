@@ -31,8 +31,23 @@ struct LinkEventMsg {
     uint32_t   atMs;   // millis() do B
 };
 
+// Último pacote aceito e o estado do dado num instante: a regra única de "dado atual", usada pelo alarme, pelo
+// OLED e pelo TFT
+struct LinkSnapshot {
+    bool     everLinked;   // já chegou um pacote aceito (item vale)
+    bool     linkOk;       // idade desde a chegada até LINK_TIMEOUT_MS (senão, link perdido)
+    bool     dataLate;     // idade estimada do dado (atraso na chegada + tempo desde a chegada) acima de
+                           // LINK_STALE_DELAY_MS
+    uint32_t ageMs;        // tempo desde a chegada
+    RxItem   item;
+    bool current() const { return everLinked && linkOk && !dataLate; }
+};
+
 // Cria as filas e a task. false sem memória
 bool linkTaskStart();
+// Estado no instante nowUs (esp_timer_get_time()). A chegada é carimbada na task do Wi-Fi e pode ser um pouco
+// posterior a nowUs: a idade fica em zero
+LinkSnapshot linkSnapshot(uint64_t nowUs);
 // Última cópia publicada. false se ainda não há
 bool linkLatestPacket(RxItem &out);
 bool linkLatestReport(LinkReport &out);

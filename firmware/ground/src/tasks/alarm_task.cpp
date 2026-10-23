@@ -4,7 +4,6 @@
 #include <atomic>
 #include <esp_timer.h>
 #include "config.h"
-#include "delay_estimator.h"
 #include "link_task.h"
 
 static QueueHandle_t s_ack = nullptr, s_events = nullptr, s_status = nullptr;
@@ -41,18 +40,15 @@ static void alarmTask(void *) {
     AlarmKind lastKind = AlarmKind::None;
     TickType_t wake = xTaskGetTickCount();
     for (;;) {
-        RxItem last;
-        const bool have = linkLatestPacket(last);
+        // A regra única de "dado atual" (link_task), a mesma do OLED e do TFT
+        const LinkSnapshot snap = linkSnapshot((uint64_t)esp_timer_get_time());
+        const bool have = snap.everLinked;
+        const RxItem &last = snap.item;
         AlarmInputs in = {};
         in.everLinked = have;
         if (have) {
-            // Mesma regra do timeout da link_task: idade acima de LINK_TIMEOUT_MS = link perdido. A chegada é
-            // carimbada na task do Wi-Fi e pode ser um pouco posterior a este instante
-            const uint64_t nowUs = (uint64_t)esp_timer_get_time();
-            const uint64_t ageUs = nowUs > last.arrivalUs ? nowUs - last.arrivalUs : 0;
-            in.linkOk = ageUs <= (uint64_t)LINK_TIMEOUT_MS * 1000;
-            // Idade total do dado (atraso na chegada + tempo desde a chegada): a mesma regra do OLED
-            in.dataLate = dataAgeMs(last.delayMs, ageUs / 1000) > LINK_STALE_DELAY_MS;
+            in.linkOk = snap.linkOk;
+            in.dataLate = snap.dataLate;
             in.attValid = (last.pkt.valid & VAL_ATT) != 0;
             in.calibrating = (last.pkt.status & ST_CALIBRATING) != 0;
             in.rollDeg = last.pkt.roll;

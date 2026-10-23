@@ -65,6 +65,16 @@ Itens de uma revisão externa (numeração dela), distribuídos pela etapa em qu
 - **Gravações na NVS.** Acontecem só em eventos de calibração (`g`, `6`, `z` e o bias do boot), não periodicamente. Durante uma escrita na flash, o cache fica desligado nos dois núcleos, então mover a gravação para uma task de baixa prioridade não evita a pausa da amostragem. A lacuna é aceita: se passar de `FUSION_MAX_DT_MS`, a fusão reinicia como em qualquer lacuna.
 - **`CMD_ZERO_ATTITUDE` continua no contrato.** Ele é o zero operacional, de um passo, e não substitui a calibração de montagem (`z`), feita em duas posições ([fusao.md](fusao.md)). Implementação na etapa dos comandos (semana 5).
 
+## Antes de fechar a caixa do ESP A
+
+Conferências a fazer com a fiação já presa, antes de fechar a caixa (depois dela, mexer no módulo exige abrir tudo de novo):
+
+- **Montagem do MPU depois de prender a fiação.** Em 23/10/2026, depois de refazer e prender os fios, a atitude parada ficou em roll +0,65° e pitch −0,59°. Na véspera, tinha sido −1,42° e +0,07° ([hardware.md](hardware.md), "SCL aberto depois de prender a fiação"). Ainda não se sabe se a caixa só mudou de lugar na mesa ou se o módulo se mexeu ao prender os fios. Conferência, pelo mesmo método do `z` ([fusao.md](fusao.md)):
+  1. Encoste o nariz da caixa na referência do `z` e anote o roll e o pitch do `a`.
+  2. Gire a caixa 180° e encoste a cauda na mesma referência. Anote o roll e o pitch de novo.
+  3. Com a correção de montagem certa, as duas medidas ficam opostas (± a inclinação da mesa), e a média delas fica perto de 0°.
+  4. Se a média passar de ~0,5° em roll ou em pitch (o dobro da repetibilidade do assento, 0,26°, medida em 13/10), o módulo se mexeu: refaça o `z`. Se ficar abaixo, a montagem gravada continua valendo.
+
 ## Opcionais (só se sobrar tempo)
 - Indicador de curva (gz) e variômetro (derivada da altitude) no PFD
 - Gravação de "caixa-preta" na flash do A

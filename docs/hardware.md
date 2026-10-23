@@ -1167,6 +1167,23 @@ Feito na conferência do passo 6b da refatoração (log `261020-185947`, carimbo
 - **Diferença para o `z` de 14/10** (módulo em −3,28° / +2,52°, mesa em −0,95° / −0,23°): +0,62° em roll e −0,58° em pitch. Isso passa da repetibilidade do assento medida em 13/10 (0,26°). A mesa também mudou, então a caixa estava em outro ponto da mesa. A causa provável é o assento do fundo de papelão ou o módulo ter se acomodado depois de uma semana de manuseio. Não indica erro no cálculo, que fecha na conferência acima. A montagem será refeita no modelo final.
 - **Medida recusada:** na segunda posição, duas medidas foram recusadas por `caixa em movimento` (20,9 e 30,6 °/s), e o firmware pediu a mesma posição de novo.
 
+### SCL aberto depois de prender a fiação (23/10/2026)
+
+Depois de refazer e prender toda a fiação, os três sensores sumiram juntos, enquanto o OLED (barramento 1) continuou funcionando.
+
+| Passo | Log | Resultado |
+|---|---|---|
+| Boot do `aircraft` | `261023-012804` (carimbo `2026-10-22 10:37:18`) | `MPU6050: sem resposta no endereço I2C (WHO_AM_I=0x00)` a cada 2 s, com `i2cWriteReadNonStop returned Error -1`. OLED e rádio iniciaram normalmente. No começo, ~40 reinícios seguidos e texto embaralhado na serial, provavelmente da USB encaixando com mau contato (não se repetiu nos boots seguintes) |
+| `i2cscan`, scan e `s` a 100 kHz | `261023-012901` | Barramento 0: `0 dispositivo(s)`. Barramento 1: pull-ups `SDA sim, SCL sim` e `0x3C OLED OK` |
+| Tensões com a placa ligada | — | VCC dos três módulos em 3,3 V e GND em 0 V: alimentação descartada |
+| Continuidade (USB desconectada) | — | GPIO 21 com o SDA dos três: bipa. **GPIO 22 com o SCL dos três: não bipa.** A falha nos três ao mesmo tempo aponta para o trecho comum, entre o pino 22 e a divisão para os módulos. Sem clock, nenhum sensor responde |
+| Durante o conserto | `261023-014143` | Os três sensores voltaram, mas o OLED sumiu (`pull-ups externos: SDA NÃO`, `0x3C AUSENTE`): o fio do GPIO 32 se soltou ao mexer perto do 22. Voltou no log seguinte (`261023-014224`) |
+| `i2cscan`, 100 e 400 kHz, `t` mexendo nos fios do 22 e do 32 | `261023-014339` | Os quatro dispositivos `OK` nas duas frequências; `t`: **10 453 leituras, 0 falhas, 0 suspeitas** (2 091/s), contagem próxima à de 12/10 (10 769 a 400 kHz) |
+| Boot do `aircraft` e `c` | `261023-014616` (carimbo `2026-10-23 01:45:03`) | MPU, BMP280 e HMC5883L configurados, sem `[E]`; baro e mag `ok`; zero da altitude e bias do giroscópio aceitos; INT sem perdas; `valid = 0x000D` |
+
+- **Diagnóstico:** um sintoma em todos os módulos de um barramento indica um fio comum (SDA, SCL, VCC ou GND). O `Error -1` (NACK) com o barramento vazio combina com uma linha aberta, e não com uma linha presa em 0.
+- **Lição:** depois de mexer na fiação, conferir a continuidade **do pino do ESP até o pino de cada módulo** e rodar o `t` mexendo nos fios. Isso também vale para o barramento 1: o fio do OLED se soltou durante o próprio conserto.
+
 ## Orientação de montagem do MPU6050
 
 ### Montagem final (14/10/2026, em uso)

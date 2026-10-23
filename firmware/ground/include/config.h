@@ -32,6 +32,28 @@
 #define HTTP_PORT        80
 #define WS_PORT          81
 #define WS_RATE_HZ       30
+#define ESPNOW_CHANNEL   AP_CHANNEL       // o ESP-NOW usa o canal do AP (WIFI_AP_STA; docs/radio.md)
+
+// ---------- Recepção do ESP-NOW e link (docs/radio.md, ESP B) ----------
+#define RX_QUEUE_LEN     16       // pacotes entre o callback do ESP-NOW e a link_task (~320 ms a 50 Hz)
+#define LINK_RESYNC_GAP  500      // salto do seq acima disto (10 s a 50 Hz): ressincroniza sem contar perdas
+#define LINK_LATE_MAX_PKTS 100    // seq até isto atrás (2 s a 50 Hz) e t_ms até LINK_LATE_MAX_MS atrás:
+#define LINK_LATE_MAX_MS   2000   // pacote atrasado, descartado (e não reinício do A). Rajadas de ~1 s na bancada
+#define LINK_REPORT_MS   1000     // janela do resumo (r)
+#define LINK_EVENT_QUEUE_LEN 8    // eventos do link (perdido, restabelecido, ressincronizado) para a serial
+
+// ---------- Tasks ----------
+#define LINK_TASK_CORE          1
+#define LINK_TASK_PRIO          3
+#define LINK_TASK_STACK         4096
+#define LINK_TASK_WAIT_MS       10     // espera máxima por um pacote: o timeout é conferido a cada volta
+#define SERIAL_TASK_CORE        0
+#define SERIAL_TASK_PRIO        1
+#define SERIAL_TASK_STACK       4096
+#define SERIAL_TASK_PERIOD_MS   10
+#define SERIAL_TX_BUFFER_BYTES  4096   // buffer de transmissão da serial: as impressões não esperam a UART
+#define SERIAL_START_DELAY_MS   500    // espera depois do Serial.begin() para o monitor reabrir após o reset
+#define STREAM_PKT_PERIOD_MS    100    // fluxo a: uma linha a cada 100 ms (10 Hz)
 
 // ---------- Proa ----------
 // Declinação magnética na bancada (WMM2025, João Pessoa, 13/10/2026; docs/magnetometro.md), negativa

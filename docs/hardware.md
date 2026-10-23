@@ -1274,6 +1274,14 @@ Passo 2 da semana 4 ([solo.md](solo.md), "Passo 2"). Log `firmware/ground/logs/2
 - **Sem clique no sentido errado**, mesmo nas rajadas rápidas.
 - **A fila da ISR encheu uma vez** (32 estados). Um repique longo nas bordas pode gerar dezenas de interrupções antes de a `input_task` esvaziar a fila. Os estados perdidos podem fazer perder um clique e, dependendo de quais se perdem, **inverter o sentido de um clique** (revisão de 23/10/2026; não aconteceu neste log). **Tratamento:** o `ENC_QUEUE_LEN` subiu de 32 para 64, para a lacuna ser rara, e a ISR passou a marcar a lacuna na fila, onde a task ressincroniza ([solo.md](solo.md), "Passo 2").
 
+### OLED do B no firmware (23/10/2026)
+
+Passo 3 da semana 4 ([solo.md](solo.md), "Passo 3"). Log `firmware/ground/logs/261023-174022`, carimbo `2026-10-23 17:25:24`. A tela foi conferida a olho em cada passo, e tudo apareceu no lugar: tela de boot, `SEM SINAL` com `---` antes de ligar o A, valores com o A ligado, roll e pitch acompanhando a caixa, troca para a página 2 no clique, `ALARME AVISO BANK` com a caixa além de 35°, e `LINK PERDIDO` com `---` durante o EN do A.
+
+- **Log:** `estabelecido` aos 44,6 s (o A ligado depois); `AVISO DE BANK` aos +35,0°; `LINK PERDIDO` 3 ms depois do `[link] PERDIDO`, e `terminou` 18 ms depois do `restabelecido`.
+- **`c`:** `oled: presente | página 2/2 | último quadro 36 572 us | quadros 749`. O quadro, medido dentro da task de prioridade 1, inclui as interrupções pelas tasks de prioridade maior e pelo Wi-Fi; no diagnóstico, sozinho, foram 32,7 ms. Nenhum `[oled] AUSENTE`.
+- **Três linhas embaralhadas pela USB**, de novo: o clique do encoder, um `terminou` e o cabeçalho do `c` perderam o começo, mas o resto do texto ficou legível.
+
 ### ESP-NOW do A para o B, com o B recebendo (23/10/2026)
 
 Passo 5 da semana 3 ([radio.md](radio.md), "Passo 5"). O A ficou no power bank e o B no USB do PC. Logs em `firmware/ground/logs`: `261023-060428` e `261023-061939`.

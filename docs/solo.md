@@ -123,3 +123,31 @@ Os resultados vão para o [hardware.md](hardware.md).
   - **curto** (solto antes de 1 s): reconhece o alarme, o mesmo caminho da tecla `k`. Com a fila de reconhecimento cheia, a serial avisa `botão curto descartado`;
   - **longo** (`BTN_LONG_MS` = 1 s, avisado ainda com o botão apertado, sem curto ao soltar): reservado para os comandos da semana 5. Um segundo, e não os 600 ms do diagnóstico, para os comandos de calibração não dispararem sem querer.
 - **Console:** `[enc] clique horário, página 2/2`, `[enc] botão curto: reconhecer o alarme`, `[enc] pressão longa (reservada …)`. O `c` mostra a página, os cliques de cada sentido, as transições inválidas, a fila da ISR cheia (com as lacunas tratadas) e os eventos descartados.
+
+## Passo 3: OLED
+
+`lib/oled_view` (testes `native`) e `src/tasks/oled_task.cpp` (núcleo 0, prioridade 1). A task é a **única dona do `Wire`**: o OLED é o único dispositivo no I2C do B.
+
+- **Duas páginas**, trocadas pelo giro do encoder. Fonte 6×10: 6 linhas de 21 caracteres, só ASCII.
+
+  ```
+  DADOS             1/2      LINK OK 50/s      2/2
+  ROLL +12.3 PIT  -4.5      perd 1 0.02% q0
+  PROA 095 MAG              interv 12/20/28 ms
+  ALT  +0.25 m              MPU ok BAR ok MAG ok
+  1009.3hPa  25.9C          cal: - loop 180us
+  CURVA   +3.2 g/s          ALARME nenhum
+  ```
+
+- **Regras de exibição:**
+  - sem link (antes do primeiro pacote, ou idade acima de `LINK_TIMEOUT_MS`): o título vira uma faixa em vídeo inverso, `SEM SINAL` ou `LINK PERDIDO`, e os valores da página 1 vão para `---`. A página 2 mantém as estatísticas e a saúde do A do último pacote (`?` antes do primeiro);
+  - `VAL_ATT` desligada, ou ângulo não finito: roll, pitch e curva em `---`. `VAL_HDG`: proa. `VAL_ALT`: altitude **e também pressão e temperatura** (revisão de 23/10/2026). O `ST_BARO_OK` só diz que o sensor responde; a `VAL_ALT` inclui a idade da leitura, e uma pressão parada não fica na tela. Consequência aceita: pressão e temperatura só aparecem depois do zero da altitude, ~4 s depois do boot do A. Mostrá-las antes exigiria uma flag de leitura recente no contrato;
+  - `VAL_ATT_DEGRADED` (giroscópio saturou, correção se recuperando): o título da página 1 vira `ATT DEGRADADA`, para a atitude não parecer a normal;
+  - `VAL_HDG_GYRO_ONLY`: proa com `~` (`095~MAG`), porque segue só pelo giroscópio e pode derivar;
+  - `ST_CALIBRATING`: `cal: SIM` na página 2.
+- **Proa magnética (MAG)**, como nos instrumentos de cabine (decisão de 23/10/2026). `OLED_HEADING_TRUE 1` mostra a verdadeira (VERD = magnética + `MAG_DECLINATION_DEG`, −20,7° na bancada).
+- **Linhas compactas para caber com os valores reais:** as perdas como `perd 1049 17.0% q11` (a rodada de distância de 23/10 deu 1 049 perdidos, 17 % e 11 quedas) e a calibração como `cal: SIM` (com `loop 65535us`, `EM CURSO` passaria de 21 colunas). Os testes conferem as linhas com os valores extremos.
+- **Atualização:** a task dá uma volta a cada 50 ms e redesenha a 5 Hz (`OLED_RATE_HZ`) ou **logo que a página muda**. As chamadas de atualização somam ~164 ms por segundo.
+- **Presença:** o endereço `0x3C` é conferido antes de iniciar e antes de cada quadro (o `sendBuffer` da U8g2 não informa erro). Ausente, a task tenta iniciar de novo a cada `OLED_RETRY_MS` (5 s). A serial avisa `[oled] AUSENTE` e `[oled] presente`; o `c` mostra a página, o último quadro e o total de quadros.
+- **Tela de boot:** `Horizonte - ESP B` / `aguardando o A`, por 1 s.
+- **No passo 4**, o atraso estimado do dado entra na página 2.

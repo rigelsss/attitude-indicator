@@ -35,6 +35,8 @@ struct AlarmInputs {
 // Em ordem crescente de prioridade
 enum class AlarmKind : uint8_t { None, BankCaution, AttitudeWarning, AttInvalid, LinkLost };
 const char *alarmKindText(AlarmKind k);
+// Versão curta, só ASCII, até 13 caracteres (OLED: "ALARME " + texto cabe em 21)
+const char *alarmKindShort(AlarmKind k);
 
 struct AlarmOutput {
     AlarmKind kind;

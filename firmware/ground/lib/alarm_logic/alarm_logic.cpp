@@ -13,6 +13,17 @@ const char *alarmKindText(AlarmKind k) {
     return "?";
 }
 
+const char *alarmKindShort(AlarmKind k) {
+    switch (k) {
+    case AlarmKind::None:            return "nenhum";
+    case AlarmKind::BankCaution:     return "AVISO BANK";
+    case AlarmKind::AttitudeWarning: return "ATIT ANORMAL";
+    case AlarmKind::AttInvalid:      return "ATIT INVALIDA";
+    case AlarmKind::LinkLost:        return "LINK PERDIDO";
+    }
+    return "?";
+}
+
 AlarmLogic::AlarmLogic(const AlarmConfig &cfg) : cfg_(cfg) {}
 
 AlarmOutput AlarmLogic::update(const AlarmInputs &in, uint32_t nowMs) {

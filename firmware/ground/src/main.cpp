@@ -6,17 +6,20 @@
 //                aviso de bank) e LEDs de alarme e do link (docs/solo.md, passo 1)
 //   input_task   (prio 2, núcleo 0) — encoder: ISR em IRAM enfileira os estados; cliques trocam a página do OLED,
 //                botão curto reconhece o alarme, longo reservado (docs/solo.md, passo 2)
+//   oled_task    (prio 1, núcleo 0) — única dona do Wire: OLED com as páginas de dados e de link a 5 Hz
+//                (docs/solo.md, passo 3)
 //   serial_task  (prio 1, núcleo 0) — única dona do Serial depois do boot: teclas e impressão
 // Serial: c = estado | r = resumo por segundo (começa ligado) | a = fluxo de pacotes (10 Hz) | k = reconhecer o
 // alarme.
-// Previstas (semanas 4 e 5): display_task (TFT), oled_task e web_task (HTTP + WebSocket), lendo as caixas de
-// correio da link_task e a página da input_task.
+// Previstas (semanas 4 e 5): display_task (TFT) e web_task (HTTP + WebSocket), lendo as caixas de correio da
+// link_task.
 #include <Arduino.h>
 #include "config.h"
 #include "telemetry.h"
 #include "tasks/alarm_task.h"
 #include "tasks/input_task.h"
 #include "tasks/link_task.h"
+#include "tasks/oled_task.h"
 #include "tasks/radio_rx.h"
 #include "tasks/serial_task.h"
 
@@ -52,7 +55,7 @@ void setup() {
     Serial.begin(115200);
     delay(SERIAL_START_DELAY_MS);   // tempo para o monitor reabrir depois do reset
     // Até a serial_task começar, só o setup() escreve no Serial
-    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, alarme, encoder e serial)\n",
+    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, alarme, encoder, OLED e serial)\n",
                   BUILD_STAMP, (unsigned)sizeof(TelemetryPacket), TELEMETRY_VERSION);
     Serial.printf("[B] reinício anterior: %s\n", resetReasonText(esp_reset_reason()));
     // Sem o rádio, a serial segue: o c mostra "rádio: DESLIGADO" e o r, "sem sinal"
@@ -62,6 +65,7 @@ void setup() {
     if (!alarmTaskStart()) Serial.println("[B] ERRO: sem memória para a alarm_task; seguindo sem alarmes");
     // Sem o encoder, o resto segue: a tecla k ainda reconhece o alarme
     if (!inputTaskStart()) Serial.println("[B] ERRO: encoder não iniciado (memória ou ISR); seguindo sem encoder");
+    if (!oledTaskStart()) Serial.println("[B] ERRO: sem memória para a oled_task; seguindo sem o OLED");
     if (!serialTaskStart()) fatal("[B] ERRO: sem memória para a serial_task; reiniciando em 1 s");
 }
 

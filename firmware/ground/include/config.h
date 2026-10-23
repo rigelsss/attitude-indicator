@@ -10,6 +10,11 @@
 #define PIN_I2C_SDA      21
 #define PIN_I2C_SCL      22
 #define ADDR_OLED_DATA   0x3C
+#define OLED_I2C_FREQ_HZ 400000   // quadro de 128x64 em 32,7 ms (hardware.md, 23/10/2026)
+#define OLED_RATE_HZ     5        // redesenho; a troca de página redesenha na hora
+#define OLED_RETRY_MS    5000     // OLED ausente: nova tentativa de iniciar
+#define OLED_BOOT_SCREEN_MS 1000  // tela de boot
+#define OLED_HEADING_TRUE 0       // 0: proa magnética (MAG), como nos instrumentos de cabine; 1: verdadeira (VERD)
 
 // ---------- Encoder KY-040 (interrupção) ----------
 #define PIN_ENC_CLK      32
@@ -80,6 +85,10 @@
 #define INPUT_TASK_STACK        3072
 #define INPUT_TASK_WAIT_MS      5      // espera máxima pela fila do encoder: o botão é lido nesse ritmo
 #define INPUT_EVENT_QUEUE_LEN   8      // eventos do encoder para a serial
+#define OLED_TASK_CORE          0
+#define OLED_TASK_PRIO          1
+#define OLED_TASK_STACK         4096
+#define OLED_TASK_PERIOD_MS     50     // volta da oled_task: confere a página e o tempo do redesenho
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1
 #define SERIAL_TASK_STACK       4096

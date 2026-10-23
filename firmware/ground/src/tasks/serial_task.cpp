@@ -6,6 +6,7 @@
 #include "alarm_task.h"
 #include "input_task.h"
 #include "link_task.h"
+#include "oled_task.h"
 #include "radio_rx.h"
 
 static uint32_t rxRefused(const RxCounters &c) { return c.badSize + c.badMagic + c.badVersion + c.badType; }
@@ -153,6 +154,15 @@ static void printState(bool streamR, bool streamA) {
                       (unsigned long)inputEventsDropped());
     else
         Serial.println("encoder: task não iniciada");
+    OledStatus ol;
+    if (!oledCurrent(ol))
+        Serial.println("oled: task não iniciada");
+    else if (ol.present)
+        Serial.printf("oled: presente | página %u/%d | último quadro %lu us | quadros %lu | proa %s\n", ol.page + 1,
+                      OLED_PAGES, (unsigned long)ol.frameUs, (unsigned long)ol.frames,
+                      OLED_HEADING_TRUE ? "verdadeira (VERD)" : "magnética (MAG)");
+    else
+        Serial.printf("oled: AUSENTE em 0x%02X (nova tentativa a cada %d ms)\n", ADDR_OLED_DATA, OLED_RETRY_MS);
     Serial.printf("fluxos: r %s, a %s | heap livre %u kB\n", streamR ? "ligado" : "desligado",
                   streamA ? "ligado" : "desligado", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024));
     Serial.println("----------------------------------------------");
@@ -167,6 +177,7 @@ static void serialTask(void *) {
     bool streamR = true;   // o resumo começa ligado: é o que a bancada do rádio acompanha
     bool streamA = false;
     uint32_t reportSeen = 0, droppedSeen = 0, alarmDroppedSeen = 0, inputDroppedSeen = 0;
+    int oledSeen = -1;   // presença do OLED já avisada: −1 ainda não lida, 0 ausente, 1 presente
     uint16_t lastSeqPrinted = 0;
     bool printedAny = false;
     TickType_t lastPkt = xTaskGetTickCount();
@@ -186,6 +197,12 @@ static void serialTask(void *) {
             Serial.printf("[alarme] %lu mudanças descartadas: fila de alarmes cheia (o c mostra o estado atual)\n",
                           (unsigned long)(alarmDropped - alarmDroppedSeen));
             alarmDroppedSeen = alarmDropped;
+        }
+        OledStatus ol;
+        if (oledCurrent(ol) && (oledSeen < 0 || ol.present != (oledSeen == 1))) {
+            if (oledSeen >= 0 || !ol.present)   // no boot, só avisa se faltar
+                Serial.printf("[oled] %s\n", ol.present ? "presente" : "AUSENTE: sem resposta em 0x3C");
+            oledSeen = ol.present ? 1 : 0;
         }
         InputEventMsg ie;
         while (inputEventReceive(ie)) printInputEvent(ie);

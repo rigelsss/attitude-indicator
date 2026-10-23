@@ -59,10 +59,11 @@ static void radioWindowLine(TextBuf &t, const RadioCounters &c, const RadioCount
         t.print("    radio: desligado\n");
         return;
     }
-    t.printf("    radio: %lu enviados/s | entregues %lu/s | falhas MAC %lu/s | erros de envio %lu | comandos aceitos %lu, "
-             "recusados %lu\n",
+    t.printf("    radio: %lu enviados/s | entregues %lu/s | falhas MAC %lu/s | pulados %lu/s | erros de envio %lu | "
+             "comandos aceitos %lu, recusados %lu\n",
              (unsigned long)(c.sent - p.sent), (unsigned long)(c.macOk - p.macOk), (unsigned long)(c.macFail - p.macFail),
-             (unsigned long)c.sendErrors, (unsigned long)c.cmdOk, (unsigned long)c.cmdBad);
+             (unsigned long)(c.skipped - p.skipped), (unsigned long)c.sendErrors, (unsigned long)c.cmdOk,
+             (unsigned long)c.cmdBad);
 }
 
 // Rádio no c: totais desde o boot
@@ -72,9 +73,12 @@ static void radioStatusLine(TextBuf &t, const RadioCounters &c) {
         return;
     }
     t.printf("  rádio: ESP-NOW ativo, canal %d, %d Hz | desde o boot: enviados %lu, entregues %lu, falhas MAC %lu, "
-             "erros de envio %lu | comandos aceitos %lu, recusados %lu\n",
+             "pulados %lu (em voo), sem callback %lu, ESP-NOW reiniciado %lu, callbacks inesperados %lu, erros de "
+             "envio %lu | comandos aceitos %lu, recusados %lu\n",
              ESPNOW_CHANNEL, TX_RATE_HZ, (unsigned long)c.sent, (unsigned long)c.macOk, (unsigned long)c.macFail,
-             (unsigned long)c.sendErrors, (unsigned long)c.cmdOk, (unsigned long)c.cmdBad);
+             (unsigned long)c.skipped, (unsigned long)c.inFlightTimeouts, (unsigned long)c.inFlightRecoveries,
+             (unsigned long)c.unexpectedCallbacks, (unsigned long)c.sendErrors, (unsigned long)c.cmdOk,
+             (unsigned long)c.cmdBad);
 }
 
 // OLED de status no c: tempo do quadro e ausências desde o boot

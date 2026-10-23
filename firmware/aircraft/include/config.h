@@ -94,6 +94,8 @@
 #ifndef RADIO_ENABLED
 #define RADIO_ENABLED           1      // 0 só no ambiente aircraft_noradio (A/B de tempo sem o Wi-Fi ligado)
 #endif
+#define RADIO_INFLIGHT_TIMEOUT_MS 100    // envio em voo sem callback por mais que isto: episódio contado (não libera)
+#define RADIO_INFLIGHT_STUCK_MS   1000   // preso por mais que isto: o ESP-NOW é reiniciado (não deveria ocorrer)
 #define RADIO_START_DELAY_MS    1000   // o Wi-Fi liga depois do boot impresso (o pico de corrente pode causar brownout)
 #define STATUS_TASK_CORE        0      // OLED no Wire1 (a ISR do I2C1 fica neste núcleo) e LED
 #define STATUS_TASK_PRIO        1

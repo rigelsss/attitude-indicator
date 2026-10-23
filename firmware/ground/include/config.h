@@ -15,10 +15,10 @@
 #define PIN_ENC_DT       33
 #define PIN_ENC_SW       25       // botão: confirmar / calibrar (pressão longa)
 
-// ---------- Alarmes ----------
-#define PIN_BUZZER       26       // buzzer ativo — usar transistor se corrente > 20 mA
-#define PIN_LED_LINK     27       // verde: link ESP-NOW ok
-#define PIN_LED_ALARM    13       // vermelho: inclinação excessiva / perda de link
+// ---------- Alarmes (docs/solo.md) ----------
+#define PIN_BUZZER       26       // buzzer ativo, ADIADO (sem transistor; usar um se a corrente passar de ~12 mA)
+#define PIN_LED_LINK     2        // LED azul da placa: link ESP-NOW (o verde externo no 27 saiu, 23/10/2026)
+#define PIN_LED_ALARM    13       // vermelho externo, 330 Ω: inclinação excessiva / perda de link
 
 // ---------- Limites de alarme ----------
 #define ALARM_BANK_DEG   45.0f
@@ -60,6 +60,15 @@
 // para oeste. O pacote traz a proa MAGNÉTICA; só a exibição (TFT e página, via "decl" no JSON) mostra a
 // verdadeira: proa verdadeira = magnética + declinação, com o rótulo MAG ou VERD
 #define MAG_DECLINATION_DEG  -20.7f
+
+// ---------- Diagnóstico do hardware (ambiente ground_diag, src/diag/) ----------
+#define DIAG_I2C_FREQ_HZ      100000   // scan do I2C
+#define DIAG_OLED_FREQ_HZ     400000   // OLED no teste o (a frequência prevista para o firmware)
+#define DIAG_ENC_PRINT_MS     100      // fluxo do encoder: no máximo uma linha a cada 100 ms, só quando muda
+#define DIAG_BTN_DEBOUNCE_MS  20       // botão do encoder: estado estável por este tempo
+#define DIAG_BTN_LONG_MS      600      // pressão longa a partir deste tempo
+#define DIAG_TFT_COLOR_MS     700      // teste t: tempo de cada cor cheia
+#define DIAG_SPRITE_FRAMES    20       // teste s: quadros enviados para a média do tempo
 
 // MAC da Placa A (avião)
 static const uint8_t PEER_MAC[6] = {0x1C, 0x69, 0x20, 0xA4, 0xE9, 0x44};

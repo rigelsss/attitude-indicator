@@ -8,7 +8,7 @@ on:
 
 jobs:
   testes-native:
-    name: Testes native (aircraft)
+    name: Testes native (aircraft e ground)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,8 +23,11 @@ jobs:
           key: pio-native-${{ hashFiles('firmware/*/platformio.ini') }}
       - name: Instalar o PlatformIO
         run: pip install platformio==6.2.0
-      - name: pio test -e native
+      - name: pio test -e native (aircraft)
         working-directory: firmware/aircraft
+        run: pio test -e native
+      - name: pio test -e native (ground)
+        working-directory: firmware/ground
         run: pio test -e native
 
   compilacao:

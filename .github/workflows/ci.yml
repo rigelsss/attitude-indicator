@@ -1,4 +1,4 @@
-# CI: testes de lógica pura (native) e compilação dos três ambientes de firmware a cada push e pull request.
+# CI: testes de lógica pura (native) e compilação dos ambientes de firmware a cada push e pull request.
 # Nada é gravado em placa: o check_board_mac.py só age antes de upload/uploadfs.
 name: CI
 
@@ -45,6 +45,8 @@ jobs:
             env: i2cscan
           - dir: firmware/ground
             env: ground
+          - dir: firmware/ground
+            env: ground_diag
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

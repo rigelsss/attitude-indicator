@@ -1,5 +1,6 @@
 // config.h — ESP B (estação de solo): pinagem e parâmetros
 #pragma once
+#include <stdint.h>   // uint8_t do PEER_MAC: o config.h não depende de quem o inclui antes
 
 // ---------- SPI (TFT ST7789) ----------
 // Pinos definidos em platformio.ini (build_flags do TFT_eSPI):
@@ -20,10 +21,25 @@
 #define PIN_LED_LINK     2        // LED azul da placa: link ESP-NOW (o verde externo no 27 saiu, 23/10/2026)
 #define PIN_LED_ALARM    13       // vermelho externo, 330 Ω: inclinação excessiva / perda de link
 
-// ---------- Limites de alarme ----------
-#define ALARM_BANK_DEG   45.0f
-#define ALARM_PITCH_DEG  25.0f
+// ---------- Limites de alarme (docs/solo.md, passo 1) ----------
+// Alarme (warning) = atitude anormal ("upset") pela definição do Airplane Upset Recovery Training Aid, também
+// usada pela FAA (AC 120-111): bank > 45°, pitch > +25° ou < −10°. Aviso (caution) = "BANK ANGLE" do EGPWS,
+// que em aeronaves como o 737 começa em 35°. Cada limite sai com ALARM_HYST_DEG a menos
+#define ALARM_BANK_CAUTION_DEG 35.0f
+#define ALARM_BANK_DEG         45.0f
+#define ALARM_PITCH_UP_DEG     25.0f
+#define ALARM_PITCH_DOWN_DEG   10.0f    // nariz para baixo (pitch < −10°)
+#define ALARM_HYST_DEG         3.0f
+#define ALARM_INVALID_DELAY_MS 1000     // atitude inválida (fora das calibrações) por mais que isto: alarme
 #define LINK_TIMEOUT_MS  500
+
+// Padrões do LED de alarme (o buzzer, quando ligado, segue o mesmo ritmo)
+#define ALARM_LINK_BLINK_MS     500     // link perdido: 1 Hz
+#define ALARM_CAUTION_BLINK_MS  250     // aviso de bank: 2 Hz
+#define ALARM_WARNING_BLINK_MS  100     // atitude anormal: 5 Hz
+#define ALARM_DOUBLE_PERIOD_MS  2000    // atitude inválida: duas piscadas de ALARM_DOUBLE_ON_MS a cada 2 s
+#define ALARM_DOUBLE_ON_MS      100
+#define ALARM_BUZZER_ENABLED    0       // buzzer adiado (sem transistor); 1 liga o PIN_BUZZER junto com o LED
 
 // ---------- Rede ----------
 #define AP_SSID          "Horizonte-ESP"
@@ -47,6 +63,11 @@
 #define LINK_TASK_PRIO          3
 #define LINK_TASK_STACK         4096
 #define LINK_TASK_WAIT_MS       10     // espera máxima por um pacote: o timeout é conferido a cada volta
+#define ALARM_TASK_CORE         0
+#define ALARM_TASK_PRIO         2
+#define ALARM_TASK_STACK        3072
+#define ALARM_TASK_PERIOD_MS    20     // volta da alarm_task (LEDs e condições)
+#define ALARM_EVENT_QUEUE_LEN   8      // mudanças de alarme para a serial
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1
 #define SERIAL_TASK_STACK       4096

@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <esp_timer.h>
 #include "config.h"
+#include "alarm_task.h"
 #include "link_task.h"
 #include "radio_rx.h"
 
@@ -26,6 +27,27 @@ static void printEvent(const LinkEventMsg &e) {
         Serial.printf("[link] %lu ms: ressincronizado: seq %u -> %u, t_ms do A %lu -> %lu (A reiniciado ou falta "
                       "longa; perdas não contadas)\n",
                       (unsigned long)e.atMs, u.seqFrom, u.seqTo, (unsigned long)u.tFrom, (unsigned long)u.tTo);
+}
+
+static void printAlarmEvent(const AlarmEventMsg &e) {
+    switch (e.type) {
+    case AlarmEventMsg::Changed:
+        if (e.kind == AlarmKind::None) {
+            Serial.printf("[alarme] %lu ms: terminou\n", (unsigned long)e.atMs);
+        } else if (e.kind == AlarmKind::LinkLost) {
+            Serial.printf("[alarme] %lu ms: %s\n", (unsigned long)e.atMs, alarmKindText(e.kind));
+        } else {
+            Serial.printf("[alarme] %lu ms: %s (roll %+.1f, pitch %+.1f, valid 0x%04X, status 0x%04X)\n",
+                          (unsigned long)e.atMs, alarmKindText(e.kind), e.rollDeg, e.pitchDeg, e.valid, e.status);
+        }
+        break;
+    case AlarmEventMsg::Acked:
+        Serial.printf("[alarme] %lu ms: reconhecido: %s\n", (unsigned long)e.atMs, alarmKindText(e.kind));
+        break;
+    case AlarmEventMsg::NothingToAck:
+        Serial.printf("[alarme] %lu ms: nada a reconhecer\n", (unsigned long)e.atMs);
+        break;
+    }
 }
 
 static void printReport(const LinkReport &r) {
@@ -90,21 +112,31 @@ static void printState(bool streamR, bool streamA) {
     }
     const RxCounters c = radioRxCounters();
     Serial.printf("recusados desde o boot: tamanho %lu, magic %lu, versão %lu, tipo %lu | outro remetente %lu | "
-                  "fila cheia %lu | eventos descartados %lu\n",
+                  "fila cheia %lu | eventos descartados: link %lu, alarme %lu\n",
                   (unsigned long)c.badSize, (unsigned long)c.badMagic, (unsigned long)c.badVersion,
                   (unsigned long)c.badType, (unsigned long)c.foreign, (unsigned long)c.queueFull,
-                  (unsigned long)linkEventsDropped());
+                  (unsigned long)linkEventsDropped(), (unsigned long)alarmEventsDropped());
+    AlarmStatus al;
+    if (alarmCurrent(al))
+        Serial.printf("alarme: %s%s | LED do link %s | limites: aviso bank %.0f, alarme bank %.0f, pitch +%.0f/-%.0f, "
+                      "histerese %.0f graus\n",
+                      alarmKindText(al.kind), al.acked ? " (reconhecido)" : "", al.linkLed ? "aceso" : "apagado",
+                      ALARM_BANK_CAUTION_DEG, ALARM_BANK_DEG, ALARM_PITCH_UP_DEG, ALARM_PITCH_DOWN_DEG, ALARM_HYST_DEG);
+    else
+        Serial.println("alarme: task não iniciada");
     Serial.printf("fluxos: r %s, a %s | heap livre %u kB\n", streamR ? "ligado" : "desligado",
                   streamA ? "ligado" : "desligado", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024));
     Serial.println("----------------------------------------------");
 }
 
-static void printHelp() { Serial.println("[B] teclas: c = estado | r = resumo por segundo | a = fluxo de pacotes (10 Hz)"); }
+static void printHelp() {
+    Serial.println("[B] teclas: c = estado | r = resumo por segundo | a = fluxo de pacotes (10 Hz) | k = reconhecer o alarme");
+}
 
 static void serialTask(void *) {
     bool streamR = true;   // o resumo começa ligado: é o que a bancada do rádio acompanha
     bool streamA = false;
-    uint32_t reportSeen = 0, droppedSeen = 0;
+    uint32_t reportSeen = 0, droppedSeen = 0, alarmDroppedSeen = 0;
     uint16_t lastSeqPrinted = 0;
     bool printedAny = false;
     TickType_t lastPkt = xTaskGetTickCount();
@@ -115,6 +147,15 @@ static void serialTask(void *) {
         if (dropped != droppedSeen) {
             Serial.printf("[link] %lu eventos descartados: fila de eventos cheia\n", (unsigned long)(dropped - droppedSeen));
             droppedSeen = dropped;
+        }
+
+        AlarmEventMsg ae;
+        while (alarmEventReceive(ae)) printAlarmEvent(ae);
+        const uint32_t alarmDropped = alarmEventsDropped();
+        if (alarmDropped != alarmDroppedSeen) {
+            Serial.printf("[alarme] %lu mudanças descartadas: fila de alarmes cheia (o c mostra o estado atual)\n",
+                          (unsigned long)(alarmDropped - alarmDroppedSeen));
+            alarmDroppedSeen = alarmDropped;
         }
 
         LinkReport r;
@@ -141,6 +182,9 @@ static void serialTask(void *) {
             case 'r':
                 streamR = !streamR;
                 Serial.printf("[B] resumo por segundo %s\n", streamR ? "ligado" : "desligado");
+                break;
+            case 'k':
+                if (!alarmAcknowledge()) Serial.println("[B] tecla k descartada: fila de reconhecimento cheia");
                 break;
             case 'a':
                 streamA = !streamA;

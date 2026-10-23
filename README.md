@@ -134,7 +134,7 @@ O ESP B recebe a telemetria por ESP-NOW, cria o AP `Horizonte-ESP` (ainda sem p�
 | Tecla (ESP B) | Função |
 |---|---|
 | `c` | Estado: MACs, canal, peer, totais do link desde o boot e pacotes recusados por motivo |
-| `r` | Liga ou desliga o resumo por segundo (começa ligado): recebidos, perdidos, duplicados, intervalo entre chegadas no B e pelo relógio do A, idade e totais |
+| `r` | Liga ou desliga o resumo por segundo (começa ligado): recebidos, perdidos, duplicados, fora de ordem, intervalo entre chegadas no B e pelo relógio do A, idade, atraso estimado e totais |
 | `a` | Liga ou desliga o fluxo de pacotes (10 Hz): `seq`, roll, pitch, proa, altitude, `status`, `valid` e `loop_us` |
 | `k` | Reconhece o alarme ativo: o LED de alarme para de piscar e fica aceso enquanto a condição durar. O botão do encoder (pressão curta) faz o mesmo |
 

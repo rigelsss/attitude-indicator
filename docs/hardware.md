@@ -1282,6 +1282,29 @@ Passo 3 da semana 4 ([solo.md](solo.md), "Passo 3"). Log `firmware/ground/logs/2
 - **`c`:** `oled: presente | página 2/2 | último quadro 36 572 us | quadros 749`. O quadro, medido dentro da task de prioridade 1, inclui as interrupções pelas tasks de prioridade maior e pelo Wi-Fi; no diagnóstico, sozinho, foram 32,7 ms. Nenhum `[oled] AUSENTE`.
 - **Três linhas embaralhadas pela USB**, de novo: o clique do encoder, um `terminou` e o cabeçalho do `c` perderam o começo, mas o resto do texto ficou legível.
 
+### Atraso dos pacotes: envio em voo no A e atraso estimado no B (23/10/2026)
+
+Passo 4 da semana 4 ([solo.md](solo.md), "Passo 4"). A com carimbo `2026-10-23 18:09:08`; B com `18:12:42`.
+
+**A sem o B** (log `firmware/aircraft/logs/261023-181000`):
+- `radio: 27–30 enviados/s | entregues 0/s | falhas MAC 27–30/s | pulados 20–23/s | erros de envio 0`. Os enviados mais os pulados somam 50 por segundo, e os **erros de envio caíram de ~10/s para 0**: a fila do ESP-NOW não enche mais.
+- No `c`: 941 enviados, 687 pulados, **0 sem callback**. A aquisição não mudou: perdidos, descartados, falsos e fila cheia em 0.
+
+**B sem o A** (log `firmware/ground/logs/261023-181335`, o A esquecido desligado): `link sem sinal`, nenhum alarme. O começo do log tem lixo da USB antes do boot.
+
+**B com o A, perto e no trajeto até a varanda** (log `firmware/ground/logs/261023-181418`, 76 janelas):
+
+| Trecho | Janelas | Resultado |
+|---|---|---|
+| Perto, antes | 1–38 | 49–52 rec/s, 0–1 perdido; atraso do último pacote 0–7 ms, **máximo da janela 7–16 ms** (32 ms na janela com uma perda) |
+| Trajeto e varanda | 39–54 | 19–49 rec/s, até 38 perdidos por janela; **atraso máximo de 76 ms**; nenhuma queda do link |
+| Perto, depois | 55–76 | 49–51 rec/s, 0–1 perdido; máximo da janela 6–30 ms |
+
+- **O atraso caiu de ~1 s (rodada de distância de 23/10, antes da mudança) para no máximo 76 ms.** Nenhum `DADO ATRASADO` (limite de 250 ms).
+- **Rajadas:** o intervalo mínimo ainda chegou a 1,1 e 2,3 ms em duas janelas, mas são pares de pacotes, e não as filas de ~47 de antes.
+- **Total:** 3 519 recebidos, 244 perdidos (6,5 %), **0 quedas**. Na rodada de 23/10 sem a mudança, o mesmo trajeto deu 17 % de perdas e 11 quedas (a maior de 9,4 s). Parte da diferença pode ser do caminho e da posição do A, que não foram controlados; a fila presa no A, que ocupava o canal com retransmissões de pacotes velhos, é uma explicação provável, mas não comprovada.
+- Um `ATITUDE ANORMAL` de 100 ms (pitch −10,4°) no trajeto: a caixa inclinada ao ser carregada.
+
 ### ESP-NOW do A para o B, com o B recebendo (23/10/2026)
 
 Passo 5 da semana 3 ([radio.md](radio.md), "Passo 5"). O A ficou no power bank e o B no USB do PC. Logs em `firmware/ground/logs`: `261023-060428` e `261023-061939`.

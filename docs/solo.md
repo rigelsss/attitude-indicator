@@ -151,3 +151,22 @@ Os resultados vão para o [hardware.md](hardware.md).
 - **Presença:** o endereço `0x3C` é conferido antes de iniciar e antes de cada quadro (o `sendBuffer` da U8g2 não informa erro). Ausente, a task tenta iniciar de novo a cada `OLED_RETRY_MS` (5 s). A serial avisa `[oled] AUSENTE` e `[oled] presente`; o `c` mostra a página, o último quadro e o total de quadros.
 - **Tela de boot:** `Horizonte - ESP B` / `aguardando o A`, por 1 s.
 - **No passo 4**, o atraso estimado do dado entra na página 2.
+
+## Passo 4: atraso dos pacotes
+
+Pendência da semana 3 ([radio.md](radio.md), "Passo 5"): com o link ruim, os pacotes ficavam presos no A e chegavam em rajadas, até ~1 s atrasados, e a idade do B (medida desde a chegada) não mostrava isso. Decisões de 23/10/2026.
+
+- **A: um envio em voo por vez** (`radio_task`). Um indicador fica ligado do `esp_now_send` até o callback de envio (entregue ou falha MAC); com ele ligado, o ciclo é **pulado** e contado (`pulados` no `r` e no `c` do A). O pacote não entra mais na fila do ESP-NOW atrás do anterior: o dado velho é descartado em vez de atrasado.
+  - **O `seq` avança no pulo:** o B conta a amostra não entregue como perdida.
+  - **Nunca liberado só pelo tempo** (revisão de 23/10/2026): o callback do ESP-NOW não identifica o pacote, e um callback atrasado do envio antigo liberaria o novo, deixando dois em voo. Sem callback por `RADIO_INFLIGHT_TIMEOUT_MS` (100 ms), o episódio só é contado (`sem callback`, no `c` do A) e o A continua pulando. Preso por `RADIO_INFLIGHT_STUCK_MS` (1 s), o A **reinicia o ESP-NOW** (`esp_now_deinit` e `init`, com o peer): o envio pendente e o callback dele são descartados, e o próximo envio começa limpo (`ESP-NOW reiniciado`, no `c`). A regra fica em `lib/send_gate`, com o teste da sequência "tempo limite → novo envio → callback antigo". Nada disso deveria acontecer.
+  - Sem o B, cada envio espera as retransmissões acabarem antes do próximo, e a taxa de envio cai.
+- **B: atraso estimado** (`lib/delay_estimator`, testes `native`). Para cada pacote aceito, offset = chegada no B − `t_ms` do A; o atraso é o offset menos o menor offset numa janela de 10 faixas de 1 s. A janela acompanha a deriva entre os cristais (erro abaixo de 0,5 ms) e recomeça numa ressincronização (A reiniciado). **Limitação:** se todos os pacotes da janela chegarem atrasados, a base sobe e o atraso fica subestimado.
+  - A `link_task` calcula o atraso e o publica junto com o pacote (`RxItem.delayMs`).
+  - **Idade estimada do dado acima de `LINK_STALE_DELAY_MS` (250 ms, metade do timeout): dado atrasado**, tratado como sem dado atual. A idade é o atraso na chegada **mais** o tempo desde a chegada (`dataAgeMs`; revisão de 23/10/2026): 240 ms de atraso seguidos de 490 ms sem pacote novo dão 730 ms, embora cada parte, sozinha, passasse pelos limites. **Consequência:** numa queda do link, o `DADO ATRASADO` aparece aos 250 ms sem pacote, e o `LINK PERDIDO` aos 500 ms;
+    - alarme **`DADO ATRASADO`**, no ritmo do link perdido (1 Hz), logo abaixo dele na prioridade. O LED do link continua aceso, porque o link está vivo;
+    - OLED com a faixa `DADO ATRASADO` e `---` na página 1;
+    - o TFT, no passo 5, segue a mesma regra.
+  - **Console do B:** o `r` mostra `atraso N (máx N) ms`; o `a`, o atraso de cada pacote; o `c`, o limite e a janela. Para não confundir, o pacote que chega depois de um mais novo passou a aparecer como `fora de ordem` (antes, `atrasados`).
+  - **OLED, página 2:** a linha do intervalo virou `int 12/20/28 at 3` (mín/médio/máx do intervalo; "at" = atraso do último pacote, em ms). O atraso sempre aparece inteiro: se a linha não couber, o intervalo vira mín-máx (`int 100-400 at 412`).
+- **Regravar os dois:** o A (pela USB, com o B desconectado) e o B.
+- **Bancada** ([hardware.md](hardware.md), "Atraso dos pacotes"): sem o B, o A envia ~29/s e pula ~21/s, com 0 erros de envio (antes, ~10/s). No trajeto até a varanda, o **atraso máximo foi de 76 ms** (antes, ~1 s), sem rajadas longas e sem `DADO ATRASADO`.

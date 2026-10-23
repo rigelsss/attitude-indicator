@@ -10,12 +10,12 @@ Semana 3 do [plano.md](plano.md). O contrato é o `firmware/shared/include/telem
   - `esp_wifi_set_ps(WIFI_PS_NONE)`, sem economia de energia;
   - `esp_wifi_set_channel(ESPNOW_CHANNEL, …)`, o canal 1, o mesmo do AP do B;
   - `esp_now_init` e o peer `PEER_MAC` (o MAC base do B, `14:33:5C:03:8A:B4`), no canal 1, interface STA, sem criptografia.
-- **Envio:** a 50 Hz pelo próprio relógio (`vTaskDelayUntil`). A task lê a última cópia do estado publicada pela `sensor_task` (caixa de correio: fila de 1, com `xQueueOverwrite` e `xQueuePeek`), monta o pacote (`buildTelemetry`, `lib/telemetry_pack`) e chama `esp_now_send`. O `seq` é de 16 bits e dá a volta em 65535.
+- **Envio:** a 50 Hz pelo próprio relógio (`vTaskDelayUntil`), **um em voo por vez** desde 23/10/2026: com o envio anterior ainda sem callback, o ciclo é pulado e contado, e o `seq` avança. Nunca liberado só pelo tempo; preso por 1 s, o ESP-NOW é reiniciado (`lib/send_gate`) ([solo.md](solo.md), "Passo 4"). A task lê a última cópia do estado publicada pela `sensor_task` (caixa de correio: fila de 1, com `xQueueOverwrite` e `xQueuePeek`), monta o pacote (`buildTelemetry`, `lib/telemetry_pack`) e chama `esp_now_send`. O `seq` é de 16 bits e dá a volta em 65535.
 - **Callbacks** (task do Wi-Fi, núcleo 0): só contam, em contadores atômicos.
   - **Envio:** entregue (o B confirmou com o ACK da camada MAC) ou falha MAC (sem confirmação depois das retransmissões).
   - **Recepção:** só aceita o `PEER_MAC`. O `CommandPacket` é copiado com `memcpy` e conferido (tamanho, magic, versão, tipo; `decodeCommand`); os aceitos e os recusados são contados. A execução é da semana 5.
 - **Console:**
-  - `r`: `radio: N enviados/s | entregues N/s | falhas MAC N/s | erros de envio N | comandos aceitos N, recusados N`;
+  - `r`: `radio: N enviados/s | entregues N/s | falhas MAC N/s | pulados N/s | erros de envio N | comandos aceitos N, recusados N`;
   - `c`: `rádio: ESP-NOW ativo, canal 1, 50 Hz | desde o boot: …`.
 
 ### Campos do pacote

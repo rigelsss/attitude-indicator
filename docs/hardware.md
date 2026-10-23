@@ -1200,6 +1200,46 @@ Teste dos 180° do [plano.md](plano.md) ("Antes de fechar a caixa do ESP A"), pe
 - **As leituras de 22 e 23/10:** a medida do nariz bate com a de 22/10 (−1,42° / +0,07°). Os +0,65° / −0,59° de 23/10 vinham então da caixa em outro lugar ou com outro apoio, e não do módulo.
 - **Rádio durante o teste:** com o B desligado, o `r` do A mostrou ~45 enviados/s, 0 entregues, ~45 falhas MAC/s e o total de erros de envio subindo ~6 por segundo, de 32 a 402. É o comportamento esperado sem o B, o mesmo do passo 4 da semana 3 ([radio.md](radio.md)).
 
+### Hardware do B: LEDs, I2C e OLED (23/10/2026)
+
+Passo 0 da semana 4 ([solo.md](solo.md)), ambiente `ground_diag` (carimbo `2026-10-23 12:17:40`). Logs em `firmware/ground/logs`: `261023-121828` e `261023-122216`. Tudo foi montado de uma vez (LED de alarme, OLED, encoder e TFT), e cada peça foi testada pela sua tecla. A luz de fundo do TFT (BLK no 3V3) acendeu, cinza-escura, já com o firmware `ground`, e o B continuou dando boot e recebendo (~50 entregues/s no OLED do A) com o CS do TFT no GPIO 5, um pino de strapping.
+
+| Teste | Resultado |
+|---|---|
+| LED do link (`1`, GPIO 2, o azul da placa) | acende e apaga |
+| LED de alarme (`2`, GPIO 13, 330 Ω) | não acendeu no primeiro log, com o firmware comandando (`ACESO`): o fio estava em outro pino da placa. Corrigido, acende e apaga |
+| Scan do I2C (`i`, 21/22, 100 kHz) | só `0x3C`: `OLED 0x3C: OK` |
+| OLED (`o`, 400 kHz) | moldura, texto e xadrez nítidos. **Quadro de 1 024 bytes em 32,7 ms**, coerente com os 18 ms do OLED de 128×32 do A |
+
+- **O encoder começou em `CLK 0, DT 0`** no boot. Com o eixo parado num clique e os pull-ups do módulo, o esperado é 1 e 1. Conferir o `+` no 3V3 na rodada do encoder.
+
+**Encoder KY-040** (`e`, log `261023-122913`; o boot já mostrou `CLK 1, DT 1`):
+
+| Movimento | Resultado |
+|---|---|
+| Cliques devagar, sentido horário | **+2 passos por clique**, sem exceção. O repouso alterna entre `CLK 1 DT 1` e `CLK 0 DT 0`: este módulo tem um clique a cada meio ciclo da quadratura, e não a cada ciclo inteiro (4 passos) |
+| Cliques devagar, sentido anti-horário | −2 por clique |
+| Botão | curto de 170 ms → `CURTO`; longo → `LONGO` aos 600 ms e `solto` aos 1 732 ms |
+| Giros rápidos, para os dois lados | contagem acompanhando, com variações ímpares só nas linhas que pegaram o eixo entre dois cliques |
+| Repiques | **1 transição inválida em 127 bordas** no total, só nos giros rápidos. Algumas idas e voltas válidas (bordas a mais que passos, com o mesmo saldo), que a decodificação já cancela |
+
+- **Sentido:** horário dá passos positivos. Não precisa inverter.
+- **Decodificação no firmware:** um clique = 2 passos no mesmo sentido, terminando num estado de repouso (`11` ou `00`). Um passo que volta antes de completar o clique é repique e não conta.
+- **O capacitor de 100 nF não é necessário:** os repiques foram desprezíveis.
+
+**TFT ST7789 240×240 e sprite de 8 bits** (`t`, `s` e `h`, log `261023-140110`; SPI a 40 MHz):
+
+| Teste | Resultado |
+|---|---|
+| Cores cheias (`t`) | vermelho, verde, azul, branco e preto na ordem certa, **23,4 ms por tela** (o previsto era ~23 ms) |
+| Tela de teste | faixas com as cores nos rótulos certos, fundo preto, "F" normal no canto superior esquerdo e moldura amarela inteira. **Nenhum ajuste de configuração**: sem troca de vermelho e azul, sem inversão (o `v` não foi preciso) e sem espelhamento |
+| Sprite de 8 bits 240×240 (`s`) | **57 620 B** a mais de memória ocupada (previsto: 57 600). Desenho do horizonte de teste em 0,5 ms; **envio em 28,3 ms** por quadro (média de 20), **~34,7 quadros/s**. O heap voltou ao valor inicial depois do `deleteSprite` |
+| Heap (sem o Wi-Fi) | 275 kB livres, maior bloco de 115 kB |
+
+- **CS no GPIO 5 (item 13 da revisão de 15/10): validado.** O B dá boot com o TFT ligado (firmware `ground` e `ground_diag`), e o TFT responde.
+- **O envio do sprite de 8 bits custa ~5 ms a mais que uma tela cheia de 16 bits** (28,3 contra 23,4 ms): é a conversão de cada pixel para 16 bits durante o envio, sem DMA. **Estimativa** (duração do envio, não tempo de processador medido): ~71 % do núcleo 1 a 25 quadros/s, e não os ~60 % previstos no [solo.md](solo.md); ~57 % a 20 quadros/s. O passo 6 mede no firmware integrado.
+- **Memória com o Wi-Fi:** no firmware `ground`, o maior bloco livre é de 107 kB. O sprite de 57,6 kB cabe, e é bom alocá-lo no início do boot, antes que o heap se fragmente.
+
 ### ESP-NOW do A para o B, com o B recebendo (23/10/2026)
 
 Passo 5 da semana 3 ([radio.md](radio.md), "Passo 5"). O A ficou no power bank e o B no USB do PC. Logs em `firmware/ground/logs`: `261023-060428` e `261023-061939`.
@@ -1210,6 +1250,7 @@ Passo 5 da semana 3 ([radio.md](radio.md), "Passo 5"). O A ficou no power bank e
 - **EN do A:** a queda foi detectada aos 509 ms e o retorno ~1,7 s depois, com a ressincronização pelo `seq` e pelo `t_ms` e sem perdas falsas.
 - **Alcance** (log `261023-062517`): do quarto, no fim do apartamento, até a varanda, com várias paredes no meio. As perdas começaram no caminho e chegaram a 11 quedas, a maior de 9,4 s; 17 % de perda no total da rodada. Perto de novo, 0 perdidos. Com o link ruim, os pacotes saem do A em rajadas, com até ~1 s de atraso ([radio.md](radio.md), "Passo 5").
 - **Duração** (log `261023-070627`): 510 s parados, perto, com 25 475 recebidos e **0 perdidos, 0 quedas**.
+- **B parado depois de reconectar a USB:** depois do teste dos 180° (o A no USB, o B desconectado), o B voltou para a USB e o A passou a mostrar 0 entregues, com o B ligado. Apertar EN no B resolveu na hora. Hipótese: o reset automático da USB deixou o B no modo de gravação, ligado mas sem rodar o firmware. Não houve log. **Regra:** depois de reconectar uma placa, apertar EN e conferir o OLED do A (~50 entregues/s).
 - **Monitor serial do B:** blocos de exatamente 64 caracteres inválidos no lugar de 1 a 4 caracteres do começo de uma linha. Foram 11 na rodada de duração, e depois o monitor parou no meio de uma linha. É o mesmo padrão dos logs do A de 11/10. Isso aponta para o caminho USB-serial (cabo, porta, CP2102 ou driver), e não para o firmware. Trocar o cabo ou a porta na próxima bancada do B.
 
 ## Orientação de montagem do MPU6050

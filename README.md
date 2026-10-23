@@ -39,8 +39,8 @@ ESP A (avião) ──ESP-NOW──▶ ESP B (solo) ──Wi-Fi AP / WebSocket─
 | B | ESP32 NodeMCU-32S | Estação de solo |
 | B | TFT ST7789 | Horizonte artificial |
 | B | OLED 0,96" 128x64 | Dados numéricos |
-| B | Encoder KY-040 | Navegação entre telas |
-| B | Buzzer ativo e LEDs verde e vermelho | Alarmes e estado do link |
+| B | Encoder KY-040 | Troca de página do OLED e reconhecimento do alarme |
+| B | LED vermelho, LED azul da placa e buzzer ativo (adiado) | Alarme e estado do link |
 
 ### Pinagem do ESP A
 
@@ -50,7 +50,7 @@ Os sensores compartilham o barramento I2C principal, alimentados em 3V3. O OLED 
 |---|---|---|
 | I2C SDA | 21 | SDA de todos os módulos |
 | I2C SCL | 22 | SCL de todos os módulos |
-| I2C1 SDA / SCL (OLED de status) | 32 / 33 | SDA e SCL do OLED 0,91" (ainda não ligado) |
+| I2C1 SDA / SCL (OLED de status) | 32 / 33 | SDA e SCL do OLED 0,91" |
 | INT do MPU6050 | 19 | Pino INT da GY-521 ("data ready"). Passe este fio separado do SDA e do SCL: as bordas do pulso induzem ruído no I2C |
 | LED de status | 2 | LED da própria placa |
 
@@ -60,14 +60,14 @@ Na GY-521, deixe **AD0 desconectado** (a placa já o mantém em nível baixo, o 
 
 | Sinal | GPIO |
 |---|---|
-| TFT: MOSI, SCLK, CS, DC, RST, BL | 23, 18, 5, 16, 17, 4 |
+| TFT: MOSI, SCLK, CS, DC, RST | 23, 18, 5, 16, 17 (o BLK do módulo vai no 3V3: luz de fundo sempre acesa) |
 | OLED: SDA, SCL | 21, 22 (endereço `0x3C`) |
-| Encoder: CLK, DT, SW | 32, 33, 25 |
-| Buzzer | 26 (usar transistor se a corrente passar de 20 mA) |
-| LED do link (verde) | 27 |
-| LED de alarme (vermelho) | 13 |
+| Encoder: CLK, DT, SW | 32, 33, 25 (alimentar o módulo em 3V3, nunca em 5 V) |
+| Buzzer | 26, **adiado**: sem transistor; ligar direto só se a corrente medida em 3,3 V der até ~12 mA |
+| LED do link | 2 (o LED azul da própria placa) |
+| LED de alarme (vermelho) | 13, com resistor de 330 Ω |
 
-A pinagem do ESP B ainda não foi montada nem testada. A fonte da verdade são os arquivos `include/config.h` de cada firmware e, para o TFT, o `platformio.ini` do ground.
+A montagem do ESP B foi testada peça por peça em 23/10/2026 com o ambiente `ground_diag` ([solo.md](docs/solo.md), passo 0; resultados no [hardware.md](docs/hardware.md)). A fonte da verdade são os arquivos `include/config.h` de cada firmware e, para o TFT, o `platformio.ini` do ground.
 
 <!-- Foto da montagem ou diagrama de ligação: acrescentar quando a montagem estiver concluída. -->
 

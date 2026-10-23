@@ -109,3 +109,17 @@ Os resultados vão para o [hardware.md](hardware.md).
 - **Buzzer:** os mesmos ritmos do LED, desligado por `ALARM_BUZZER_ENABLED 0`.
 - **Console do B:** `[alarme] … ATITUDE ANORMAL (roll …, pitch …, valid …, status …)`, `terminou`, `reconhecido`; o `c` mostra o alarme atual e os limites.
 - No passo 4, o dado velho (atraso estimado) entra na condição 1.
+
+## Passo 2: encoder
+
+`lib/encoder_decode` (testes `native`) e `src/tasks/input_task.cpp` (núcleo 0, prioridade 2).
+
+- **Giro:**
+  - uma **ISR em IRAM**, registrada pelo ESP-IDF (`gpio_isr_handler_add`, como a do INT no A), dispara nas duas bordas do CLK e do DT, lê os dois pinos numa só leitura do `GPIO_IN1` e **só enfileira** o estado (fila de `ENC_QUEUE_LEN` = 64; com 32, o repique de um giro rápido a encheu uma vez). Com a fila cheia, conta o descarte;
+  - a task decodifica: cada transição válida soma ±1, e um clique sai quando a soma chega a ±2 num repouso (`11` ou `00`). O repique (ida e volta) se cancela. A transição que pula um estado é contada como inválida e **zera a soma**: a contagem só recomeça no próximo repouso, e um passo parcial não se junta a passos do outro lado dela (revisão de 23/10/2026). O sentido vem de `ENC_DIR` (horário positivo);
+  - **lacuna na fila:** com a fila cheia, a ISR descarta o estado e, no primeiro item que couber depois, enfileira um **marcador de lacuna**. O marcador é copiado na pilha da ISR antes de entrar na fila: uma constante em `.flash.rodata` não pode ser lida com o cache desligado, como durante uma gravação na flash (conferido no binário: `movi` para a pilha, sem leitura da flash). A task ressincroniza exatamente ali: descarta o clique parcial e recomeça no próximo repouso. Sem isso, estados perdidos podiam inverter o sentido (um giro horário lido como 11 → 10 → 00 vira um clique anti-horário), e não só perder um clique;
+  - **cada clique troca a página do OLED** (horário = próxima, anti-horário = anterior, dando a volta em `OLED_PAGES` = 2). A página fica numa caixa de correio, lida pela `oled_task` no passo 3.
+- **Botão, por consulta periódica** (decisão de 23/10/2026, no lugar da interrupção prevista): a task o lê a cada 5 ms, com 20 ms de estabilidade. Uma interrupção receberia dezenas de bordas por aperto, por causa do repique.
+  - **curto** (solto antes de 1 s): reconhece o alarme, o mesmo caminho da tecla `k`. Com a fila de reconhecimento cheia, a serial avisa `botão curto descartado`;
+  - **longo** (`BTN_LONG_MS` = 1 s, avisado ainda com o botão apertado, sem curto ao soltar): reservado para os comandos da semana 5. Um segundo, e não os 600 ms do diagnóstico, para os comandos de calibração não dispararem sem querer.
+- **Console:** `[enc] clique horário, página 2/2`, `[enc] botão curto: reconhecer o alarme`, `[enc] pressão longa (reservada …)`. O `c` mostra a página, os cliques de cada sentido, as transições inválidas, a fila da ISR cheia (com as lacunas tratadas) e os eventos descartados.

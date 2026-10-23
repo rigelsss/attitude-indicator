@@ -136,9 +136,9 @@ O ESP B recebe a telemetria por ESP-NOW, cria o AP `Horizonte-ESP` (ainda sem p�
 | `c` | Estado: MACs, canal, peer, totais do link desde o boot e pacotes recusados por motivo |
 | `r` | Liga ou desliga o resumo por segundo (começa ligado): recebidos, perdidos, duplicados, intervalo entre chegadas no B e pelo relógio do A, idade e totais |
 | `a` | Liga ou desliga o fluxo de pacotes (10 Hz): `seq`, roll, pitch, proa, altitude, `status`, `valid` e `loop_us` |
-| `k` | Reconhece o alarme ativo: o LED de alarme para de piscar e fica aceso enquanto a condição durar |
+| `k` | Reconhece o alarme ativo: o LED de alarme para de piscar e fica aceso enquanto a condição durar. O botão do encoder (pressão curta) faz o mesmo |
 
-Os eventos do link (`estabelecido`, `PERDIDO`, `restabelecido`, `ressincronizado`) e as mudanças de alarme são sempre impressos. O LED vermelho (GPIO 13) avisa link perdido, atitude inválida, atitude anormal (bank > 45°, pitch > +25° ou < −10°) e bank > 35°, cada um com um ritmo; o LED azul da placa fica aceso com o link OK ([solo.md](docs/solo.md), passo 1).
+Os eventos do link (`estabelecido`, `PERDIDO`, `restabelecido`, `ressincronizado`) e as mudanças de alarme são sempre impressos. O giro do encoder seleciona a página do OLED (as páginas entram no passo 3; por enquanto, a seleção aparece na serial e no `c`), e a pressão longa (1 s) fica reservada para os comandos ([solo.md](docs/solo.md), passo 2). O LED vermelho (GPIO 13) avisa link perdido, atitude inválida, atitude anormal (bank > 45°, pitch > +25° ou < −10°) e bank > 35°, cada um com um ritmo; o LED azul da placa fica aceso com o link OK ([solo.md](docs/solo.md), passo 1).
 
 Feche o monitor antes de gravar: ele prende a porta, e o `upload` falha. A primeira linha do boot mostra `compilado em AAAA-MM-DD HH:MM:SS`, o que confirma que a placa está com o firmware que acabou de ser gravado.
 

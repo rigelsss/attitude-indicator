@@ -1257,6 +1257,23 @@ Passo 1 da semana 4 ([solo.md](solo.md), "Passo 1"). Log `firmware/ground/logs/2
 - **O `c` no fim:** `alarme: nenhum | LED do link aceso`; 8 449 recebidos, 0 perdidos.
 - **Duas linhas embaralhadas pela USB** (o bloco de 64 caracteres) cortaram o começo de duas mudanças, um alarme de bank e um aviso. O texto restante mostra as duas, e a sequência fecha.
 
+### Encoder do B no firmware (23/10/2026)
+
+Passo 2 da semana 4 ([solo.md](solo.md), "Passo 2"). Log `firmware/ground/logs/261023-165047`, carimbo `2026-10-23 16:49:41`. Nenhuma linha embaralhada pela USB.
+
+| Teste | Resultado |
+|---|---|
+| 10 cliques horários, devagar | 10 `clique horário`, alternando a página 2/2 e 1/2 |
+| 10 cliques anti-horários, devagar | 10 `clique anti-horário` |
+| Giros rápidos (5 rajadas, alternando o sentido) | 10, 19, 19, 18 e 5 cliques, **todos no sentido da rajada**; até ~9 ms entre cliques |
+| Botão curto sem alarme | `botão curto` e `nada a reconhecer` |
+| Botão curto com alarme (nariz para cima, +25,8°) | `reconhecido: ATITUDE ANORMAL`; `terminou` ao nivelar |
+| Pressão longa | `pressão longa (reservada …)` uma vez, sem curto ao soltar |
+| `c` | 44 cliques horários e 47 anti-horários, iguais aos impressos; **10 transições inválidas** e **1 estado descartado com a fila da ISR cheia**, ambos nos giros rápidos; 0 eventos descartados |
+
+- **Sem clique no sentido errado**, mesmo nas rajadas rápidas.
+- **A fila da ISR encheu uma vez** (32 estados). Um repique longo nas bordas pode gerar dezenas de interrupções antes de a `input_task` esvaziar a fila. Os estados perdidos podem fazer perder um clique e, dependendo de quais se perdem, **inverter o sentido de um clique** (revisão de 23/10/2026; não aconteceu neste log). **Tratamento:** o `ENC_QUEUE_LEN` subiu de 32 para 64, para a lacuna ser rara, e a ISR passou a marcar a lacuna na fila, onde a task ressincroniza ([solo.md](solo.md), "Passo 2").
+
 ### ESP-NOW do A para o B, com o B recebendo (23/10/2026)
 
 Passo 5 da semana 3 ([radio.md](radio.md), "Passo 5"). O A ficou no power bank e o B no USB do PC. Logs em `firmware/ground/logs`: `261023-060428` e `261023-061939`.

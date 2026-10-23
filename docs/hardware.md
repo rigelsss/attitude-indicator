@@ -1184,6 +1184,18 @@ Depois de refazer e prender toda a fiação, os três sensores sumiram juntos, e
 - **Diagnóstico:** um sintoma em todos os módulos de um barramento indica um fio comum (SDA, SCL, VCC ou GND). O `Error -1` (NACK) com o barramento vazio combina com uma linha aberta, e não com uma linha presa em 0.
 - **Lição:** depois de mexer na fiação, conferir a continuidade **do pino do ESP até o pino de cada módulo** e rodar o `t` mexendo nos fios. Isso também vale para o barramento 1: o fio do OLED se soltou durante o próprio conserto.
 
+### ESP-NOW do A para o B, com o B recebendo (23/10/2026)
+
+Passo 5 da semana 3 ([radio.md](radio.md), "Passo 5"). O A ficou no power bank e o B no USB do PC. Logs em `firmware/ground/logs`: `261023-060428` e `261023-061939`.
+
+- **B:** MAC STA `14:33:5C:03:8A:B4` (é nele que o A envia) e MAC AP `14:33:5C:03:8A:B5`. AP "Horizonte-ESP" e ESP-NOW juntos no canal 1; a rede aparece no celular.
+- **Perdas:** 1 em ~8 300 pacotes nas duas rodadas, sem duplicados nem recusados.
+- **Intervalo entre chegadas:** média de 20,0 ms, com mínimo e máximo de ~9–15 e ~24–31 ms por janela de 1 s. O intervalo pelo relógio do A fica em 20/20 ms: o atraso não vem da task de envio.
+- **EN do A:** a queda foi detectada aos 509 ms e o retorno ~1,7 s depois, com a ressincronização pelo `seq` e pelo `t_ms` e sem perdas falsas.
+- **Alcance** (log `261023-062517`): do quarto, no fim do apartamento, até a varanda, com várias paredes no meio. As perdas começaram no caminho e chegaram a 11 quedas, a maior de 9,4 s; 17 % de perda no total da rodada. Perto de novo, 0 perdidos. Com o link ruim, os pacotes saem do A em rajadas, com até ~1 s de atraso ([radio.md](radio.md), "Passo 5").
+- **Duração** (log `261023-070627`): 510 s parados, perto, com 25 475 recebidos e **0 perdidos, 0 quedas**.
+- **Monitor serial do B:** blocos de exatamente 64 caracteres inválidos no lugar de 1 a 4 caracteres do começo de uma linha. Foram 11 na rodada de duração, e depois o monitor parou no meio de uma linha. É o mesmo padrão dos logs do A de 11/10. Isso aponta para o caminho USB-serial (cabo, porta, CP2102 ou driver), e não para o firmware. Trocar o cabo ou a porta na próxima bancada do B.
+
 ## Orientação de montagem do MPU6050
 
 ### Montagem final (14/10/2026, em uso)

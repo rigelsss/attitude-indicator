@@ -6,7 +6,12 @@ Horizonte artificial em bancada com dois ESP32. Uma placa fica no modelo, mede a
 
 Projeto final da disciplina **Sistemas Embarcados 2026.2**. Usa Arduino via PlatformIO e cobre I2C, SPI, interrupções, FreeRTOS, ESP-NOW e IoT.
 
-> **Estado:** em desenvolvimento. O firmware do ESP A lê e calibra o MPU6050 e o magnetômetro, calcula roll e pitch com um filtro complementar e a proa compensada pela inclinação, tudo validado em bancada. O barômetro aguarda a troca do BME280 por um BMP280. Ainda sem rádio nem tasks FreeRTOS (`main.cpp` provisório). Ver [Estado do projeto](#estado-do-projeto).
+> **Estado:** em desenvolvimento.
+> - **ESP A:** tasks FreeRTOS acionadas pelo INT do MPU. Lê e calibra o MPU6050, o magnetômetro e o barômetro (BMP280), calcula roll, pitch e a proa compensada pela inclinação e envia a telemetria por ESP-NOW a 50 Hz, com um OLED de status. Tudo validado em bancada.
+> - **ESP B:** recebe a telemetria, conta perdas e quedas do link e cria o AP Wi-Fi no mesmo canal.
+> - **Falta:** horizonte no TFT, encoder e alarmes no B, página web, WebSocket, comandos e cliente Python.
+>
+> Ver [Estado do projeto](#estado-do-projeto).
 
 ## Como funciona
 
@@ -122,13 +127,23 @@ No estado atual, o ESP A configura o MPU6050, o magnetômetro e o barômetro, ca
 | `m` | Calibração do magnetômetro: girar a caixa em todas as orientações até cobrir os 24 setores; revisão com `s` (gravar na NVS), `x` (descartar) e `d` (pontos em CSV para `tools/mag_fit.py`) |
 | `p` | Liga ou desliga o fluxo de proa (~10 Hz): proa filtrada, proa do magnetômetro, proa sem compensação, \|m\|, inclinação magnética, roll, pitch e estado |
 
-O LED da placa pisca uma vez por segundo. O ESP B só inicializa a serial e pisca o LED.
+No ESP A, o LED azul da placa mostra o rádio: apagado = inativo; piscada curta a cada 2 s = enviando sem o B confirmar; 1 Hz = enviando com o B confirmando ([tasks.md](docs/tasks.md), passo 6).
+
+O ESP B recebe a telemetria por ESP-NOW, cria o AP `Horizonte-ESP` (ainda sem página) e mostra o link na serial ([radio.md](docs/radio.md), "ESP B"):
+
+| Tecla (ESP B) | Função |
+|---|---|
+| `c` | Estado: MACs, canal, peer, totais do link desde o boot e pacotes recusados por motivo |
+| `r` | Liga ou desliga o resumo por segundo (começa ligado): recebidos, perdidos, duplicados, intervalo entre chegadas no B e pelo relógio do A, idade e totais |
+| `a` | Liga ou desliga o fluxo de pacotes (10 Hz): `seq`, roll, pitch, proa, altitude, `status`, `valid` e `loop_us` |
+
+Os eventos do link (`estabelecido`, `PERDIDO`, `restabelecido`, `ressincronizado`) são sempre impressos.
 
 Feche o monitor antes de gravar: ele prende a porta, e o `upload` falha. A primeira linha do boot mostra `compilado em AAAA-MM-DD HH:MM:SS`, o que confirma que a placa está com o firmware que acabou de ser gravado.
 
 Para só compilar, omita `-t upload`. Se houver mais de uma placa conectada, defina `upload_port` e `monitor_port` no `platformio.ini` correspondente, ou passe `-p COMx` no monitor.
 
-Testes da lógica pura (calibração, fusão, barômetro e magnetômetro), que rodam no PC, sem placa, em `firmware/aircraft`:
+Testes da lógica pura, que rodam no PC, sem placa: em `firmware/aircraft` (calibração, fusão, barômetro, magnetômetro e pacote) e em `firmware/ground` (conferência do pacote recebido e contagem de perdas):
 
 ```powershell
 pio test -e native
@@ -178,10 +193,10 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 - [x] Filtro complementar (roll e pitch) e calibração de montagem, com testes `native` ([fusao.md](docs/fusao.md))
 - [x] Magnetômetro: calibração hard/soft iron por elipsoide completo, proa compensada pela inclinação e filtro da proa com o giroscópio ([magnetometro.md](docs/magnetometro.md))
 - [x] Barômetro: driver próprio, altitude relativa e zero, com testes `native` ([barometro.md](docs/barometro.md))
-- [ ] Barômetro com o BMP280 na bancada (o BME280 foi danificado) e convivência dos três sensores
-- [ ] OLED de status no ESP A
-- [ ] Tasks FreeRTOS no ESP A acionadas pelo INT
-- [ ] ESP-NOW A → B com detecção de perda de pacotes
+- [x] Barômetro com o BMP280 na bancada (o BME280 foi danificado) e convivência dos três sensores
+- [x] OLED de status no ESP A ([tasks.md](docs/tasks.md), passo 6)
+- [x] Tasks FreeRTOS no ESP A acionadas pelo INT ([tasks.md](docs/tasks.md))
+- [x] ESP-NOW A → B com detecção de perda de pacotes ([radio.md](docs/radio.md))
 - [ ] ESP B: horizonte no TFT, OLED, encoder e alarmes
 - [ ] ESP B: AP Wi-Fi, página web e WebSocket; comandos com confirmação (ACK)
 - [ ] Cliente Python e métricas (jitter, perda e latência)

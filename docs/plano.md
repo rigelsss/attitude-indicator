@@ -50,8 +50,10 @@ Itens de uma revisão externa (numeração dela), distribuídos pela etapa em qu
   - ficam para o modelo final: o `s` do magnetômetro (4) e o das seis posições (6);
   - **item 5 da revisão de 15/10 (reinício da fusão): a definir.** O texto do item não está no repositório (só o título, no commit `9c12d4c`). Se não for recuperado até a semana 6, rever o reinício da fusão a partir dos registros do [fusao.md](fusao.md) antes da montagem no modelo.
 - **Semana 3 (tasks e rádio):** 7 (perdas pelo `seq`), 8 (camada única de comandos), 11 (callback de envio do ESP-NOW) e a primeira parte do 3 (filtrar o remetente pelo `PEER_MAC` no callback de recepção do A).
-- **Semana 4 (TFT):** 1 (sprite e heap) e 13 (GPIO 5 como CS do TFT).
-- **Semana 5 (web e comandos):** a segunda parte do 3 (validar o `arg` do `CMD_SET_RATE_HZ`), 15 (senha do AP) e a lógica dos estados do ACK (aceito, concluído, recusado).
+  - **23/10/2026, passo 5** ([radio.md](radio.md)): 7, 11 e a primeira parte do 3 **feitos**. O 7 no B, pelo `lib/link_stats`, e o 11 e o 3 no A, no passo 4. O B também filtra o remetente. O 8 fica para a semana 5, com os comandos.
+  - **Risco do canal validado:** o AP do B e o ESP-NOW funcionam juntos no canal 1.
+- **Semana 4 (TFT):** 1 (sprite e heap) e 13 (GPIO 5 como CS do TFT). Também o **atraso dos pacotes com o link ruim**, decidido em 23/10/2026 na bancada do passo 5 ([radio.md](radio.md)). Os pacotes ficam retidos no A e chegam em rajadas, com até ~1 s de atraso, e a `idade` do B não mostra isso. Duas medidas: o B estima o atraso relativo (chegada − `t_ms`, comparado com o menor valor visto) e trata o dado atrasado como indisponível no TFT, e o A não enfileira um envio com o anterior pendente (descarta o dado velho em vez de atrasá-lo).
+- **Semana 5 (web e comandos):** a segunda parte do 3 (validar o `arg` do `CMD_SET_RATE_HZ`), 15 (senha do AP) e a lógica dos estados do ACK (aceito, concluído, recusado). Se o contrato mudar nessa etapa, avaliar um **identificador de boot do A** no cabeçalho (por exemplo, no `reserved1`). Ele substituiria a janela de "pacote atrasado" do B ([radio.md](radio.md), `link_task`), que hoje separa um pacote velho de um A reiniciado.
 - **Folga (semana 7):** 14 (`upload_port` fixo; o risco de gravar a placa errada já é coberto pelo `check_board_mac.py`) e 16 (CI, **já feito** em 15/10; na folga, só ampliações).
 
 ## Decisões para a semana 3 (revisão de 13/10/2026)

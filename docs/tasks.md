@@ -86,6 +86,16 @@ Os valores ficam no `config.h` (seção "Tasks"). A `loopTask` do Arduino se apa
 - **Reserva:** os 68 µs que sobram vêm da libm (`atan2f`, `sinf`, `cosf`), que continua na flash. O `update()` faz 12 chamadas por amostra, 9 delas no `wrapPi()` (`atan2f(sinf(a), cosf(a))`). Trocá-lo por uma conta sem trigonometria derrubaria o custo, mas é uma mudança de lógica: fica para a semana 6, se a margem apertar.
 - **Ambiente `aircraft_noradio`:** o mesmo firmware, sem ligar o Wi-Fi (a flag é lida em tempo de execução, para o binário não mudar). Serve para A/B de tempo.
 
+**Passo 5: o B recebendo** (firmware do B; detalhes e bancada em [radio.md](radio.md), "ESP B" e "Passo 5"). No B, o `main.cpp` também só inicializa e cria as tasks:
+
+| Task (ESP B) | Núcleo | Prioridade | Pilha | Função |
+|---|---|---|---|---|
+| callback do ESP-NOW | 0 (task do Wi-Fi) | — | — | Filtra o remetente, confere e copia o pacote (`lib/telemetry_rx`), carimba a chegada e enfileira (fila de 16) |
+| `link_task` | 1 | 3 | 4 kB | Perdas pelo `seq`, duplicados, ressincronização e timeout (`lib/link_stats`). Publica o último pacote e o resumo de 1 s (caixas de correio) e os eventos do link (fila) |
+| `serial_task` | 0 | 1 | 4 kB | Única dona do `Serial` depois do boot: teclas (`c`, `r`, `a`) e impressão a partir das cópias |
+
+No A, nada mudou. Com o B confirmando, o OLED do A passou a ~50 entregues/s.
+
 **Passo 6: OLED de status e LED** (`status_task`, `src/tasks/status_task.cpp`; tela e LED em `lib/status_view`, testados no `native`):
 
 - **OLED 0,91" (SSD1306 128×32, 0x3C) no `Wire1`** (GPIO 32 e 33, 400 kHz), iniciado pela própria task: a ISR do I2C1 fica no núcleo 0. Fonte `u8g2_font_NokiaSmallPlain_tf` (4 linhas de 8 px, maiúsculas de 7 px, proporcional e com acentos). Na bancada de 22/10, a `5x8` ficou pequena demais e a `NokiaSmallBold`, do mesmo tamanho, grossa demais. 5 quadros por segundo:

@@ -31,7 +31,7 @@ Plano aprovado em 23/10/2026.
 | Passo | O quê | Task (núcleo, prioridade) |
 |---|---|---|
 | 0. Montagem e diagnóstico | Uma peça por vez, com o ambiente `ground_diag` (abaixo) | — |
-| 1. Alarmes | `lib/alarm_logic`: condições (roll > `ALARM_BANK_DEG`, pitch > `ALARM_PITCH_DEG`, link perdido, atitude inválida), histerese e padrões do LED de alarme e do LED do link. Testes `native` | `alarm_task` (0, 2) |
+| 1. Alarmes | `lib/alarm_logic`: condições, histerese e padrões do LED de alarme e do LED do link (seção "Passo 1"). Testes `native` | `alarm_task` (0, 2) |
 | 2. Encoder | ISR em IRAM, curta: lê CLK e DT e enfileira (`xQueueSendFromISR`). `lib/encoder_decode` decodifica a sequência e filtra os repiques (testes `native`). Botão curto e longo | `input_task` (0, 2) |
 | 3. OLED | Páginas de dados e de link, a 5 Hz (quadro de 32,7 ms) | `oled_task` (0, 1) |
 | 4. Atraso dos pacotes | B: atraso estimado (chegada − `t_ms`, contra o menor valor visto); acima de um limite, o dado conta como velho. A: não envia com o anterior pendente (pula e conta). **Exige regravar o A** | `link_task` (B) e `radio_task` (A) |
@@ -81,3 +81,31 @@ Separado do firmware, em `src/diag/`, sem tasks, como o `i2cscan` do A. Também 
 4. **TFT:** no `t`, as cores certas (sem vermelho trocado com azul e sem tela espelhada) e o tempo de uma tela (previsto ~23 ms). O `s` informa o heap e o tempo do sprite.
 
 Os resultados vão para o [hardware.md](hardware.md).
+
+## Passo 1: alarmes
+
+`lib/alarm_logic` (testes `native`) e `src/tasks/alarm_task.cpp` (núcleo 0, prioridade 2, volta de 20 ms). A task lê o último pacote aceito da `link_task` e a hora de chegada; a idade acima de `LINK_TIMEOUT_MS` é link perdido, a mesma regra do timeout da `link_task`.
+
+**Limites, pelos critérios de aviação:**
+
+- **Alarme (warning), atitude anormal:** bank > 45°, pitch > +25° ou pitch < −10°. É a definição de "upset" do *Airplane Upset Recovery Training Aid*, também usada pela FAA (AC 120-111). O pitch é assimétrico: nariz para baixo é mais perigoso.
+- **Aviso (caution) de bank:** > 35°, o início do "BANK ANGLE" do EGPWS em aeronaves como o 737.
+- **Histerese de 3°** em todos os limites (o aviso sai abaixo de 32°, o alarme abaixo de 42° de bank, +22° e acima de −7° de pitch). Os limites entram na hora: o filtro já é suave, e o aviso deve ser imediato.
+
+| Prioridade | Condição | LED de alarme (GPIO 13) | LED do link (GPIO 2) |
+|---|---|---|---|
+| — | Normal | apagado | aceso |
+| — | Sem sinal (antes do primeiro pacote) | apagado, sem alarme | apagado |
+| 1 | Link perdido (depois de ter funcionado) | 1 Hz | apagado |
+| 2 | Atitude inválida por mais de 1 s, fora das calibrações (`ST_CALIBRATING`) | duas piscadas curtas a cada 2 s | aceso |
+| 3 | Atitude anormal | 5 Hz | aceso |
+| 4 | Aviso de bank | 2 Hz | aceso |
+| — | Reconhecido (tecla `k`; botão do encoder no passo 2) | aceso fixo enquanto a mesma condição durar | — |
+
+- Os limites só são avaliados com o link OK e a atitude válida. Sem isso, a histerese recomeça do zero quando a atitude voltar. A flag `VAL_ATT` ligada com roll ou pitch não finito (pacote incoerente) conta como atitude inválida.
+- **As piscadas começam acesas** e contam a fase a partir da mudança de condição: um alarme novo aparece na hora. Com a fase contada desde o boot, as duas piscadas da atitude inválida podiam atrasar até ~1,7 s (revisão de 23/10/2026).
+- **Mudanças de alarme descartadas** com a fila cheia são contadas e avisadas na serial (`[alarme] N mudanças descartadas`), e o `c` mostra o total, como os eventos do link.
+- Uma condição diferente (inclusive o alarme caindo para o aviso), ou a mesma voltando depois de terminar, alarma de novo.
+- **Buzzer:** os mesmos ritmos do LED, desligado por `ALARM_BUZZER_ENABLED 0`.
+- **Console do B:** `[alarme] … ATITUDE ANORMAL (roll …, pitch …, valid …, status …)`, `terminou`, `reconhecido`; o `c` mostra o alarme atual e os limites.
+- No passo 4, o dado velho (atraso estimado) entra na condição 1.

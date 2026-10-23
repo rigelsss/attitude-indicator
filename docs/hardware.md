@@ -1240,6 +1240,23 @@ Passo 0 da semana 4 ([solo.md](solo.md)), ambiente `ground_diag` (carimbo `2026-
 - **O envio do sprite de 8 bits custa ~5 ms a mais que uma tela cheia de 16 bits** (28,3 contra 23,4 ms): é a conversão de cada pixel para 16 bits durante o envio, sem DMA. **Estimativa** (duração do envio, não tempo de processador medido): ~71 % do núcleo 1 a 25 quadros/s, e não os ~60 % previstos no [solo.md](solo.md); ~57 % a 20 quadros/s. O passo 6 mede no firmware integrado.
 - **Memória com o Wi-Fi:** no firmware `ground`, o maior bloco livre é de 107 kB. O sprite de 57,6 kB cabe, e é bom alocá-lo no início do boot, antes que o heap se fragmente.
 
+### Alarmes do B (23/10/2026)
+
+Passo 1 da semana 4 ([solo.md](solo.md), "Passo 1"). Log `firmware/ground/logs/261023-145936`, carimbo `2026-10-23 14:58:22`. O A ficou no power bank, e a caixa foi inclinada na mão, sem referência de ângulo. O roll e o pitch de cada linha são os do pacote no instante da mudança.
+
+| Movimento | Mudanças registradas |
+|---|---|
+| Bank para a direita, ida e volta (duas vezes) | aviso aos +35,2–35,3°; alarme aos +45,0–45,3°; volta ao aviso aos +41,6–41,8°; `terminou` |
+| Bank para a esquerda (duas vezes) | aviso aos −35,1–35,2°; alarme aos −45,0°; volta ao aviso aos −41,9–42,0°; `terminou` |
+| Nariz para baixo (duas vezes) | alarme aos −10,1° e −10,4°; `terminou` |
+| Nariz para cima | alarme aos +25,0°; `terminou` |
+| `k` com o alarme de bank ativo | `reconhecido: ATITUDE ANORMAL`; ao voltar, o aviso de bank (+42,0°) alarmou de novo, como condição nova; `terminou` |
+| EN no A | `LINK PERDIDO` 10 ms depois do `[link] PERDIDO`; `terminou` junto com o `restabelecido` (1,7 s). Nenhum `ATITUDE INVÁLIDA` no boot do A |
+
+- **Todos os limites e a histerese conferem.** As linhas com "45,0" ou "25,0" são valores logo acima do limite, arredondados para uma casa.
+- **O `c` no fim:** `alarme: nenhum | LED do link aceso`; 8 449 recebidos, 0 perdidos.
+- **Duas linhas embaralhadas pela USB** (o bloco de 64 caracteres) cortaram o começo de duas mudanças, um alarme de bank e um aviso. O texto restante mostra as duas, e a sequência fecha.
+
 ### ESP-NOW do A para o B, com o B recebendo (23/10/2026)
 
 Passo 5 da semana 3 ([radio.md](radio.md), "Passo 5"). O A ficou no power bank e o B no USB do PC. Logs em `firmware/ground/logs`: `261023-060428` e `261023-061939`.

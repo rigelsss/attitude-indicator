@@ -136,8 +136,9 @@ O ESP B recebe a telemetria por ESP-NOW, cria o AP `Horizonte-ESP` (ainda sem p�
 | `c` | Estado: MACs, canal, peer, totais do link desde o boot e pacotes recusados por motivo |
 | `r` | Liga ou desliga o resumo por segundo (começa ligado): recebidos, perdidos, duplicados, intervalo entre chegadas no B e pelo relógio do A, idade e totais |
 | `a` | Liga ou desliga o fluxo de pacotes (10 Hz): `seq`, roll, pitch, proa, altitude, `status`, `valid` e `loop_us` |
+| `k` | Reconhece o alarme ativo: o LED de alarme para de piscar e fica aceso enquanto a condição durar |
 
-Os eventos do link (`estabelecido`, `PERDIDO`, `restabelecido`, `ressincronizado`) são sempre impressos.
+Os eventos do link (`estabelecido`, `PERDIDO`, `restabelecido`, `ressincronizado`) e as mudanças de alarme são sempre impressos. O LED vermelho (GPIO 13) avisa link perdido, atitude inválida, atitude anormal (bank > 45°, pitch > +25° ou < −10°) e bank > 35°, cada um com um ritmo; o LED azul da placa fica aceso com o link OK ([solo.md](docs/solo.md), passo 1).
 
 Feche o monitor antes de gravar: ele prende a porta, e o `upload` falha. A primeira linha do boot mostra `compilado em AAAA-MM-DD HH:MM:SS`, o que confirma que a placa está com o firmware que acabou de ser gravado.
 

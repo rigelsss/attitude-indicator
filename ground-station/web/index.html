@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Horizonte Artificial</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Horizonte Artificial</h1>
+  <div class="badges">
+    <span id="ws-state" class="badge bad">desconectado</span>
+    <span id="link-state" class="badge bad">sem sinal</span>
+  </div>
+</header>
+
+<main>
+  <section class="card pfd-card">
+    <canvas id="pfd" width="480" height="480" aria-label="Horizonte artificial"></canvas>
+    <div id="alarm" class="alarm none">sem alarme</div>
+  </section>
+
+  <section class="card">
+    <h2>Dados</h2>
+    <dl class="grid">
+      <dt>Roll</dt><dd id="v-roll">---</dd>
+      <dt>Pitch</dt><dd id="v-pitch">---</dd>
+      <dt>Proa <button id="hdg-ref" class="link-btn" type="button">MAG</button></dt><dd id="v-hdg">---</dd>
+      <dt>Altitude</dt><dd id="v-alt">---</dd>
+      <dt>Pressão</dt><dd id="v-hpa">---</dd>
+      <dt>Temperatura</dt><dd id="v-temp">---</dd>
+      <dt>Curva</dt><dd id="v-gz">---</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <h2>Link e ESP A</h2>
+    <dl class="grid">
+      <dt>Taxa</dt><dd id="l-rx">---</dd>
+      <dt>Perdidos</dt><dd id="l-lost">---</dd>
+      <dt>Quedas</dt><dd id="l-drops">---</dd>
+      <dt>Idade</dt><dd id="l-age">---</dd>
+      <dt>Atraso</dt><dd id="l-delay">---</dd>
+      <dt>Sensores</dt><dd id="l-sensors">---</dd>
+      <dt>Calibração</dt><dd id="l-cal">---</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <h2>Comandos</h2>
+    <p id="pin-row" class="pin-row">
+      <label for="pin">PIN</label>
+      <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN dos comandos">
+    </p>
+    <div class="buttons">
+      <button type="button" data-cmd="zero_attitude">Zerar atitude</button>
+      <button type="button" data-cmd="zero_altitude">Zerar altitude</button>
+      <button type="button" data-cmd="calibrate_gyro" data-confirm="Caixa parada? Confirmar">Calibrar giroscópio</button>
+      <button type="button" data-cmd="calibrate_mag" data-confirm="Girar em todas as orientações. Confirmar">Calibrar magnetômetro</button>
+    </div>
+    <p class="rate-row">
+      <label for="rate">Taxa do A</label>
+      <select id="rate">
+        <option value="50">50 Hz</option>
+        <option value="25">25 Hz</option>
+        <option value="20">20 Hz</option>
+        <option value="10">10 Hz</option>
+      </select>
+      <button type="button" id="rate-apply">Aplicar</button>
+    </p>
+    <ol id="cmd-log" class="cmd-log"></ol>
+  </section>
+</main>
+
+<footer>ESP B · Horizonte-ESP · 192.168.4.1</footer>
+<script src="app.js"></script>
+</body>
+</html>

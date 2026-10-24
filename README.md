@@ -78,7 +78,7 @@ A montagem do ESP B foi testada peça por peça em 23/10/2026 com o ambiente `gr
 | `firmware/shared` | Contrato de dados binário (`telemetry.h`), usado pelos dois firmwares |
 | `firmware/aircraft` | Firmware do ESP A e o diagnóstico I2C (`src/diag/`, ambiente `i2cscan`) |
 | `firmware/ground` | Firmware do ESP B |
-| `ground-station/web` | Página do horizonte, servida pelo ESP B (a fazer) |
+| `ground-station/web` | Página do horizonte e dos comandos, servida pelo ESP B ([web.md](docs/web.md)) |
 | `ground-station/python` | Cliente de log, gráficos e comandos (a fazer) |
 | `docs` | Plano, registros de bancada, estratégia de calibração e protocolo WebSocket |
 
@@ -129,7 +129,7 @@ No estado atual, o ESP A configura o MPU6050, o magnetômetro e o barômetro, ca
 
 No ESP A, o LED azul da placa mostra o rádio: apagado = inativo; piscada curta a cada 2 s = enviando sem o B confirmar; 1 Hz = enviando com o B confirmando ([tasks.md](docs/tasks.md), passo 6).
 
-O ESP B recebe a telemetria por ESP-NOW, cria o AP `Horizonte-ESP` (ainda sem página) e mostra o link na serial ([radio.md](docs/radio.md), "ESP B"):
+O ESP B recebe a telemetria por ESP-NOW, cria o AP `Horizonte-ESP` com a página e o WebSocket, envia os comandos ao A e mostra o link na serial ([radio.md](docs/radio.md), "ESP B"):
 
 | Tecla (ESP B) | Função |
 |---|---|
@@ -154,7 +154,7 @@ O ambiente `native` usa o compilador do PC: é preciso ter um GCC no PATH. No Wi
 
 O GitHub Actions ([ci.yml](.github/workflows/ci.yml)) roda esses testes e compila `aircraft`, `i2cscan` e `ground` a cada push e pull request.
 
-Página web no ESP B (quando existir): `pio run -e ground -t uploadfs`, em `firmware/ground`. Depois, conecte-se à rede `Horizonte-ESP` e abra `http://192.168.4.1`.
+Página web no ESP B: `pio run -e ground -t uploadfs`, em `firmware/ground` (grava `ground-station/web` no LittleFS). Depois, conecte-se à rede `Horizonte-ESP` (senha `horizonte123`) e abra `http://192.168.4.1`. Todos veem o horizonte e os dados; os comandos pedem o PIN (`WEB_CMD_PIN` no `config.h` do B) ([web.md](docs/web.md)).
 
 ## Diagnóstico I2C do ESP A
 
@@ -199,7 +199,7 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 - [x] Tasks FreeRTOS no ESP A acionadas pelo INT ([tasks.md](docs/tasks.md))
 - [x] ESP-NOW A → B com detecção de perda de pacotes ([radio.md](docs/radio.md))
 - [ ] ESP B: horizonte no TFT, OLED, encoder e alarmes (OLED, encoder e alarmes feitos; TFT na bancada)
-- [ ] ESP B: AP Wi-Fi, página web e WebSocket; comandos com confirmação (ACK)
+- [ ] ESP B: AP Wi-Fi, página web e WebSocket; comandos com confirmação (ACK) (feitos; bancada da página pendente)
 - [ ] Cliente Python e métricas (jitter, perda e latência)
 
 ## Documentação

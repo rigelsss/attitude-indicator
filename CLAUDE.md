@@ -17,6 +17,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - `docs/magnetometro.md`: HMC5883L, mapeamento de eixos, calibração (`m`), proa compensada e filtro da proa, roteiro de validação.
 - `docs/refatoracao.md`: refatoração do `main.cpp` provisório (concluída em 20/10/2026): módulos, linha de base e critérios de tempo da bancada, resultados por passo e pendências para a migração às tasks.
 - `docs/radio.md`: ESP-NOW (configuração do A e do B, campos do pacote, contadores do console) e a bancada do rádio.
+- `docs/web.md`: semana 5: comandos do B para o A (camada única de comandos, ACK, reenvio), servidor web, WebSocket e página.
 - `docs/solo.md`: semana 4 do ESP B: decisões (TFT só com o horizonte, páginas do OLED pelo encoder, LEDs, sprite de 8 bits, buzzer adiado), passos, ligação e diagnóstico (`ground_diag`).
 - `docs/tasks.md`: tasks do ESP A (núcleos, prioridades, filas, logger com um consumidor só) e as medições de tempo de cada passo da semana 3.
 - Antes de concluir uma etapa, atualize o doc afetado (procedimento de uso, resultados, decisões).

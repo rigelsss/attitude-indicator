@@ -10,7 +10,7 @@ Plano aprovado em 23/10/2026.
 - **OLED com páginas, trocadas pelo giro do encoder:**
   1. dados: roll, pitch, proa (MAG ou VERD, com a declinação), altitude, pressão, temperatura e taxa de curva (`gz`); `---` com a flag `valid` desligada;
   2. link e saúde do A: estado, recebidos por segundo, perdidos (janela e % total), quedas, atrasados, intervalo entre chegadas, atraso estimado, sensores do A (`status`), calibração em curso e `loop_us`.
-- **Botão do encoder:** a pressão curta reconhece o alarme (o LED para de piscar e fica aceso enquanto a condição durar). A pressão longa fica reservada para os comandos da semana 5.
+- **Botão do encoder:** a pressão curta reconhece o alarme (o LED para de piscar e fica aceso enquanto a condição durar). A pressão longa, desde a semana 5, zera a atitude na página 1 do OLED e a altitude na página 2 ([web.md](web.md)).
 - **LEDs, o meio-termo:**
   - **link no LED azul da placa (GPIO 2)**, sem fiação;
   - **alarme no LED vermelho externo (GPIO 13, 330 Ω)**;

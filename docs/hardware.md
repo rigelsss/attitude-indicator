@@ -1282,6 +1282,56 @@ Passo 3 da semana 4 ([solo.md](solo.md), "Passo 3"). Log `firmware/ground/logs/2
 - **`c`:** `oled: presente | página 2/2 | último quadro 36 572 us | quadros 749`. O quadro, medido dentro da task de prioridade 1, inclui as interrupções pelas tasks de prioridade maior e pelo Wi-Fi; no diagnóstico, sozinho, foram 32,7 ms. Nenhum `[oled] AUSENTE`.
 - **Três linhas embaralhadas pela USB**, de novo: o clique do encoder, um `terminou` e o cabeçalho do `c` perderam o começo, mas o resto do texto ficou legível.
 
+### Comandos do B para o A pelo console (23/10/2026)
+
+Passos 1 e 2 da semana 5 ([web.md](web.md)). Log `firmware/ground/logs/261023-211045` (B com carimbo `2026-10-23 21:03:03`; A regravado antes). O A ficou no power bank, parado na mesa. Nenhuma linha embaralhada pela USB.
+
+| Teste | Resultado |
+|---|---|
+| `z` (zerar atitude) | `enviado` → `concluído` em 40 ms; roll e pitch foram a −0,1° e −0,0° |
+| `X` (taxa de 30 Hz) | `recusado` em 19 ms |
+| `f` (taxa de 25 Hz) | `concluído` em 40 ms; as linhas `[r]` passaram a `rec 25–26`, com 0 perdidos |
+| `g` com a caixa parada (3 vezes) | `aceito` em 40 ms e `concluído` 4,0 s depois, nas três |
+| `g` mexendo a caixa | `aceito` e `recusado` 2,0 s depois |
+| `z` com o A desligado (2 vezes) | `enviado`, `reenvio 2 de 3` e `3 de 3` a cada ~300 ms e `sem resposta` 300 ms depois do último |
+| A religado e EN no A | `restabelecido` e `ressincronizado` (seq → 0); a queda mostrou `DADO ATRASADO` aos ~250 ms sem pacote e `LINK PERDIDO` aos 500 ms, como previsto |
+| `c` | 9 pedidos, 13 envios (0 falhas), 11 ACKs casados, 0 ignorados, 0 recusas no B |
+
+- **Faltaram** o `0` (zerar altitude) e a pressão longa do encoder, que ficam para a próxima bancada, junto com a página.
+
+**Pressão longa conforme a página do OLED** (log `261023-212947`, B com carimbo `21:27:44`):
+
+| Teste | Resultado |
+|---|---|
+| Página 1, pressão longa | `pressão longa na página 1: zerar atitude`; `enviado` → `concluído` em 21 ms |
+| Página 2, pressão longa | `pressão longa na página 2: zerar altitude`; `aceito` em 41 ms e `concluído` 2,0 s depois |
+
+- O zero da altitude ficou testado por este caminho (o `0` do console envia o mesmo comando).
+- **Não testado na bancada:** a recusa do zero da atitude com a caixa inclinada mais de 10° (a lógica é do A e ficou coberta só pela leitura do código).
+
+**Correções da revisão dos comandos** (log `261023-221143`, B com carimbo `22:10:06`; A regravado antes):
+
+| Teste | Resultado |
+|---|---|
+| `g` com a caixa parada | `aceito` em 20 ms e `concluído` 4,0 s depois |
+| `g` mexendo a caixa (2 vezes) | `aceito` e `recusado` ~2,0 s depois (bias deste boot já aceito: o caso `RejectedKept`) |
+| `c` | 6 envios, dos quais **3 reconsultas**; 3 ACKs ignorados (os ACCEPTED repetidos das reconsultas, como previsto) |
+
+- **A reconsulta funciona:** cada comando aceito por mais de 2 s gerou uma consulta, respondida pelo A com o estado atual.
+- **Ainda não testados na bancada:** a recusa do giroscópio sem bias deste boot (o caso corrigido, `RejectedKeptBootRestart`: exige o EN no A com a caixa em movimento) e a recusa do zero da atitude com a caixa inclinada mais de 10°.
+
+**Os dois testes que faltavam** (log `261023-221434`, mesmo firmware):
+
+| Teste | Resultado |
+|---|---|
+| Pressão longa na página 1 com a caixa inclinada | `zerar atitude` → `recusado` em 20 ms |
+| EN no A mexendo a caixa e `g` (sem bias deste boot) | `aceito` e **`recusado` 2,0 s depois**, duas vezes (antes da correção, ficaria em "aceito" até os 30 s) |
+
+- **EN apertado duas vezes em ~3 s:** os pacotes do boot novo (`seq` 0 a 88) foram descartados como fora de ordem por ~2 s, e o B ressincronizou quando o `seq` alcançou o do boot anterior (`seq 89 -> 89, t_ms 2939 -> 2938`). É o caso ambíguo previsto na regra de pacote fora de ordem (o A reiniciado com menos de 100 pacotes enviados); o B se recuperou sozinho. Um `g` enviado nesse intervalo ficou `sem resposta` (o A estava reiniciando).
+- **Tecla `g` repetida ~30 vezes em ~15 s:** as primeiras foram recusadas por haver uma calibração em curso (correto); a partir de ~63 s, todas foram recusadas em 20 ms, mesmo sem calibração. Pela contagem (15 recusas + 2 resultados = 17, acima dos 16 lugares), foi o **histórico cheio**: cada recusa ficava retida 30 s. A serial do A não estava aberta para confirmar o motivo. **Tratamento:** o resultado imediato (inclusive as recusas) passou a ficar retido 3 s, e só o de um comando demorado, 30 s ([web.md](web.md), passo 1).
+- **A calibração do magnetômetro pelo rádio** fica para um lugar aberto, longe de interferências, quando o B tiver um power bank próprio (decisão de 23/10/2026).
+- A taxa de 25 Hz ficou até o A reiniciar: no boot, ele volta a `TX_RATE_HZ` (50 Hz).
+
 ### Horizonte no TFT (23/10/2026)
 
 Passo 5 da semana 4 ([solo.md](solo.md), "Passo 5"). Conferido a olho na primeira gravação: sentidos do roll e do pitch, ponteiro de roll, bandeira de falha (`SEM SINAL`, `DADO ATRASADO`, `LINK PERDIDO`) e `BANK ANGLE` / `ATTITUDE`, tudo como previsto. A altitude foi retirada do TFT depois dessa conferência (fica no OLED).

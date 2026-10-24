@@ -12,7 +12,8 @@ struct CmdRequest {
     uint8_t origin;
 };
 
-static QueueHandle_t s_req = nullptr, s_events = nullptr, s_lastEncoder = nullptr;
+static QueueHandle_t s_req = nullptr, s_events = nullptr, s_lastEncoder = nullptr, s_webEvents = nullptr;
+static std::atomic<uint32_t> s_webEventsDropped{0};
 static std::atomic<uint32_t> s_eventsDropped{0};
 static std::atomic<uint32_t> s_submitted{0}, s_sends{0}, s_sendErrors{0}, s_acksMatched{0}, s_acksIgnored{0},
     s_localRejects{0}, s_polls{0};
@@ -30,6 +31,8 @@ static void publish(const CmdEvent &ev, uint8_t attempt, bool localFull) {
     const CmdEventMsg m = {ev, attempt, localFull, millis()};
     if (xQueueSend(s_events, &m, 0) != pdTRUE) s_eventsDropped.fetch_add(1, std::memory_order_relaxed);
     if (ev.origin == CMD_FROM_ENCODER) xQueueOverwrite(s_lastEncoder, &m);   // o OLED mostra o andamento
+    // A página recebe todos os comandos (de qualquer origem): cada cliente vê o andamento
+    if (xQueueSend(s_webEvents, &m, 0) != pdTRUE) s_webEventsDropped.fetch_add(1, std::memory_order_relaxed);
 }
 
 static void commandTask(void *) {
@@ -75,7 +78,8 @@ bool commandTaskStart() {
     s_req = xQueueCreate(CMD_REQ_QUEUE_LEN, sizeof(CmdRequest));
     s_events = xQueueCreate(CMD_EVENT_QUEUE_LEN, sizeof(CmdEventMsg));
     s_lastEncoder = xQueueCreate(1, sizeof(CmdEventMsg));
-    if (s_req == nullptr || s_events == nullptr || s_lastEncoder == nullptr) return false;
+    s_webEvents = xQueueCreate(CMD_EVENT_QUEUE_LEN, sizeof(CmdEventMsg));
+    if (s_req == nullptr || s_events == nullptr || s_lastEncoder == nullptr || s_webEvents == nullptr) return false;
     return xTaskCreatePinnedToCore(commandTask, "command", CMD_TASK_STACK, nullptr, CMD_TASK_PRIO, nullptr,
                                    CMD_TASK_CORE) == pdPASS;
 }
@@ -90,6 +94,12 @@ bool commandEventReceive(CmdEventMsg &out) { return s_events != nullptr && xQueu
 bool commandLastFromEncoder(CmdEventMsg &out) {
     return s_lastEncoder != nullptr && xQueuePeek(s_lastEncoder, &out, 0) == pdTRUE;
 }
+
+bool commandWebEventReceive(CmdEventMsg &out) {
+    return s_webEvents != nullptr && xQueueReceive(s_webEvents, &out, 0) == pdTRUE;
+}
+
+uint32_t commandWebEventsDropped() { return s_webEventsDropped.load(std::memory_order_relaxed); }
 
 uint32_t commandEventsDropped() { return s_eventsDropped.load(std::memory_order_relaxed); }
 

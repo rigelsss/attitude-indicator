@@ -10,6 +10,7 @@
 #include "link_task.h"
 #include "oled_task.h"
 #include "radio_rx.h"
+#include "web_task.h"
 
 static uint32_t rxRefused(const RxCounters &c) { return c.badSize + c.badMagic + c.badVersion + c.badType; }
 
@@ -217,8 +218,25 @@ static void printState(bool streamR, bool streamA) {
                   (unsigned long)cs.submitted, (unsigned long)cs.sends, (unsigned long)cs.polls, (unsigned long)cs.sendErrors,
                   (unsigned long)cs.acksMatched, (unsigned long)cs.acksIgnored, (unsigned long)cs.localRejects,
                   (unsigned long)c.acks, (unsigned long)c.acksBad, (unsigned long)c.acksDropped);
-    Serial.printf("fluxos: r %s, a %s | heap livre %u kB\n", streamR ? "ligado" : "desligado",
-                  streamA ? "ligado" : "desligado", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024));
+    WebStatus ws;
+    if (webCurrent(ws))
+        Serial.printf("página: %s | http://192.168.4.1 (WebSocket :%d) | clientes %u | telemetria %lu | comandos "
+                      "aceitos %lu, recusados %lu | PIN %s\n"
+                      "ws: telemetrias puladas %lu | fila: refeitas %lu, envios recusados %lu | clientes derrubados "
+                      "%lu\n"
+                      "http: requisições %lu | conexões abertas %u/%d | fechadas ociosas %lu, para dar lugar %lu | "
+                      "recusadas %lu\n",
+                      ws.fsOk ? "gravada" : "NÃO GRAVADA (uploadfs)", WS_PORT, ws.clients, (unsigned long)ws.telSent,
+                      (unsigned long)ws.cmdsOk, (unsigned long)ws.cmdsRefused, WEB_CMD_PIN[0] ? "exigido" : "desligado",
+                      (unsigned long)ws.wsSkipped, (unsigned long)ws.wsResyncs, (unsigned long)ws.wsSendFail,
+                      (unsigned long)ws.wsDropped,
+                      (unsigned long)ws.httpReqs, ws.httpOpen, HTTP_MAX_CONNS, (unsigned long)ws.httpIdle,
+                      (unsigned long)ws.httpEvicted, (unsigned long)ws.httpRejected);
+    else
+        Serial.println("página: task não iniciada");
+    Serial.printf("fluxos: r %s, a %s | heap livre %u kB, maior bloco %u kB\n", streamR ? "ligado" : "desligado",
+                  streamA ? "ligado" : "desligado", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024),
+                  (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024));
     Serial.println("----------------------------------------------");
 }
 

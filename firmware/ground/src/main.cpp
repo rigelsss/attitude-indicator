@@ -12,10 +12,11 @@
 //                passo 5); o TFT e o sprite são iniciados no setup(), antes do Wi-Fi
 //   command_task (prio 2, núcleo 0) — comandos para o A: envio com reenvio, casamento dos ACKs e eventos
 //                (docs/web.md, passo 2)
+//   web_task     (prio 1, núcleo 0) — página (HTTP, LittleFS) e WebSocket: telemetria em JSON e comandos com
+//                PIN (docs/web.md, passo 3)
 //   serial_task  (prio 1, núcleo 0) — única dona do Serial depois do boot: teclas e impressão
 // Serial: c = estado | r = resumo por segundo (começa ligado) | a = fluxo de pacotes (10 Hz) | k = reconhecer o
 // alarme | g, m, z, 0, f, X = comandos para o A.
-// Prevista (semana 5): web_task (HTTP + WebSocket), lendo as caixas de correio da link_task.
 #include <Arduino.h>
 #include "config.h"
 #include "telemetry.h"
@@ -27,6 +28,7 @@
 #include "tasks/oled_task.h"
 #include "tasks/radio_rx.h"
 #include "tasks/serial_task.h"
+#include "tasks/web_task.h"
 
 extern const char *const BUILD_STAMP;   // build_info.cpp: data e hora da compilação
 
@@ -60,7 +62,7 @@ void setup() {
     Serial.begin(115200);
     delay(SERIAL_START_DELAY_MS);   // tempo para o monitor reabrir depois do reset
     // Até a serial_task começar, só o setup() escreve no Serial
-    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, comandos, alarme, encoder, OLED, TFT e serial)\n",
+    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, comandos, alarme, encoder, OLED, TFT, web e serial)\n",
                   BUILD_STAMP, (unsigned)sizeof(TelemetryPacket), TELEMETRY_VERSION);
     Serial.printf("[B] reinício anterior: %s\n", resetReasonText(esp_reset_reason()));
     // O sprite do TFT (57,6 kB contíguos) é alocado antes do Wi-Fi, com o heap ainda sem fragmentar. Sem ele, o
@@ -78,6 +80,8 @@ void setup() {
     if (!oledTaskStart()) Serial.println("[B] ERRO: sem memória para a oled_task; seguindo sem o OLED");
     if (!displayTaskStart()) Serial.println("[B] ERRO: sem memória para a display_task; seguindo sem o TFT");
     else if (!tftOk) Serial.println("[B] TFT sem sprite: só a mensagem de erro na tela");
+    // Sem a página, o resto segue
+    if (!webTaskStart()) Serial.println("[B] ERRO: sem memória para a web_task; seguindo sem a página");
     if (!serialTaskStart()) fatal("[B] ERRO: sem memória para a serial_task; reiniciando em 1 s");
 }
 

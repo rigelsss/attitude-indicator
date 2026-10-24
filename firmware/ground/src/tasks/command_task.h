@@ -1,7 +1,8 @@
 // command_task.h — comandos do ESP B para o ESP A (docs/web.md, passo 2). Recebe os pedidos (console, pressão
 // longa do encoder e, no passo 3, a página), envia o CommandPacket pelo ESP-NOW com reenvio, casa os ACKs
 // (lib/command_link) e publica cada mudança de estado (enviado, aceito, concluído, recusado, sem resposta, sem
-// conclusão) para a serial. O seq do primeiro comando é aleatório a cada boot.
+// conclusão) para a serial e para a página (uma fila para cada). O seq do primeiro comando é aleatório a cada
+// boot.
 // Núcleo CMD_TASK_CORE (0), prioridade CMD_TASK_PRIO (config.h).
 #pragma once
 #include <stdint.h>
@@ -31,4 +32,7 @@ bool commandEventReceive(CmdEventMsg &out);
 uint32_t commandEventsDropped();
 // Última mudança de estado de um comando pedido pelo encoder (cópia). false se ainda não houve
 bool commandLastFromEncoder(CmdEventMsg &out);
+// Mudanças de estado para a página (fila própria, de qualquer origem). false se não há
+bool commandWebEventReceive(CmdEventMsg &out);
+uint32_t commandWebEventsDropped();
 CmdStats commandStats();

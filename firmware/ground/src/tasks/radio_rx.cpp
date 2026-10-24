@@ -74,7 +74,7 @@ bool radioRxStart() {
         Serial.println("[radio] ERRO: Wi-Fi não iniciado em AP+STA; rádio desligado");
         return false;
     }
-    if (!WiFi.softAP(AP_SSID, AP_PASS, AP_CHANNEL)) {
+    if (!WiFi.softAP(AP_SSID, AP_PASS, AP_CHANNEL, 0, AP_MAX_CLIENTS)) {
         Serial.println("[radio] ERRO: AP não iniciado; rádio desligado");
         return false;
     }

@@ -65,9 +65,23 @@
 #define AP_SSID          "Horizonte-ESP"
 #define AP_PASS          "horizonte123"   // mín. 8 caracteres
 #define AP_CHANNEL       1                // IGUAL ao ESPNOW_CHANNEL do ESP A
+#define AP_MAX_CLIENTS   8                // celulares na rede ao mesmo tempo (padrão do núcleo: 4). Cada um usa
+                                          // um socket do WebSocket; o SDK tem 16 sockets: 2 de escuta +
+                                          // 8 WebSockets + HTTP_MAX_CONNS (4) = 14. IGUAL ao
+                                          // WEBSOCKETS_SERVER_CLIENT_MAX do platformio.ini (docs/web.md)
 #define HTTP_PORT        80
 #define WS_PORT          81
-#define WS_RATE_HZ       30
+#define HTTP_MAX_CONNS   4        // conexões HTTP atendidas ao mesmo tempo (servidor próprio; docs/web.md)
+#define HTTP_IDLE_MS     2000     // conexão HTTP sem requisição ou sem progresso no envio é fechada
+#define HTTP_REQ_BYTES   256      // buffer da linha de requisição (maior: 414)
+#define HTTP_CHUNK_BYTES 1024     // bytes do arquivo enviados por conexão a cada volta da web_task
+#define WS_RATE_HZ       30       // telemetria no WebSocket (só com clientes conectados)
+#define WS_STALL_MS      2000     // cliente do WebSocket sem espaço no envio por mais que isso é derrubado
+#define WS_OUTBOX_LEN    12       // fila por cliente das mensagens que não podem se perder (hello, comandos)
+#define WS_RECENT_CMDS   8        // últimos comandos (estado atual) enviados a quem conecta
+#define WEB_CMD_PIN      "2468"   // PIN dos comandos pela página (todos veem; só quem digita o PIN comanda).
+                                  // "" desliga. Protege contra o uso acidental, não contra quem capture o
+                                  // tráfego (o WebSocket não é criptografado; docs/web.md)
 #define ESPNOW_CHANNEL   AP_CHANNEL       // o ESP-NOW usa o canal do AP (WIFI_AP_STA; docs/radio.md)
 
 // ---------- Recepção do ESP-NOW e link (docs/radio.md, ESP B) ----------
@@ -119,6 +133,11 @@
 #define CMD_TASK_PRIO           2
 #define CMD_TASK_STACK          3072
 #define CMD_TASK_WAIT_MS        20     // espera máxima por um pedido ou ACK: reenvios e prazos conferidos nesse ritmo
+#define WEB_TASK_CORE           0      // junto com o Wi-Fi
+#define WEB_TASK_PRIO           1
+#define WEB_TASK_STACK          8192   // HTTP, WebSocket e JSON
+#define WEB_TASK_PERIOD_MS      5      // volta: atende HTTP e WebSocket
+#define WEB_MSG_BYTES           768    // maior mensagem JSON montada (a telemetria tem ~450 bytes)
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1
 #define SERIAL_TASK_STACK       4096

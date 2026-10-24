@@ -159,4 +159,34 @@ void oledBuildPage(const OledInputs &in, OledPage &out) {
     memset(&out, 0, sizeof(out));
     if (in.page == 0) buildData(in, out);
     else buildLink(in, out);
+    if (in.footer != nullptr) setLine(out, OLED_ROWS - 1, in.footer);
+}
+
+static const char *zeroLabel(uint8_t cmd) { return cmd == CMD_ZERO_ATTITUDE ? "ZERO ATT" : "ZERO ALT"; }
+
+const char *oledEncoderFooter(char *buf, int n, bool buttonHeld, uint8_t pageCmd, bool haveEvent, uint8_t evCmd,
+                              CmdState state, bool localFull, uint32_t ageMs, uint32_t showMs) {
+    if (buttonHeld) {
+        snprintf(buf, n, "segure 1s: %s", zeroLabel(pageCmd));
+        return buf;
+    }
+    if (!haveEvent) return nullptr;
+    const bool inProgress = !localFull && !cmdStateFinal(state);
+    if (!inProgress && ageMs >= showMs) return nullptr;
+    const char *txt = "?";
+    if (localFull) {
+        txt = "OCUPADO";
+    } else {
+        switch (state) {
+        case CmdState::Sending:      txt = "ENVIADO"; break;
+        case CmdState::Accepted:     txt = "ACEITO"; break;
+        case CmdState::Done:         txt = "OK"; break;
+        case CmdState::Rejected:     txt = "RECUSADO"; break;
+        case CmdState::NoResponse:   txt = "SEM RESP."; break;
+        case CmdState::NoCompletion: txt = "SEM FIM"; break;
+        case CmdState::Free:         return nullptr;
+        }
+    }
+    snprintf(buf, n, "%s: %s", zeroLabel(evCmd), txt);
+    return buf;
 }

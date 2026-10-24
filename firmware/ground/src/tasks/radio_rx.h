@@ -2,7 +2,8 @@
 // ESPNOW_CHANNEL e a STA sem se associar (nunca WiFi.begin(), para o rádio não sair do canal). O A envia para
 // o MAC base (o da STA), que só vale com a STA ligada.
 // O callback de recepção (task do Wi-Fi, núcleo 0) só filtra o remetente (PEER_MAC, o A), confere e copia o
-// pacote (decodeTelemetry), carimba a chegada e enfileira para a link_task. Nada de impressão no callback.
+// pacote, carimba a chegada e enfileira: a telemetria (decodeTelemetry) para a link_task e os ACKs dos comandos
+// (decodeAck) para a command_task. Nada de impressão no callback.
 #pragma once
 #include <stdint.h>
 #include <freertos/FreeRTOS.h>
@@ -21,6 +22,7 @@ struct RxCounters {
     uint32_t badSize, badMagic, badVersion, badType;   // recusados, por motivo (RxDecode)
     uint32_t foreign;     // outro remetente
     uint32_t queueFull;   // fila da link_task cheia: descartado
+    uint32_t acks, acksBad, acksDropped;   // ACKs dos comandos: aceitos, recusados na conferência, fila cheia
 };
 
 // Dados da configuração, para a linha de boot e o c
@@ -35,5 +37,9 @@ struct RadioInfo {
 bool radioRxStart();
 // Fila de recepção (RxItem), consumida pela link_task
 QueueHandle_t radioRxQueue();
+// Fila dos ACKs (AckPacket), consumida pela command_task
+QueueHandle_t radioAckQueue();
+// Envia um comando ao A (esp_now_send). false sem rádio ou com o envio recusado
+bool radioSendCommand(const CommandPacket &p);
 RxCounters radioRxCounters();
 const RadioInfo &radioInfo();

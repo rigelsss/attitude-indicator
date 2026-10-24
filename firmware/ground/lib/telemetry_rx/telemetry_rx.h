@@ -13,4 +13,8 @@ enum class RxDecode : uint8_t { Ok, BadSize, BadMagic, BadVersion, BadType };
 // O buffer do ESP-NOW é copiado (memcpy) antes de qualquer leitura, porque não tem alinhamento garantido
 // (telemetry.h). out só vale com Ok
 RxDecode decodeTelemetry(const uint8_t *data, size_t len, TelemetryPacket &out);
+// ACK de um comando (A → B, docs/web.md): mesma ordem de conferência, com o tipo MSG_ACK e 12 bytes
+RxDecode decodeAck(const uint8_t *data, size_t len, AckPacket &out);
+// Tipo da mensagem (MsgType) lido do cabeçalho; 0 se o buffer for menor que o cabeçalho
+uint8_t rxMessageType(const uint8_t *data, size_t len);
 const char *rxDecodeText(RxDecode r);

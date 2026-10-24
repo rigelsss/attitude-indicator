@@ -6,6 +6,7 @@
 #include <esp_timer.h>
 #include "alarm_task.h"
 #include "config.h"
+#include "command_task.h"
 #include "input_task.h"
 #include "link_task.h"
 #include "oled_view.h"
@@ -69,7 +70,15 @@ static void gather(OledInputs &in) {
     AlarmStatus al;
     in.alarmText = alarmCurrent(al) ? alarmKindShort(al.kind) : "---";
     InputStatus inp;
-    in.page = inputCurrent(inp) ? inp.page : 0;
+    const bool haveInp = inputCurrent(inp);
+    in.page = haveInp ? inp.page : 0;
+    // Rodapé da pressão longa: o que vai acontecer com o botão apertado e, depois, o andamento do comando
+    static char footer[OLED_COLS + 1];
+    CmdEventMsg ce;
+    const bool haveEv = commandLastFromEncoder(ce);
+    in.footer = oledEncoderFooter(footer, sizeof(footer), haveInp && inp.buttonHeld, encoderLongPressCommand(in.page),
+                                  haveEv, haveEv ? ce.ev.cmd : 0, haveEv ? ce.ev.state : CmdState::Free,
+                                  haveEv && ce.localFull, haveEv ? millis() - ce.atMs : 0, OLED_CMD_FOOTER_MS);
     in.pages = OLED_PAGES;
     in.headingTrue = OLED_HEADING_TRUE != 0;
     in.declinationDeg = MAG_DECLINATION_DEG;

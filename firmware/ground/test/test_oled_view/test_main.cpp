@@ -283,8 +283,35 @@ static void test_alarm_short_texts_fit() {
     for (AlarmKind k : kinds) TEST_ASSERT_TRUE(strlen("ALARME ") + strlen(alarmKindShort(k)) <= (size_t)OLED_COLS);
 }
 
+// Rodapé da pressão longa: o que vai acontecer, o andamento e o resultado por showMs
+static void test_encoder_footer() {
+    char b[OLED_COLS + 1];
+    TEST_ASSERT_EQUAL_STRING("segure 1s: ZERO ATT",
+                             oledEncoderFooter(b, sizeof(b), true, CMD_ZERO_ATTITUDE, false, 0, CmdState::Free, false, 0, 4000));
+    TEST_ASSERT_EQUAL_STRING("segure 1s: ZERO ALT",
+                             oledEncoderFooter(b, sizeof(b), true, CMD_ZERO_ALTITUDE, false, 0, CmdState::Free, false, 0, 4000));
+    TEST_ASSERT_NULL(oledEncoderFooter(b, sizeof(b), false, CMD_ZERO_ATTITUDE, false, 0, CmdState::Free, false, 0, 4000));
+    // Em curso: mostrado mesmo depois de showMs
+    TEST_ASSERT_EQUAL_STRING("ZERO ALT: ACEITO", oledEncoderFooter(b, sizeof(b), false, 0, true, CMD_ZERO_ALTITUDE,
+                                                                   CmdState::Accepted, false, 9000, 4000));
+    TEST_ASSERT_EQUAL_STRING("ZERO ATT: OK", oledEncoderFooter(b, sizeof(b), false, 0, true, CMD_ZERO_ATTITUDE,
+                                                               CmdState::Done, false, 3999, 4000));
+    TEST_ASSERT_NULL(oledEncoderFooter(b, sizeof(b), false, 0, true, CMD_ZERO_ATTITUDE, CmdState::Done, false, 4000, 4000));
+    TEST_ASSERT_EQUAL_STRING("ZERO ATT: SEM RESP.", oledEncoderFooter(b, sizeof(b), false, 0, true, CMD_ZERO_ATTITUDE,
+                                                                      CmdState::NoResponse, false, 10, 4000));
+    TEST_ASSERT_EQUAL_STRING("ZERO ATT: OCUPADO", oledEncoderFooter(b, sizeof(b), false, 0, true, CMD_ZERO_ATTITUDE,
+                                                                    CmdState::Rejected, true, 10, 4000));
+    // O rodapé substitui a última linha da página
+    OledInputs in = base();
+    in.footer = "ZERO ATT: OK";
+    TEST_ASSERT_EQUAL_STRING("ZERO ATT: OK", build(in).lines[5]);
+    in.page = 1;
+    TEST_ASSERT_EQUAL_STRING("ZERO ATT: OK", build(in).lines[5]);
+}
+
 int main() {
     UNITY_BEGIN();
+    RUN_TEST(test_encoder_footer);
     RUN_TEST(test_data_page);
     RUN_TEST(test_link_page);
     RUN_TEST(test_no_signal);

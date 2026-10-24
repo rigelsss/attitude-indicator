@@ -14,6 +14,9 @@ static QueueHandle_t s_queue = nullptr;
 static RadioInfo s_info = {};
 static std::atomic<uint32_t> s_badSize{0}, s_badMagic{0}, s_badVersion{0}, s_badType{0}, s_foreign{0},
     s_queueFull{0};
+// ACKs dos comandos (docs/web.md): copiados e enfileirados para a command_task
+static QueueHandle_t s_ackQueue = nullptr;
+static std::atomic<uint32_t> s_acks{0}, s_acksBad{0}, s_acksDropped{0};
 
 // ---------- Callback de recepção (task do Wi-Fi): confere, copia e enfileira ----------
 
@@ -23,10 +26,22 @@ static void onRecv(const uint8_t *mac, const uint8_t *data, int len) {
         s_foreign.fetch_add(1, std::memory_order_relaxed);
         return;
     }
+    const size_t n = len > 0 ? (size_t)len : 0;
+    if (rxMessageType(data, n) == MSG_ACK) {
+        AckPacket ack;
+        if (decodeAck(data, n, ack) != RxDecode::Ok) {
+            s_acksBad.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        s_acks.fetch_add(1, std::memory_order_relaxed);
+        if (s_ackQueue == nullptr || xQueueSend(s_ackQueue, &ack, 0) != pdTRUE)
+            s_acksDropped.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     RxItem item;
     item.arrivalUs = arrivalUs;
     item.delayMs = 0;
-    switch (decodeTelemetry(data, len > 0 ? (size_t)len : 0, item.pkt)) {
+    switch (decodeTelemetry(data, n, item.pkt)) {
     case RxDecode::Ok:
         // Não é ISR: xQueueSend, sem espera
         if (xQueueSend(s_queue, &item, 0) != pdTRUE) s_queueFull.fetch_add(1, std::memory_order_relaxed);
@@ -46,6 +61,7 @@ static void macText(char *out, const uint8_t *m) {
 
 bool radioRxStart() {
     s_queue = xQueueCreate(RX_QUEUE_LEN, sizeof(RxItem));
+    s_ackQueue = xQueueCreate(RX_ACK_QUEUE_LEN, sizeof(AckPacket));
     if (s_queue == nullptr) {
         Serial.println("[radio] ERRO: sem memória para a fila de recepção; rádio desligado");
         return false;
@@ -103,6 +119,12 @@ bool radioRxStart() {
 
 QueueHandle_t radioRxQueue() { return s_queue; }
 
+QueueHandle_t radioAckQueue() { return s_ackQueue; }
+
+bool radioSendCommand(const CommandPacket &p) {
+    return s_info.active && esp_now_send(PEER_MAC, (const uint8_t *)&p, sizeof(p)) == ESP_OK;
+}
+
 RxCounters radioRxCounters() {
     RxCounters c;
     c.badSize = s_badSize.load(std::memory_order_relaxed);
@@ -111,6 +133,9 @@ RxCounters radioRxCounters() {
     c.badType = s_badType.load(std::memory_order_relaxed);
     c.foreign = s_foreign.load(std::memory_order_relaxed);
     c.queueFull = s_queueFull.load(std::memory_order_relaxed);
+    c.acks = s_acks.load(std::memory_order_relaxed);
+    c.acksBad = s_acksBad.load(std::memory_order_relaxed);
+    c.acksDropped = s_acksDropped.load(std::memory_order_relaxed);
     return c;
 }
 

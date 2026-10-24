@@ -10,6 +10,7 @@
 // Atitude degradada (VAL_ATT_DEGRADED): o título da página 1 vira "ATT DEGRADADA".
 #pragma once
 #include <stdint.h>
+#include "command_link.h"
 #include "telemetry.h"
 
 static const int OLED_ROWS = 6;
@@ -38,6 +39,8 @@ struct OledInputs {
     uint8_t         pages;
     bool            headingTrue;   // false: proa magnética (MAG); true: verdadeira (VERD), com a declinação
     float           declinationDeg;
+    const char     *footer;        // não nulo: substitui a última linha da página (andamento do comando do
+                                   // encoder; oledEncoderFooter)
 };
 
 struct OledPage {
@@ -46,6 +49,12 @@ struct OledPage {
 };
 
 void oledBuildPage(const OledInputs &in, OledPage &out);
+
+// Rodapé do comando da pressão longa (até 21 colunas, ASCII): com o botão apertado, o que vai acontecer
+// ("segure 1s: ZERO ATT"); depois, o andamento ("ZERO ATT: ENVIADO", "ACEITO", "OK", "RECUSADO", "SEM RESP.",
+// "SEM FIM", "OCUPADO"): em curso, sempre; os finais, por showMs. nullptr sem rodapé
+const char *oledEncoderFooter(char *buf, int n, bool buttonHeld, uint8_t pageCmd, bool haveEvent, uint8_t evCmd,
+                              CmdState state, bool localFull, uint32_t ageMs, uint32_t showMs);
 
 // Proa exibida, 0..360 (exclusive): a magnética, ou a verdadeira = magnética + declinação
 float oledHeading(float magneticDeg, bool headingTrue, float declinationDeg);

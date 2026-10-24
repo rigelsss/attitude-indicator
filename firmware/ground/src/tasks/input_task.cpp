@@ -5,6 +5,7 @@
 #include <driver/gpio.h>
 #include <soc/gpio_reg.h>
 #include "alarm_task.h"
+#include "command_task.h"
 #include "config.h"
 #include "encoder_decode.h"
 
@@ -102,11 +103,19 @@ static void inputTask(void *) {
             // A alarm_task avisa "reconhecido" ou "nada a reconhecer"; com a fila dela cheia, o pedido não chega
             if (!alarmAcknowledge()) publish(InputEventMsg::AckDropped, 0, st.page);
             break;
-        case ButtonEvent::Long: publish(InputEventMsg::LongPress, 0, st.page); break;
+        case ButtonEvent::Long: {
+            // Pressão longa conforme a página do OLED: dados = zerar a atitude; link = zerar a altitude
+            // (docs/web.md). A serial e o OLED mostram o andamento do comando
+            const uint8_t cmd = encoderLongPressCommand(st.page);
+            publish(InputEventMsg::LongPress, (int8_t)cmd, st.page);
+            if (!commandSubmit(cmd, 0, CMD_FROM_ENCODER)) publish(InputEventMsg::CmdDropped, (int8_t)cmd, st.page);
+            break;
+        }
         case ButtonEvent::None: break;
         }
         st.invalid = dec.invalid();
         st.isrDropped = s_isrDropped;
+        st.buttonHeld = btn.pressed();
         xQueueOverwrite(s_status, &st);
     }
 }
@@ -122,6 +131,8 @@ bool inputTaskStart() {
     while (!s_startDone) vTaskDelay(1);   // a task configura os pinos e a ISR no próprio núcleo
     return s_startOk;
 }
+
+uint8_t encoderLongPressCommand(uint8_t page) { return page == 0 ? CMD_ZERO_ATTITUDE : CMD_ZERO_ALTITUDE; }
 
 bool inputEventReceive(InputEventMsg &out) { return s_events != nullptr && xQueueReceive(s_events, &out, 0) == pdTRUE; }
 

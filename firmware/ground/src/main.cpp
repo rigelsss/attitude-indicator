@@ -10,14 +10,17 @@
 //                (docs/solo.md, passo 3)
 //   display_task (prio 2, núcleo 1) — horizonte no TFT com o sprite de 8 bits, a DISPLAY_FPS (docs/solo.md,
 //                passo 5); o TFT e o sprite são iniciados no setup(), antes do Wi-Fi
+//   command_task (prio 2, núcleo 0) — comandos para o A: envio com reenvio, casamento dos ACKs e eventos
+//                (docs/web.md, passo 2)
 //   serial_task  (prio 1, núcleo 0) — única dona do Serial depois do boot: teclas e impressão
 // Serial: c = estado | r = resumo por segundo (começa ligado) | a = fluxo de pacotes (10 Hz) | k = reconhecer o
-// alarme.
+// alarme | g, m, z, 0, f, X = comandos para o A.
 // Prevista (semana 5): web_task (HTTP + WebSocket), lendo as caixas de correio da link_task.
 #include <Arduino.h>
 #include "config.h"
 #include "telemetry.h"
 #include "tasks/alarm_task.h"
+#include "tasks/command_task.h"
 #include "tasks/input_task.h"
 #include "tasks/link_task.h"
 #include "tasks/display_task.h"
@@ -57,7 +60,7 @@ void setup() {
     Serial.begin(115200);
     delay(SERIAL_START_DELAY_MS);   // tempo para o monitor reabrir depois do reset
     // Até a serial_task começar, só o setup() escreve no Serial
-    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, alarme, encoder, OLED, TFT e serial)\n",
+    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, comandos, alarme, encoder, OLED, TFT e serial)\n",
                   BUILD_STAMP, (unsigned)sizeof(TelemetryPacket), TELEMETRY_VERSION);
     Serial.printf("[B] reinício anterior: %s\n", resetReasonText(esp_reset_reason()));
     // O sprite do TFT (57,6 kB contíguos) é alocado antes do Wi-Fi, com o heap ainda sem fragmentar. Sem ele, o
@@ -66,6 +69,8 @@ void setup() {
     // Sem o rádio, a serial segue: o c mostra "rádio: DESLIGADO" e o r, "sem sinal"
     if (!radioRxStart()) Serial.println("[B] seguindo sem rádio");
     if (!linkTaskStart()) fatal("[B] ERRO: sem memória para a link_task; reiniciando em 1 s");
+    // Sem os comandos, o resto segue (as teclas e a pressão longa avisam a fila cheia)
+    if (!commandTaskStart()) Serial.println("[B] ERRO: sem memória para a command_task; seguindo sem comandos");
     // Sem os alarmes, o resto segue: o c mostra "alarme: task não iniciada"
     if (!alarmTaskStart()) Serial.println("[B] ERRO: sem memória para a alarm_task; seguindo sem alarmes");
     // Sem o encoder, o resto segue: a tecla k ainda reconhece o alarme

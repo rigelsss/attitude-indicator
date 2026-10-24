@@ -4,6 +4,7 @@
 #include <esp_timer.h>
 #include "config.h"
 #include "alarm_task.h"
+#include "command_task.h"
 #include "display_task.h"
 #include "input_task.h"
 #include "link_task.h"
@@ -63,14 +64,42 @@ static void printInputEvent(const InputEventMsg &e) {
         Serial.printf("[enc] %lu ms: botão curto: reconhecer o alarme\n", (unsigned long)e.atMs);
         break;
     case InputEventMsg::LongPress:
-        Serial.printf("[enc] %lu ms: pressão longa (reservada para os comandos da semana 5)\n", (unsigned long)e.atMs);
+        Serial.printf("[enc] %lu ms: pressão longa na página %u: %s\n", (unsigned long)e.atMs, e.page + 1,
+                      commandText((uint8_t)e.dir));
         break;
     case InputEventMsg::AckDropped:
         Serial.printf("[enc] %lu ms: botão curto descartado: fila de reconhecimento do alarme cheia\n",
                       (unsigned long)e.atMs);
         break;
+    case InputEventMsg::CmdDropped:
+        Serial.printf("[enc] %lu ms: pressão longa descartada: fila de comandos cheia\n", (unsigned long)e.atMs);
+        break;
     }
 }
+
+static void printCommandEvent(const CmdEventMsg &m) {
+    const CmdEvent &e = m.ev;
+    if (m.localFull) {
+        Serial.printf("[cmd] %lu ms: '%s' (%s) recusado no B: comandos demais em curso\n", (unsigned long)m.atMs,
+                      commandText(e.cmd), cmdOriginText(e.origin));
+        return;
+    }
+    if (e.state == CmdState::Sending) {
+        if (m.attempt <= 1)
+            Serial.printf("[cmd] %lu ms: '%s' (%s, seq %u%s) enviado\n", (unsigned long)m.atMs, commandText(e.cmd),
+                          cmdOriginText(e.origin), e.seq, e.cmd == CMD_SET_RATE_HZ ? ", taxa" : "");
+        else
+            Serial.printf("[cmd] %lu ms: '%s' (seq %u) sem ACK: reenvio %u de %d\n", (unsigned long)m.atMs,
+                          commandText(e.cmd), e.seq, m.attempt, CMD_MAX_TRIES);
+        if (m.attempt <= 1 && e.cmd == CMD_SET_RATE_HZ) Serial.printf("[cmd]   taxa pedida: %ld Hz\n", (long)e.arg);
+        return;
+    }
+    Serial.printf("[cmd] %lu ms: '%s' (seq %u): %s\n", (unsigned long)m.atMs, commandText(e.cmd), e.seq,
+                  cmdStateText(e.state));
+}
+
+// Taxas aceitas pelo A, em ciclo pela tecla f (50 → 25 → 20 → 10 → 50)
+static int32_t nextRate(int32_t cur) { return cur == 50 ? 25 : cur == 25 ? 20 : cur == 20 ? 10 : 50; }
 
 static void printReport(const LinkReport &r) {
     const LinkCounts &w = r.win.counts;
@@ -182,6 +211,12 @@ static void printState(bool streamR, bool streamA) {
                       "quadros %lu, acima do período %lu\n",
                       ds.fps, DISPLAY_FPS, ds.drawUs / 1000.0f, ds.pushUs / 1000.0f, ds.maxFrameUs / 1000.0f,
                       (unsigned long)ds.frames, (unsigned long)ds.overruns);
+    const CmdStats cs = commandStats();
+    Serial.printf("comandos: pedidos %lu | envios %lu (reconsultas %lu, falhas %lu) | ACKs casados %lu, ignorados %lu "
+                  "| recusados no B %lu | ACKs do rádio: %lu, inválidos %lu, fila cheia %lu\n",
+                  (unsigned long)cs.submitted, (unsigned long)cs.sends, (unsigned long)cs.polls, (unsigned long)cs.sendErrors,
+                  (unsigned long)cs.acksMatched, (unsigned long)cs.acksIgnored, (unsigned long)cs.localRejects,
+                  (unsigned long)c.acks, (unsigned long)c.acksBad, (unsigned long)c.acksDropped);
     Serial.printf("fluxos: r %s, a %s | heap livre %u kB\n", streamR ? "ligado" : "desligado",
                   streamA ? "ligado" : "desligado", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024));
     Serial.println("----------------------------------------------");
@@ -190,12 +225,15 @@ static void printState(bool streamR, bool streamA) {
 static void printHelp() {
     Serial.println("[B] teclas: c = estado | r = resumo por segundo | a = fluxo de pacotes (10 Hz) | k = reconhecer o "
                    "alarme (o mesmo que o botão do encoder)");
+    Serial.println("[B] comandos para o A: g = calibrar giroscópio | m = calibrar magnetômetro | z = zerar atitude | "
+                   "0 = zerar altitude | f = próxima taxa (50, 25, 20, 10 Hz) | X = taxa inválida (teste da recusa)");
 }
 
 static void serialTask(void *) {
     bool streamR = true;   // o resumo começa ligado: é o que a bancada do rádio acompanha
     bool streamA = false;
-    uint32_t reportSeen = 0, droppedSeen = 0, alarmDroppedSeen = 0, inputDroppedSeen = 0;
+    uint32_t reportSeen = 0, droppedSeen = 0, alarmDroppedSeen = 0, inputDroppedSeen = 0, cmdDroppedSeen = 0;
+    int32_t rate = 50;   // última taxa pedida pela tecla f (o A começa em TX_RATE_HZ, 50 Hz)
     int oledSeen = -1;   // presença do OLED já avisada: −1 ainda não lida, 0 ausente, 1 presente
     uint16_t lastSeqPrinted = 0;
     bool printedAny = false;
@@ -222,6 +260,14 @@ static void serialTask(void *) {
             if (oledSeen >= 0 || !ol.present)   // no boot, só avisa se faltar
                 Serial.printf("[oled] %s\n", ol.present ? "presente" : "AUSENTE: sem resposta em 0x3C");
             oledSeen = ol.present ? 1 : 0;
+        }
+        CmdEventMsg ce;
+        while (commandEventReceive(ce)) printCommandEvent(ce);
+        const uint32_t cmdDropped = commandEventsDropped();
+        if (cmdDropped != cmdDroppedSeen) {
+            Serial.printf("[cmd] %lu mudanças de comando descartadas: fila cheia\n",
+                          (unsigned long)(cmdDropped - cmdDroppedSeen));
+            cmdDroppedSeen = cmdDropped;
         }
         InputEventMsg ie;
         while (inputEventReceive(ie)) printInputEvent(ie);
@@ -260,6 +306,32 @@ static void serialTask(void *) {
             case 'k':
                 if (!alarmAcknowledge()) Serial.println("[B] tecla k descartada: fila de reconhecimento cheia");
                 break;
+            case 'g':
+            case 'm':
+            case 'z':
+            case '0':
+            case 'f':
+            case 'X': {
+                uint8_t cmd = 0;
+                int32_t arg = 0;
+                switch (k) {
+                case 'g': cmd = CMD_CALIBRATE_GYRO; break;
+                case 'm': cmd = CMD_CALIBRATE_MAG; break;
+                case 'z': cmd = CMD_ZERO_ATTITUDE; break;
+                case '0': cmd = CMD_ZERO_ALTITUDE; break;
+                case 'f':
+                    cmd = CMD_SET_RATE_HZ;
+                    arg = rate = nextRate(rate);
+                    break;
+                default:
+                    cmd = CMD_SET_RATE_HZ;
+                    arg = 30;   // não aceita pelo A: testa o REJECTED
+                    break;
+                }
+                if (!commandSubmit(cmd, arg, CMD_FROM_CONSOLE))
+                    Serial.printf("[cmd] tecla %c descartada: fila de comandos cheia\n", k);
+                break;
+            }
             case 'a':
                 streamA = !streamA;
                 Serial.printf("[B] fluxo de pacotes %s\n", streamA ? "ligado" : "desligado");

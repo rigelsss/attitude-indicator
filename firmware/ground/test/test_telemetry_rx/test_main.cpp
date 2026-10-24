@@ -83,6 +83,30 @@ static void test_decode_bad_type() {
     TEST_ASSERT_EQUAL(RxDecode::BadType, decodeTelemetry((const uint8_t *)&ack, sizeof(ack), out));
 }
 
+// ACK válido, de um buffer desalinhado; telemetria recusada pelo tipo
+static void test_decode_ack() {
+    AckPacket a;
+    memset(&a, 0, sizeof(a));
+    a.hdr.magic = TELEMETRY_MAGIC;
+    a.hdr.version = TELEMETRY_VERSION;
+    a.hdr.type = MSG_ACK;
+    a.cmd = CMD_ZERO_ALTITUDE;
+    a.result = ACK_DONE;
+    a.cmd_seq = 777;
+    uint8_t raw[sizeof(AckPacket) + 1];
+    memcpy(raw + 1, &a, sizeof(a));
+    AckPacket out;
+    TEST_ASSERT_EQUAL(RxDecode::Ok, decodeAck(raw + 1, sizeof(AckPacket), out));
+    TEST_ASSERT_EQUAL_UINT8(CMD_ZERO_ALTITUDE, out.cmd);
+    TEST_ASSERT_EQUAL_UINT8(ACK_DONE, out.result);
+    TEST_ASSERT_EQUAL_UINT16(777, out.cmd_seq);
+    TEST_ASSERT_EQUAL_UINT8(MSG_ACK, rxMessageType(raw + 1, sizeof(AckPacket)));
+    const TelemetryPacket p = goodPacket();
+    TEST_ASSERT_EQUAL(RxDecode::BadType, decodeAck((const uint8_t *)&p, sizeof(p), out));
+    TEST_ASSERT_EQUAL(RxDecode::BadSize, decodeAck(raw + 1, sizeof(AckPacket) - 1, out));
+    TEST_ASSERT_EQUAL_UINT8(0, rxMessageType(raw, 3));
+}
+
 static void test_decode_text() {
     TEST_ASSERT_EQUAL_STRING("ok", rxDecodeText(RxDecode::Ok));
     TEST_ASSERT_EQUAL_STRING("tamanho", rxDecodeText(RxDecode::BadSize));
@@ -96,6 +120,7 @@ int main() {
     RUN_TEST(test_decode_bad_magic);
     RUN_TEST(test_decode_bad_version);
     RUN_TEST(test_decode_bad_type);
+    RUN_TEST(test_decode_ack);
     RUN_TEST(test_decode_text);
     return UNITY_END();
 }

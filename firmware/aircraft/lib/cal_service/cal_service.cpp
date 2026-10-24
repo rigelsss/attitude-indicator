@@ -320,6 +320,15 @@ CalKey CalService::handleKey(char ch) {
 void CalService::onGyroEvent() {
     const GyroCalFlow &g = coord_.gyro();
     const GyroBiasResult &r = g.lastWindow();
+    // Resultado de uma calibração pedida por comando. As recusas RejectedKept e RejectedKeptBootRestart só existem
+    // nela, e são classificadas pelo evento: na RejectedKeptBootRestart, o fluxo já voltou ao tipo Boot antes de
+    // devolver o evento (a calibração do boot recomeça). Só o Accepted confere o tipo, que nele não muda
+    const GyroCalFlow::Event ev = coord_.lastGyroEvent();
+    if ((ev == GyroCalFlow::Event::Accepted && g.kind() == GyroCalKind::Cmd) ||
+        ev == GyroCalFlow::Event::RejectedKept || ev == GyroCalFlow::Event::RejectedKeptBootRestart) {
+        gyroCmdAccepted_ = ev == GyroCalFlow::Event::Accepted;
+        gyroCmdOutcomes_++;
+    }
     switch (coord_.lastGyroEvent()) {
     case GyroCalFlow::Event::Accepted: {
         const Vec3 b = g.bias();

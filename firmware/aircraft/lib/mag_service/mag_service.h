@@ -42,6 +42,14 @@ struct MagServiceConfig {
     uint32_t keyHintMs;      // calibração: intervalo mínimo entre os avisos de tecla ignorada
 };
 
+// Revisão decidida por comando do rádio (decideReview)
+enum class MagReview : uint8_t {
+    None,         // fora da revisão
+    Saved,        // ajuste aceito pelos critérios e gravado
+    SaveFailed,   // aceito, mas a gravação na NVS falhou
+    Rejected,     // recusado pelos critérios: descartado
+};
+
 // Resultado de uma tecla entregue ao serviço
 enum class MagKey : uint8_t {
     NotHandled,         // fora da calibração: a tecla segue para os outros comandos
@@ -69,6 +77,10 @@ public:
     void toggleStream(uint32_t nowUs);   // p
     // Teclas durante a calibração (coleta: só x; revisão: s, x, d)
     MagKey handleKey(char ch);
+    // Calibração pedida pelo rádio: na revisão, grava sozinha se o ajuste passou nos critérios de aceitação (os
+    // mesmos do s), senão descarta (docs/web.md). Fora da revisão, None
+    MagReview decideReview();
+    bool reviewing() const { return calib_.state() == MagCalibrator::State::Review; }
 
     // Fecha a janela de 1 s do resumo (contagem de leituras)
     void closeWindow();
@@ -88,6 +100,7 @@ public:
 private:
     void start();
     void freeCalibration();
+    bool saveFit();
     void printFinish();
     void dumpPoints();
     void printLine() const;

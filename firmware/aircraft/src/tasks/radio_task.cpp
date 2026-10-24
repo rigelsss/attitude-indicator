@@ -10,6 +10,7 @@
 #include "config.h"
 #include "logger.h"
 #include "send_gate.h"
+#include "cmd_tracker.h"
 #include "sensor_task.h"
 #include "telemetry_pack.h"
 
@@ -24,6 +25,11 @@ static std::atomic<uint32_t> s_sent{0}, s_sendErrors{0}, s_macOk{0}, s_macFail{0
 static SendGate s_gate(RADIO_INFLIGHT_TIMEOUT_MS, RADIO_INFLIGHT_STUCK_MS);
 static portMUX_TYPE s_gateMux = portMUX_INITIALIZER_UNLOCKED;
 static std::atomic<uint32_t> s_skipped{0};
+// Comandos do rádio (docs/web.md): o callback passa o comando à sensor_task; os ACKs voltam por uma fila e saem
+// antes da telemetria, no mesmo controle de um envio em voo. A taxa de envio é ajustável (CMD_SET_RATE_HZ)
+static QueueHandle_t s_ackQueue = nullptr;
+static std::atomic<uint32_t> s_periodMs{1000 / TX_RATE_HZ};
+static std::atomic<uint32_t> s_cmdDropped{0}, s_acksSent{0};
 
 // ---------- Callbacks do ESP-NOW (task do Wi-Fi): só contam ----------
 
@@ -40,6 +46,10 @@ static void onRecv(const uint8_t *mac, const uint8_t *data, int len) {
     const bool fromPeer = mac != nullptr && memcmp(mac, PEER_MAC, sizeof(PEER_MAC)) == 0;
     const bool ok = fromPeer && len > 0 && decodeCommand(data, (size_t)len, cmd) == CmdDecode::Ok;
     (ok ? s_cmdOk : s_cmdBad).fetch_add(1, std::memory_order_relaxed);
+    if (!ok) return;
+    // Executado pela sensor_task (camada única de comandos); com a fila cheia, o B reenvia por falta de ACK
+    const SensorCmd sc = {CMD_SRC_RADIO, 0, cmd.cmd, cmd.arg, cmd.hdr.seq};
+    if (!sensorTaskSend(sc)) s_cmdDropped.fetch_add(1, std::memory_order_relaxed);
 }
 
 // ---------- Início do rádio ----------
@@ -96,10 +106,10 @@ static void radioTask(void *) {
         vTaskDelete(nullptr);
         return;
     }
-    uint16_t seq = 0;
+    uint16_t seq = 0, ackSeq = 0;
     TickType_t last = xTaskGetTickCount();
     for (;;) {
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(1000 / TX_RATE_HZ));
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(s_periodMs.load()));
         TelemetryState st;
         if (!sensorLatestState(st)) continue;   // a sensor_task ainda não publicou
         // O seq avança mesmo no pulo: o B conta a amostra que não foi entregue como perdida
@@ -128,11 +138,17 @@ static void radioTask(void *) {
             }
             continue;
         }
+        // Um ACK pendente sai no lugar da telemetria deste ciclo (a amostra conta como perdida no B)
+        CmdAck ack;
+        const bool isAck = s_ackQueue != nullptr && xQueueReceive(s_ackQueue, &ack, 0) == pdTRUE;
         const TelemetryPacket pkt = buildTelemetry(st, nowMs, (uint64_t)esp_timer_get_time(), pktSeq, VALIDITY_LIMITS);
+        const AckPacket ap = isAck ? buildAck(ackSeq++, ack.cmd, ack.result, ack.cmdSeq) : AckPacket{};
         taskENTER_CRITICAL(&s_gateMux);
         s_gate.sent(nowMs);   // antes do envio: o callback pode vir antes de o esp_now_send retornar
         taskEXIT_CRITICAL(&s_gateMux);
-        const esp_err_t err = esp_now_send(PEER_MAC, (const uint8_t *)&pkt, sizeof(pkt));
+        const esp_err_t err = isAck ? esp_now_send(PEER_MAC, (const uint8_t *)&ap, sizeof(ap))
+                                    : esp_now_send(PEER_MAC, (const uint8_t *)&pkt, sizeof(pkt));
+        if (isAck && err == ESP_OK) s_acksSent.fetch_add(1, std::memory_order_relaxed);
         if (err != ESP_OK) {   // recusado: não haverá callback
             taskENTER_CRITICAL(&s_gateMux);
             s_gate.sendFailed();
@@ -143,6 +159,8 @@ static void radioTask(void *) {
 }
 
 bool radioTaskStart() {
+    s_ackQueue = xQueueCreate(ACK_QUEUE_LEN, sizeof(CmdAck));
+    if (s_ackQueue == nullptr) return false;
     s_starting.store(true);   // antes da task: ela pode terminar o início antes do retorno
     const bool ok = xTaskCreatePinnedToCore(radioTask, "radio", RADIO_TASK_STACK, nullptr, RADIO_TASK_PRIO, nullptr,
                                             RADIO_TASK_CORE) == pdPASS;
@@ -166,5 +184,16 @@ RadioCounters radioCounters() {
     c.inFlightRecoveries = s_gate.recoveries();
     c.unexpectedCallbacks = s_gate.unexpectedCallbacks();
     taskEXIT_CRITICAL(&s_gateMux);
+    c.rateHz = 1000 / s_periodMs.load();
+    c.cmdDropped = s_cmdDropped.load(std::memory_order_relaxed);
+    c.acksSent = s_acksSent.load(std::memory_order_relaxed);
     return c;
+}
+
+bool radioSendAck(const CmdAck &a) { return s_ackQueue != nullptr && xQueueSend(s_ackQueue, &a, 0) == pdTRUE; }
+
+bool radioSetRateHz(int32_t hz) {
+    if (hz != 10 && hz != 20 && hz != 25 && hz != 50) return false;   // período inteiro em ms
+    s_periodMs.store(1000 / (uint32_t)hz);
+    return true;
 }

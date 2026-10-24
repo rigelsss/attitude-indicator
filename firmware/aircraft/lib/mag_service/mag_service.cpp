@@ -295,26 +295,44 @@ MagKey MagService::handleKey(char ch) {
         logPrintln("[mag] resultado descartado; calibração anterior mantida");
         freeCalibration();
     } else if (ch == 's') {
-        const MagFitResult &f = calib_.fit();
-        if (f.status != MagFitStatus::Ok) {
+        if (calib_.fit().status != MagFitStatus::Ok)
             logPrintln("[mag] calibração recusada não pode ser gravada (x = sair | d = pontos em CSV)");
-        } else if (magStoreSave(f.cal, f.residPct, (uint8_t)f.sectors, mag_.crb())) {
-            cal_.valid = true;
-            cal_.cal = f.cal;
-            cal_.residPct = f.residPct;
-            cal_.sectors = (uint8_t)f.sectors;
-            hdg_.reset();
-            // O distúrbio foi decidido com o raio antigo: o detector recomeça, e um distúrbio em curso é fechado
-            if (disturb_.disturbed()) logPrintln("[mag] distúrbio encerrado: calibração nova gravada");
-            disturb_.reset();
-            logPrintln("[mag] calibração do magnetômetro gravada na NVS");
-            freeCalibration();
-        } else {
-            logPrintln("[mag] FALHA ao gravar na NVS; calibração anterior mantida");
-            freeCalibration();
-        }
+        else
+            saveFit();
     }
     return MagKey::Handled;
+}
+
+// Grava o ajuste aceito e sai da calibração. false se a gravação na NVS falhou (calibração anterior mantida)
+bool MagService::saveFit() {
+    const MagFitResult &f = calib_.fit();
+    if (!magStoreSave(f.cal, f.residPct, (uint8_t)f.sectors, mag_.crb())) {
+        logPrintln("[mag] FALHA ao gravar na NVS; calibração anterior mantida");
+        freeCalibration();
+        return false;
+    }
+    cal_.valid = true;
+    cal_.cal = f.cal;
+    cal_.residPct = f.residPct;
+    cal_.sectors = (uint8_t)f.sectors;
+    hdg_.reset();
+    // O distúrbio foi decidido com o raio antigo: o detector recomeça, e um distúrbio em curso é fechado
+    if (disturb_.disturbed()) logPrintln("[mag] distúrbio encerrado: calibração nova gravada");
+    disturb_.reset();
+    logPrintln("[mag] calibração do magnetômetro gravada na NVS");
+    freeCalibration();
+    return true;
+}
+
+MagReview MagService::decideReview() {
+    if (calib_.state() != MagCalibrator::State::Review) return MagReview::None;
+    if (calib_.fit().status != MagFitStatus::Ok) {
+        logPrintln("[mag] calibração pedida pelo rádio recusada pelos critérios; calibração anterior mantida");
+        freeCalibration();
+        return MagReview::Rejected;
+    }
+    logPrintln("[mag] calibração pedida pelo rádio aceita pelos critérios: gravando");
+    return saveFit() ? MagReview::Saved : MagReview::SaveFailed;
 }
 
 void MagService::toggleStream(uint32_t nowUs) {

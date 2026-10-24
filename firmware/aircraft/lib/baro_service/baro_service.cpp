@@ -42,6 +42,7 @@ void BaroService::onZeroEvent(BaroZero::Event ev) {
     const BaroZeroResult &r = zero_.lastResult();
     if (ev == BaroZero::Event::Accepted) {
         tempWarned_ = false;
+        zeroAccepts_++;
         logPrintf("[baro] zero aceito: p0 = %.2f hPa | desvio %.2f Pa | %lu leituras | %.1f °C\n", r.refHpa,
                   r.stdPa, (unsigned long)zero_.lastCount(), r.tempC);
         return;

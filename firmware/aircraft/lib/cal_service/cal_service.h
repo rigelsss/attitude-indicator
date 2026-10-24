@@ -60,6 +60,10 @@ public:
     bool gyroDefinitive() const { return coord_.gyro().definitive(); }
     CalMode mode() const { return coord_.mode(); }
     bool magAllowed() const { return coord_.magAllowed(); }
+    // Fim das calibrações do giroscópio pedidas por comando (g ou rádio): o contador sobe a cada uma, aceita ou
+    // recusada, e o último resultado fica em gyroCmdAccepted() (comandos do rádio, docs/web.md)
+    uint32_t gyroCmdOutcomes() const { return gyroCmdOutcomes_; }
+    bool gyroCmdAccepted() const { return gyroCmdAccepted_; }
 
 private:
     void printGyroStart() const;
@@ -78,4 +82,6 @@ private:
     ImuCalData cal_;      // o que está na NVS (e em uso para o acelerômetro)
     LevelData level_;     // rotação de montagem em uso (identidade sem calibração)
     bool tempWarned_ = false;
+    uint32_t gyroCmdOutcomes_ = 0;
+    bool gyroCmdAccepted_ = false;
 };

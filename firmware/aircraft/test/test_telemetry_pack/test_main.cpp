@@ -184,6 +184,21 @@ static void test_decode_command() {
     TEST_ASSERT_EQUAL_STRING("outra versão do contrato", cmdDecodeText(CmdDecode::BadVersion));
 }
 
+// ACK: cabeçalho de ACK, campos e reservas em 0; 12 bytes
+static void test_build_ack() {
+    const AckPacket a = buildAck(77, CMD_ZERO_ALTITUDE, ACK_DONE, 4321);
+    TEST_ASSERT_EQUAL_HEX8(TELEMETRY_MAGIC, a.hdr.magic);
+    TEST_ASSERT_EQUAL_UINT8(TELEMETRY_VERSION, a.hdr.version);
+    TEST_ASSERT_EQUAL_UINT8(MSG_ACK, a.hdr.type);
+    TEST_ASSERT_EQUAL_UINT8(0, a.hdr.reserved0);
+    TEST_ASSERT_EQUAL_UINT16(0, a.hdr.reserved1);
+    TEST_ASSERT_EQUAL_UINT16(77, a.hdr.seq);
+    TEST_ASSERT_EQUAL_UINT8(CMD_ZERO_ALTITUDE, a.cmd);
+    TEST_ASSERT_EQUAL_UINT8(ACK_DONE, a.result);
+    TEST_ASSERT_EQUAL_UINT16(4321, a.cmd_seq);
+    TEST_ASSERT_EQUAL_size_t(12, sizeof(a));
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_build_header_and_fields);
@@ -195,5 +210,6 @@ int main(int, char **) {
     RUN_TEST(test_nan_altitude_clears_alt);
     RUN_TEST(test_loop_us_saturates);
     RUN_TEST(test_decode_command);
+    RUN_TEST(test_build_ack);
     return UNITY_END();
 }

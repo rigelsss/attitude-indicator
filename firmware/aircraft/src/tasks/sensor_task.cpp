@@ -26,6 +26,7 @@
 #include "telemetry_flags.h"
 #include "logger.h"
 #include "../console.h"
+#include "../radio_commands.h"
 
 static QueueHandle_t g_cmdQueue = nullptr;   // SensorCmd: teclas da serial_task (e, na semana 5, do rádio)
 static QueueHandle_t g_stateBox = nullptr;   // TelemetryState: fila de 1, sobrescrita a cada ciclo (radio_task lê)
@@ -122,6 +123,10 @@ static const ConsoleDeps CONSOLE_DEPS = {
     g_mpu, g_intOverflow, g_acq, g_acqStats, g_fusion, g_calSvc, g_baroSvc, g_magSvc, validityInputs, fusionReset,
 };
 static Console g_console(CONSOLE_DEPS);
+// Comandos do rádio: executados aqui, como as teclas (camada única de comandos; docs/web.md)
+static const ValidityLimits CMD_VALIDITY_LIMITS = {FUSION_MAX_DT_MS, BARO_STALE_MS, MAG_STALE_MS};
+static RadioCommands g_radioCmds(g_calSvc, g_baroSvc, g_magSvc, g_att, validityInputs, CMD_VALIDITY_LIMITS,
+                                 CMD_RETENTION_LONG_MS, CMD_RETENTION_SHORT_MS);
 
 // Relógio do custo do filtro no fluxo a (o micros() devolve unsigned long, não uint32_t)
 static uint32_t clockUs() { return micros(); }
@@ -251,8 +256,9 @@ static TelemetryState makeState() {
     TelemetryState t;
     t.attInitialized = g_att.initialized();
     t.attDegraded = g_att.degraded();
-    t.rollDeg = g_att.rollDeg();
-    t.pitchDeg = g_att.pitchDeg();
+    // Zero operacional (CMD_ZERO_ATTITUDE), só na telemetria e até o próximo boot; 0 sem zero
+    t.rollDeg = wrap180(g_att.rollDeg() - g_radioCmds.zeroRollDeg());
+    t.pitchDeg = g_att.pitchDeg() - g_radioCmds.zeroPitchDeg();
     t.haveAttSample = g_fusion.havePrev();
     t.attSampleUs64 = g_attSampleUs64;
     t.hdgInitialized = g_fusion.heading().initialized();
@@ -320,10 +326,14 @@ static bool waitPulse(uint32_t &tInt) {
     }
 }
 
-// Teclas e, na semana 5, comandos do B: executados aqui, entre duas leituras, na ordem de chegada
+// Teclas e comandos do B: executados aqui, entre duas leituras, na ordem de chegada
 static void drainCommands() {
     SensorCmd c;
-    while (xQueueReceive(g_cmdQueue, &c, 0) == pdTRUE) g_console.handleKey(c.key);
+    while (xQueueReceive(g_cmdQueue, &c, 0) == pdTRUE) {
+        if (c.src == CMD_SRC_RADIO) g_radioCmds.arrive(c);
+        else g_console.handleKey(c.key);
+    }
+    g_radioCmds.service(millis());   // fim do comando demorado em curso e tempo limite
 }
 
 // Um ciclo do laço de aquisição (antes, o loop() do main.cpp provisório)

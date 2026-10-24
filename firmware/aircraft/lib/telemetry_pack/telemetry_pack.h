@@ -52,3 +52,7 @@ TelemetryPacket buildTelemetry(const TelemetryState &s, uint32_t nowMs, uint64_t
 enum class CmdDecode : uint8_t { Ok, BadSize, BadMagic, BadVersion, BadType };
 CmdDecode decodeCommand(const uint8_t *data, size_t len, CommandPacket &out);
 const char *cmdDecodeText(CmdDecode r);
+
+// ACK de um comando (A → B, docs/web.md): cabeçalho com o contador de mensagens do A (msgSeq), o comando, o
+// resultado (AckResult) e o seq do CommandPacket confirmado (cmdSeq), com as reservas em 0
+AckPacket buildAck(uint16_t msgSeq, uint8_t cmd, uint8_t result, uint16_t cmdSeq);

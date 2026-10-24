@@ -71,6 +71,19 @@ CmdDecode decodeCommand(const uint8_t *data, size_t len, CommandPacket &out) {
     return CmdDecode::Ok;
 }
 
+AckPacket buildAck(uint16_t msgSeq, uint8_t cmd, uint8_t result, uint16_t cmdSeq) {
+    AckPacket a;
+    memset(&a, 0, sizeof(a));
+    a.hdr.magic = TELEMETRY_MAGIC;
+    a.hdr.version = TELEMETRY_VERSION;
+    a.hdr.type = MSG_ACK;
+    a.hdr.seq = msgSeq;
+    a.cmd = cmd;
+    a.result = result;
+    a.cmd_seq = cmdSeq;
+    return a;
+}
+
 const char *cmdDecodeText(CmdDecode r) {
     switch (r) {
     case CmdDecode::Ok:         return "ok";

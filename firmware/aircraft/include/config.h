@@ -106,7 +106,20 @@
 #define SERIAL_TASK_STACK       6144   // formata o c, o r e o a (vsnprintf com float e o relatório copiado)
 #define SERIAL_TASK_PERIOD_MS   2      // volta da serial_task: esvazia o logger e lê as teclas
 #define SERIAL_START_DELAY_MS   500    // espera depois do Serial.begin() para o monitor reabrir após o reset
-#define CMD_QUEUE_LEN           16     // comandos (teclas) aguardando a sensor_task
+#define CMD_QUEUE_LEN           16     // comandos (teclas e rádio) aguardando a sensor_task
+#define ACK_QUEUE_LEN           8      // ACKs dos comandos do rádio aguardando a radio_task
+
+// ---------- Comandos do rádio (docs/web.md) ----------
+#define CMD_GYRO_TIMEOUT_MS     30000  // calibração do giroscópio pedida pelo rádio: sem resultado nisto, REJECTED
+#define CMD_BARO_TIMEOUT_MS     20000  // zero da altitude (um zero recusado mede de novo sozinho)
+#define CMD_MAG_TIMEOUT_MS      (MAG_CAL_MS + 10000)   // calibração do magnetômetro: a coleta tem até MAG_CAL_MS
+#define CMD_RETENTION_LONG_MS   210000 // resultado de um comando demorado, retido por toda a janela de reconsulta
+                                       // do B (CMD_COMPLETION_MS do B, 200 s, mais margem): com o link fora por
+                                       // mais que a retenção, uma consulta tardia executaria o comando de novo
+#define CMD_RETENTION_SHORT_MS  3000   // resultado imediato (inclusive as recusas): só os reenvios do B (~1 s) o
+                                       // pedem de novo; curto para uma tecla repetida não lotar o histórico
+#define ZERO_ATT_MAX_DEG        10.0f  // zero operacional: aceito só com |roll| e |pitch| até isto (a subtração dos
+                                       // ângulos é aproximada; o z, de duas posições, corrige montagens maiores)
 #define REPORT_QUEUE_LEN        4      // relatórios do console (c, r, a) aguardando a serial_task (~0,6 kB cada)
 #define CONSOLE_VIEW_BUFFER_BYTES 2048 // buffer de formatação de um bloco do console (o c tem ~1,4 kB)
 #define SERIAL_REPORTS_PER_CYCLE 2     // relatórios formatados por volta da serial_task (cada um seguido de um

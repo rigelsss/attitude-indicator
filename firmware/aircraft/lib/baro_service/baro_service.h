@@ -56,6 +56,8 @@ public:
     const BaroSample &last() const { return last_; }
     bool zeroValid() const { return zero_.refValid(); }
     bool zeroActive() const { return zero_.active(); }
+    // Zeros aceitos desde o boot (o recusado mede de novo sozinho): o comando do rádio termina quando sobe
+    uint32_t zeroAccepts() const { return zeroAccepts_; }
     float zeroRefHpa() const { return zero_.refHpa(); }
     float zeroRefTempC() const { return zero_.refTempC(); }
     // Altitude da última leitura em relação ao zero; NAN sem leitura, sem zero ou fora da faixa
@@ -80,6 +82,7 @@ private:
     bool have_ = false;
     BaroZero zero_;
     bool tempWarned_ = false;
+    uint32_t zeroAccepts_ = 0;
     bool streamOn_ = false;
     Periodic streamPrint_;
 };

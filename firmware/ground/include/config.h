@@ -20,12 +20,14 @@
 #define OLED_RATE_HZ     5        // redesenho; a troca de página redesenha na hora
 #define OLED_RETRY_MS    5000     // OLED ausente: nova tentativa de iniciar
 #define OLED_BOOT_SCREEN_MS 1000  // tela de boot
+#define OLED_CMD_FOOTER_MS 4000  // resultado do comando da pressão longa no rodapé do OLED por este tempo
 #define OLED_HEADING_TRUE 0       // 0: proa magnética (MAG), como nos instrumentos de cabine; 1: verdadeira (VERD)
 
 // ---------- Encoder KY-040 (interrupção) ----------
 #define PIN_ENC_CLK      32
 #define PIN_ENC_DT       33
-#define PIN_ENC_SW       25       // botão: curto = reconhecer o alarme; longo = reservado (comandos, semana 5)
+#define PIN_ENC_SW       25       // botão: curto = reconhecer o alarme; longo = zerar atitude (página 1 do OLED)
+                                  // ou altitude (página 2)
 #define ENC_STEPS_PER_CLICK 2     // o KY-040 da bancada: 2 passos por clique, repouso em 11 e 00 (hardware.md)
 #define ENC_DIR          1        // +1: horário = próxima página; −1 inverte
 #define ENC_QUEUE_LEN    64       // estados lidos pela ISR até a input_task decodificar. Com 32, o repique de um
@@ -70,6 +72,17 @@
 
 // ---------- Recepção do ESP-NOW e link (docs/radio.md, ESP B) ----------
 #define RX_QUEUE_LEN     16       // pacotes entre o callback do ESP-NOW e a link_task (~320 ms a 50 Hz)
+#define RX_ACK_QUEUE_LEN 8        // ACKs dos comandos entre o callback e a command_task
+
+// ---------- Comandos para o A (docs/web.md) ----------
+#define CMD_RETRY_MS       300      // sem ACK: reenvia com o mesmo seq a cada isto
+#define CMD_MAX_TRIES      3        // envios no máximo; depois, "sem resposta"
+#define CMD_POLL_MS        2000     // comando aceito: reconsulta com o mesmo seq (recupera um DONE perdido); o A
+                                    // retém o resultado por CMD_RETENTION_LONG_MS (210 s) para isso
+#define CMD_COMPLETION_MS  200000   // ACCEPTED sem DONE por isto: "sem conclusão" (a coleta do magnetômetro tem até 3 min).
+                                    // O A retém o resultado por CMD_RETENTION_LONG_MS (210 s): manter maior que isto
+#define CMD_REQ_QUEUE_LEN  8        // pedidos (console, encoder, página) aguardando a command_task
+#define CMD_EVENT_QUEUE_LEN 8       // mudanças de estado dos comandos para a serial
 #define LINK_RESYNC_GAP  500      // salto do seq acima disto (10 s a 50 Hz): ressincroniza sem contar perdas
 #define LINK_LATE_MAX_PKTS 100    // seq até isto atrás (2 s a 50 Hz) e t_ms até LINK_LATE_MAX_MS atrás:
 #define LINK_LATE_MAX_MS   2000   // pacote atrasado, descartado (e não reinício do A). Rajadas de ~1 s na bancada
@@ -102,6 +115,10 @@
 #define OLED_TASK_PRIO          1
 #define OLED_TASK_STACK         4096
 #define OLED_TASK_PERIOD_MS     50     // volta da oled_task: confere a página e o tempo do redesenho
+#define CMD_TASK_CORE           0
+#define CMD_TASK_PRIO           2
+#define CMD_TASK_STACK          3072
+#define CMD_TASK_WAIT_MS        20     // espera máxima por um pedido ou ACK: reenvios e prazos conferidos nesse ritmo
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1
 #define SERIAL_TASK_STACK       4096

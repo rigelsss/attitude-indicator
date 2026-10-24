@@ -9,11 +9,15 @@
 
 enum CmdSource : uint8_t {
     CMD_SRC_CONSOLE = 0,   // tecla da serial
+    CMD_SRC_RADIO = 1,     // CommandPacket do B (docs/web.md): cmd, arg e seq
 };
 
 struct SensorCmd {
-    uint8_t src;   // CmdSource
-    char    key;   // tecla do console
+    uint8_t  src;   // CmdSource
+    char     key;   // tecla do console
+    uint8_t  cmd;   // rádio: CommandId
+    int32_t  arg;   // rádio: argumento (CMD_SET_RATE_HZ)
+    uint16_t seq;   // rádio: seq do CommandPacket (casa o ACK)
 };
 
 // Cria a fila de comandos e a task (que configura o I2C e os sensores no próprio núcleo). false sem memória

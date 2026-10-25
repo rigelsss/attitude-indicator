@@ -1,4 +1,5 @@
-# CI: testes de lógica pura (native) e compilação dos ambientes de firmware a cada push e pull request.
+# CI: testes de lógica pura (native e pytest do cliente Python) e compilação dos ambientes de firmware a cada
+# push e pull request.
 # Nada é gravado em placa: o check_board_mac.py só age antes de upload/uploadfs.
 name: CI
 
@@ -29,6 +30,20 @@ jobs:
       - name: pio test -e native (ground)
         working-directory: firmware/ground
         run: pio test -e native
+
+  testes-python:
+    name: Testes do cliente Python (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Instalar o pytest e o websockets
+        run: pip install "pytest>=8.0" "websockets>=16.0"
+      - name: python -m pytest (lógica pura e integração com o simulador do B, em localhost)
+        working-directory: ground-station/python
+        run: python -m pytest -q
 
   compilacao:
     name: Compilação (${{ matrix.env }})

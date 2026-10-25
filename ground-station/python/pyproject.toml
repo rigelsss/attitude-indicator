@@ -1,0 +1,4 @@
+# Configuração do pytest do cliente Python. Rodar a partir de ground-station/python: python -m pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

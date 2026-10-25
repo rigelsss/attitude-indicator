@@ -10,6 +10,7 @@ struct CmdRequest {
     uint8_t cmd;
     int32_t arg;
     uint8_t origin;
+    uint16_t rid;
 };
 
 static QueueHandle_t s_req = nullptr, s_events = nullptr, s_lastEncoder = nullptr, s_webEvents = nullptr;
@@ -23,6 +24,7 @@ const char *cmdOriginText(uint8_t origin) {
     case CMD_FROM_CONSOLE: return "console";
     case CMD_FROM_ENCODER: return "encoder";
     case CMD_FROM_WEB:     return "página";
+    case CMD_FROM_PC:      return "pc";
     }
     return "?";
 }
@@ -45,11 +47,11 @@ static void commandTask(void *) {
         CmdRequest r;
         if (xQueueReceive(s_req, &r, pdMS_TO_TICKS(CMD_TASK_WAIT_MS)) == pdTRUE) {
             uint16_t seq;
-            if (link.submit(r.cmd, r.arg, r.origin, millis(), seq)) {
+            if (link.submit(r.cmd, r.arg, r.origin, millis(), seq, r.rid)) {
                 s_submitted.fetch_add(1, std::memory_order_relaxed);
             } else {
                 s_localRejects.fetch_add(1, std::memory_order_relaxed);
-                publish({r.cmd, r.arg, 0, r.origin, CmdState::Rejected}, 0, true);
+                publish({r.cmd, r.arg, 0, r.origin, CmdState::Rejected, r.rid}, 0, true);   // "busy", seq 0
             }
         }
         AckPacket a;
@@ -67,7 +69,7 @@ static void commandTask(void *) {
             const bool ok = radioSendCommand(buildCommandPacket(s));
             (ok ? s_sends : s_sendErrors).fetch_add(1, std::memory_order_relaxed);
             if (s.attempt == 0) s_polls.fetch_add(1, std::memory_order_relaxed);   // reconsulta: sem evento
-            else publish({s.cmd, s.arg, s.seq, s.origin, CmdState::Sending}, s.attempt, false);
+            else publish({s.cmd, s.arg, s.seq, s.origin, CmdState::Sending, s.rid}, s.attempt, false);
         }
         CmdEvent ev;
         while (link.nextTimeout(millis(), ev)) publish(ev, 0, false);
@@ -84,8 +86,8 @@ bool commandTaskStart() {
                                    CMD_TASK_CORE) == pdPASS;
 }
 
-bool commandSubmit(uint8_t cmd, int32_t arg, uint8_t origin) {
-    const CmdRequest r = {cmd, arg, origin};
+bool commandSubmit(uint8_t cmd, int32_t arg, uint8_t origin, uint16_t rid) {
+    const CmdRequest r = {cmd, arg, origin, rid};
     return s_req != nullptr && xQueueSend(s_req, &r, 0) == pdTRUE;
 }
 

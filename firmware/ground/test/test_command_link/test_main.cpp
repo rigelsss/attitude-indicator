@@ -151,6 +151,30 @@ static void test_state_text() {
     TEST_ASSERT_FALSE(cmdStateFinal(CmdState::Accepted));
 }
 
+// O rid do pedido é guardado e repetido no envio, nos reenvios, nos ACKs e no tempo limite
+static void test_rid_in_every_event() {
+    CommandLink l(CFG, 100);
+    uint16_t seq;
+    TEST_ASSERT_TRUE(l.submit(CMD_ZERO_ATTITUDE, 0, 3, 0, seq, 4242));
+    CmdSend s;
+    TEST_ASSERT_TRUE(l.nextSend(0, s));
+    TEST_ASSERT_EQUAL_UINT16(4242, s.rid);
+    TEST_ASSERT_TRUE(l.nextSend(CFG.retryMs, s));   // reenvio
+    TEST_ASSERT_EQUAL_UINT16(4242, s.rid);
+    CmdEvent ev;
+    TEST_ASSERT_TRUE(l.onAck(seq, CMD_ZERO_ATTITUDE, ACK_ACCEPTED, CFG.retryMs + 10, ev));
+    TEST_ASSERT_EQUAL_UINT16(4242, ev.rid);
+    TEST_ASSERT_TRUE(l.nextSend(CFG.retryMs + 10 + CFG.pollMs, s));   // reconsulta
+    TEST_ASSERT_EQUAL_UINT16(4242, s.rid);
+    TEST_ASSERT_TRUE(l.nextTimeout(CFG.retryMs + 10 + CFG.completionMs, ev));
+    TEST_ASSERT_EQUAL(CmdState::NoCompletion, ev.state);
+    TEST_ASSERT_EQUAL_UINT16(4242, ev.rid);
+    // Sem rid (console, encoder, página): 0
+    TEST_ASSERT_TRUE(l.submit(CMD_ZERO_ALTITUDE, 0, 0, 0, seq));
+    while (l.nextSend(0, s) && s.cmd != CMD_ZERO_ALTITUDE) {}
+    TEST_ASSERT_EQUAL_UINT16(0, s.rid);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_immediate_done);
@@ -162,5 +186,6 @@ int main() {
     RUN_TEST(test_poll_recovers_lost_done);
     RUN_TEST(test_build_packet);
     RUN_TEST(test_state_text);
+    RUN_TEST(test_rid_in_every_event);
     return UNITY_END();
 }

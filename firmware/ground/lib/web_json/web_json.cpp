@@ -47,6 +47,7 @@ const char *webCmdParseText(WebCmdParse r) {
     case WebCmdParse::UnknownCmd: return "comando desconhecido";
     case WebCmdParse::BadPin:     return "PIN incorreto";
     case WebCmdParse::BadArg:     return "argumento inválido";
+    case WebCmdParse::BadOrigin:  return "origem inválida";
     }
     return "?";
 }
@@ -69,6 +70,8 @@ size_t webBuildTelemetry(const WebTelemetry &t, char *out, size_t n) {
     doc["type"] = "tel";
     const bool cur = t.everLinked && t.linkOk && !t.dataLate;
     doc["cur"] = cur;
+    doc["tb"] = t.bMs;
+    doc["n"] = t.telN;
     if (t.everLinked) {
         const TelemetryPacket &p = t.pkt;
         doc["t"] = p.t_ms;
@@ -84,6 +87,7 @@ size_t webBuildTelemetry(const WebTelemetry &t, char *out, size_t n) {
         setNum(doc, "temp", p.temp_c);
         doc["status"] = p.status;
         doc["valid"] = p.valid;
+        doc["loop_us"] = p.loop_us;
     }
     doc["decl"] = t.declinationDeg;
     JsonObject link = doc["link"].to<JsonObject>();
@@ -115,7 +119,7 @@ size_t webBuildHello(float declinationDeg, bool pinRequired, char *out, size_t n
 }
 
 size_t webBuildCmdEvent(uint8_t cmd, int32_t arg, uint16_t seq, CmdState state, bool localFull, const char *origin,
-                        char *out, size_t n) {
+                        uint16_t rid, char *out, size_t n) {
     JsonDocument doc;
     doc["type"] = "cmd";
     doc["cmd"] = webCmdKey(cmd);
@@ -123,23 +127,32 @@ size_t webBuildCmdEvent(uint8_t cmd, int32_t arg, uint16_t seq, CmdState state, 
     doc["seq"] = seq;
     doc["state"] = localFull ? "busy" : webStateKey(state);
     doc["origin"] = origin;
+    if (rid != 0) doc["rid"] = rid;
     return finish(doc, out, n);
 }
 
-size_t webBuildCmdRefused(const char *cmdKey, const char *reason, char *out, size_t n) {
+size_t webBuildCmdRefused(const char *cmdKey, const char *reason, uint16_t rid, char *out, size_t n) {
     JsonDocument doc;
     doc["type"] = "cmd";
     doc["cmd"] = cmdKey != nullptr && cmdKey[0] ? cmdKey : "unknown";
     doc["state"] = "refused";
     doc["reason"] = reason;
+    if (rid != 0) doc["rid"] = rid;
     return finish(doc, out, n);
 }
 
 WebCmdParse webParseCommand(const char *json, size_t len, const char *pin, uint8_t &cmd, int32_t &arg,
-                            char *cmdKey, size_t keyLen) {
+                            WebCmdOrigin &origin, uint16_t &rid, char *cmdKey, size_t keyLen) {
     if (keyLen > 0) cmdKey[0] = '\0';
+    rid = 0;
     JsonDocument doc;
     if (deserializeJson(doc, json, len) != DeserializationError::Ok || !doc.is<JsonObject>()) return WebCmdParse::BadJson;
+    if (!doc["rid"].isNull()) {
+        if (!doc["rid"].is<int32_t>()) return WebCmdParse::BadJson;
+        const int32_t r = doc["rid"].as<int32_t>();
+        if (r < 1 || r > 65535) return WebCmdParse::BadJson;
+        rid = (uint16_t)r;
+    }
     const char *name = doc["cmd"] | "";
     if (keyLen > 0) {
         strncpy(cmdKey, name, keyLen - 1);
@@ -160,6 +173,12 @@ WebCmdParse webParseCommand(const char *json, size_t len, const char *pin, uint8
     if (cmd == CMD_SET_RATE_HZ) {
         if (!doc["arg"].is<int>()) return WebCmdParse::BadArg;   // o A confere a faixa (10, 20, 25, 50)
         arg = doc["arg"].as<int32_t>();
+    }
+    origin = WebCmdOrigin::Page;
+    if (!doc["origin"].isNull()) {
+        if (!doc["origin"].is<const char *>() || strcmp(doc["origin"].as<const char *>(), "pc") != 0)
+            return WebCmdParse::BadOrigin;
+        origin = WebCmdOrigin::Pc;
     }
     return WebCmdParse::Ok;
 }

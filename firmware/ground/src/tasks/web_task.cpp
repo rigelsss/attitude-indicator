@@ -74,6 +74,7 @@ struct WsOut {
     CmdEventMsg ce;          // Cmd
     char key[24];            // Refused: nome do comando
     const char *reason;      // Refused: texto fixo (webCmdParseText ou literal)
+    uint16_t rid;            // Refused: identificador do pedido (0 = nenhum)
 };
 static_assert(WS_OUTBOX_LEN >= WS_RECENT_CMDS + 2,
               "a fila precisa caber o hello, os comandos recentes e uma recusa (ressincronização)");
@@ -325,11 +326,16 @@ static void wsResync(uint8_t num) {
     }
 }
 
-// O andamento de um comando já na fila substitui o anterior no lugar (só o estado mais recente importa)
+// O andamento de um comando já na fila substitui o anterior no lugar (só o estado mais recente importa). O "busy"
+// (recusado no próprio B por falta de lugar) sai com seq 0, que não identifica um comando: nem substitui nem é
+// substituído (o seq 0 também é um seq válido de um comando de verdade)
+static bool sameCmd(const WsOut &a, const WsOut &b) {
+    return a.kind == WsOut::Kind::Cmd && b.kind == WsOut::Kind::Cmd && !a.ce.localFull && !b.ce.localFull &&
+           a.ce.ev.seq == b.ce.ev.seq;
+}
+
 static void wsPush(uint8_t num, const WsOut &o) {
-    if (o.kind == WsOut::Kind::Cmd &&
-        s_out[num].replaceFirst(
-            [&o](const WsOut &x) { return x.kind == WsOut::Kind::Cmd && x.ce.ev.seq == o.ce.ev.seq; }, o))
+    if (o.kind == WsOut::Kind::Cmd && s_out[num].replaceFirst([&o](const WsOut &x) { return sameCmd(x, o); }, o))
         return;
     if (s_out[num].push(o)) return;
     // Cheia: o s_recent já tem o evento novo (atualizado antes do envio), e uma recusa entra depois
@@ -344,9 +350,9 @@ static size_t buildOut(const WsOut &o) {
         return webBuildHello(MAG_DECLINATION_DEG, WEB_CMD_PIN[0] != '\0', s_msg, sizeof(s_msg));
     case WsOut::Kind::Cmd:
         return webBuildCmdEvent(o.ce.ev.cmd, o.ce.ev.arg, o.ce.ev.seq, o.ce.ev.state, o.ce.localFull,
-                                cmdOriginText(o.ce.ev.origin), s_msg, sizeof(s_msg));
+                                cmdOriginText(o.ce.ev.origin), o.ce.ev.rid, s_msg, sizeof(s_msg));
     case WsOut::Kind::Refused:
-        return webBuildCmdRefused(o.key, o.reason, s_msg, sizeof(s_msg));
+        return webBuildCmdRefused(o.key, o.reason, o.rid, s_msg, sizeof(s_msg));
     }
     return 0;
 }
@@ -450,11 +456,12 @@ static void wsSendTelemetry(uint8_t num, size_t n, uint32_t now) {
     }
 }
 
-static void sendRefused(uint8_t num, const char *cmdKey, const char *reason) {
+static void sendRefused(uint8_t num, const char *cmdKey, const char *reason, uint16_t rid) {
     WsOut o = {};
     o.kind = WsOut::Kind::Refused;
     snprintf(o.key, sizeof(o.key), "%s", cmdKey);
     o.reason = reason;
+    o.rid = rid;
     wsPush(num, o);
     s_st.cmdsRefused++;
 }
@@ -478,14 +485,17 @@ static void onWs(uint8_t num, WStype_t type, uint8_t *payload, size_t len) {
     case WStype_TEXT: {
         uint8_t cmd;
         int32_t arg;
+        WebCmdOrigin origin;
+        uint16_t rid;
         char key[24];
-        const WebCmdParse r = webParseCommand((const char *)payload, len, WEB_CMD_PIN, cmd, arg, key, sizeof(key));
+        const WebCmdParse r =
+            webParseCommand((const char *)payload, len, WEB_CMD_PIN, cmd, arg, origin, rid, key, sizeof(key));
         if (r != WebCmdParse::Ok) {
-            sendRefused(num, key, webCmdParseText(r));
+            sendRefused(num, key, webCmdParseText(r), rid);
             return;
         }
-        if (!commandSubmit(cmd, arg, CMD_FROM_WEB)) {
-            sendRefused(num, key, "fila de comandos cheia");
+        if (!commandSubmit(cmd, arg, origin == WebCmdOrigin::Pc ? CMD_FROM_PC : CMD_FROM_WEB, rid)) {
+            sendRefused(num, key, "fila de comandos cheia", rid);
             return;
         }
         s_st.cmdsOk++;   // o andamento chega pelos eventos da command_task, para todos os clientes
@@ -497,8 +507,10 @@ static void onWs(uint8_t num, WStype_t type, uint8_t *payload, size_t len) {
 }
 
 // Telemetria a partir das mesmas cópias do OLED e do TFT
-static size_t buildTelemetry() {
+static size_t buildTelemetry(uint32_t now) {
     WebTelemetry t = {};
+    t.bMs = now;
+    t.telN = s_st.telSent + 1;   // a próxima a sair; uma montagem que não coube não avança
     const LinkSnapshot snap = linkSnapshot((uint64_t)esp_timer_get_time());
     t.everLinked = snap.everLinked;
     t.linkOk = snap.linkOk;
@@ -577,7 +589,9 @@ static void webTask(void *) {
         s_ws.loop();
         CmdEventMsg ce;
         while (commandWebEventReceive(ce)) {
-            s_recent.upsert(ce.ev.seq, ce);
+            // O "busy" (seq 0, sem lugar no B) não entra nos recentes: o seq 0 sobrescreveria o de um comando de
+            // verdade. Ele vai só uma vez, na hora; numa fila refeita, não volta
+            if (!ce.localFull) s_recent.upsert(ce.ev.seq, ce);
             WsOut o = {};
             o.kind = WsOut::Kind::Cmd;
             o.ce = ce;
@@ -593,7 +607,7 @@ static void webTask(void *) {
             wsPausedProgress(now);
         } else if (s_st.clients > 0 && now - lastTelMs >= telPeriodMs) {
             lastTelMs = now;
-            const size_t n = buildTelemetry();
+            const size_t n = buildTelemetry(now);
             if (n) {
                 for (uint8_t i = 0; i < WEBSOCKETS_SERVER_CLIENT_MAX; i++)
                     if (s_ws.ready(i)) wsSendTelemetry(i, n, now);

@@ -38,15 +38,16 @@ const char *commandText(uint8_t cmd) {
     return "desconhecido";
 }
 
-CmdEvent CommandLink::event(const Slot &s) { return {s.cmd, s.arg, s.seq, s.origin, s.state}; }
+CmdEvent CommandLink::event(const Slot &s) { return {s.cmd, s.arg, s.seq, s.origin, s.state, s.rid}; }
 
-bool CommandLink::submit(uint8_t cmd, int32_t arg, uint8_t origin, uint32_t nowMs, uint16_t &seq) {
+bool CommandLink::submit(uint8_t cmd, int32_t arg, uint8_t origin, uint32_t nowMs, uint16_t &seq, uint16_t rid) {
     for (Slot &s : slots_) {
         if (!cmdStateFinal(s.state) && s.state != CmdState::Free) continue;
         s.state = CmdState::Sending;
         s.cmd = cmd;
         s.arg = arg;
         s.origin = origin;
+        s.rid = rid;
         s.tries = 0;
         s.seq = seq = nextSeq_++;
         s.nextMs = nowMs;
@@ -59,14 +60,14 @@ bool CommandLink::nextSend(uint32_t nowMs, CmdSend &out) {
     for (Slot &s : slots_) {
         if (s.state == CmdState::Accepted && (int32_t)(nowMs - s.pollMs) >= 0) {
             s.pollMs = nowMs + cfg_.pollMs;
-            out = {s.cmd, s.arg, s.seq, 0, s.origin};
+            out = {s.cmd, s.arg, s.seq, 0, s.origin, s.rid};
             return true;
         }
         if (s.state != CmdState::Sending || s.tries >= cfg_.maxTries) continue;
         if ((int32_t)(nowMs - s.nextMs) < 0) continue;
         s.tries++;
         s.nextMs = nowMs + cfg_.retryMs;   // depois do último envio, é o prazo da resposta
-        out = {s.cmd, s.arg, s.seq, s.tries, s.origin};
+        out = {s.cmd, s.arg, s.seq, s.tries, s.origin, s.rid};
         return true;
     }
     return false;

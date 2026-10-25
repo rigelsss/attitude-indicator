@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include "command_link.h"
 
-enum CmdOrigin : uint8_t { CMD_FROM_CONSOLE = 0, CMD_FROM_ENCODER = 1, CMD_FROM_WEB = 2 };
+enum CmdOrigin : uint8_t { CMD_FROM_CONSOLE = 0, CMD_FROM_ENCODER = 1, CMD_FROM_WEB = 2, CMD_FROM_PC = 3 };
 const char *cmdOriginText(uint8_t origin);
 
 struct CmdEventMsg {
@@ -25,8 +25,9 @@ struct CmdStats {
 
 // Cria as filas e a task. false sem memória
 bool commandTaskStart();
-// Pede um comando (de qualquer task). false com a fila de pedidos cheia
-bool commandSubmit(uint8_t cmd, int32_t arg, uint8_t origin);
+// Pede um comando (de qualquer task). rid: identificador do pedido de um cliente do WebSocket, repetido em todos
+// os eventos do comando (0 = nenhum). false com a fila de pedidos cheia
+bool commandSubmit(uint8_t cmd, int32_t arg, uint8_t origin, uint16_t rid = 0);
 // Próxima mudança de estado, sem esperar. false se não há
 bool commandEventReceive(CmdEventMsg &out);
 uint32_t commandEventsDropped();

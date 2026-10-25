@@ -66,6 +66,9 @@ function savePref(key, value) {
 // ---------- WebSocket ----------
 
 function connect() {
+  // Já conectado ou conectando (um agendamento antigo de reconexão não abre um segundo socket), ou página
+  // escondida (reconecta quando voltar a aparecer)
+  if (ws || document.hidden) return;
   setBadge($('ws-state'), 'conectando', 'warn');
   ws = new WebSocket(`ws://${location.hostname || '192.168.4.1'}:81/`);
   ws.onopen = () => {
@@ -99,15 +102,23 @@ function connect() {
 
 // Abandona o socket atual (fechado, com erro ou mudo) e agenda a reconexão. Os handlers saem antes do close():
 // um socket mudo pode demorar a disparar o onclose, e a reconexão não pode acontecer duas vezes
-function dropSocket() {
-  if (!ws) return;
+// Fecha o socket atual sem reconectar. Os handlers saem antes do close(): um socket mudo pode demorar a disparar
+// o onclose
+function closeSocket() {
+  if (!ws) return false;
   const old = ws;
   ws = null;
   old.onopen = old.onclose = old.onerror = old.onmessage = null;
   try { old.close(); } catch (e) { /* já fechado */ }
-  setBadge($('ws-state'), 'desconectado', 'bad');
   stale = false;
   last = null;
+  return true;
+}
+
+// Abandona o socket atual (fechado, com erro ou mudo) e agenda a reconexão
+function dropSocket() {
+  if (!closeSocket()) return;
+  setBadge($('ws-state'), 'desconectado', 'bad');
   render();
   setTimeout(connect, 2000);   // reconexão
 }
@@ -425,3 +436,26 @@ setupCommands();
 render();
 connect();
 setInterval(checkTelemetry, 250);
+
+// Página saindo (recarregar, fechar, trocar de endereço): fecha o socket na hora. Sem isso, o navegador do celular
+// às vezes deixa o socket da página antiga aberto por dezenas de segundos (bancada de 24/10/2026: 28 s), ocupando
+// uma das vagas do WebSocket do B. Voltando do cache do navegador (persisted), reconecta
+window.addEventListener('pagehide', closeSocket);
+window.addEventListener('pageshow', (ev) => {
+  if (ev.persisted) connect();
+});
+
+// Página escondida (tela apagada, outro app, outra aba): fecha o socket e só reconecta quando ela voltar. Uma aba
+// esquecida ou um celular de tela apagada não ocupa vaga nem memória no B (com 8 celulares, as vagas e o heap são
+// contados), e o B não precisa esperar WS_STALL_MS para derrubá-lo. Na volta, o B manda o hello e os comandos
+// recentes
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (closeSocket()) {
+      setBadge($('ws-state'), 'pausado', 'warn');
+      render();
+    }
+  } else {
+    connect();
+  }
+});

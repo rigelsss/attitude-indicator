@@ -11,7 +11,7 @@ Plano aprovado em 25/10/2026.
   - Uma thread grava o CSV a partir da fila.
   - Os gráficos (matplotlib) ficam na thread principal e leem só os últimos segundos.
   - Assim, o B nunca vê o PC parado: ele derruba um cliente com 2 s sem progresso (`WS_STALL_MS`) e pula a telemetria de quem passa de 3 kB sem confirmação (`WS_MAX_INFLIGHT`).
-- **Reconexão sozinha,** com as regras da página: sem `tel` por 1 s, o dado não é atual; por 5 s, o cliente abandona o socket. Tentativas a cada 2 s. O ping de 20 s da biblioteca fica ligado, como reserva.
+- **Reconexão sozinha:** sem `tel` por 1 s, o dado não é atual (como na página). A conexão é dada como morta pelo ping a cada 1 s sem resposta por 5 s, ou pelo reset do B, e não pela falta de telemetria (revisão de 25/10/2026, abaixo). Tentativas a cada 2 s.
 - **Simulador do B** (`sim_b.py`, em localhost): o desenvolvimento e os testes rodam sem o PC sair da rede de casa. A Horizonte-ESP fica para as bancadas, em blocos curtos combinados antes, porque o PC fica sem internet nelas (não há Ethernet nem ancoragem pelo USB).
 - **Campos novos no JSON, só no B** (25/10/2026): `tb` (relógio do B na montagem), `n` (número da telemetria) e `loop_us` (latência da fusão no A), e o `"origin": "pc"` e o `"rid"` opcionais nos comandos. O `telemetry.h` não mudou: o `TELEMETRY_VERSION` continua 4, e a regra de atualizar os dois firmwares não se aplica. A página ignora os campos novos e mostra `· pc` no registro de comandos.
   - **O `n` é um contador só,** e não um por conexão: a telemetria é montada uma vez por volta e vai igual para todos. Para um cliente, um salto de `n` são telemetrias que o B pulou para ele.
@@ -22,11 +22,11 @@ Plano aprovado em 25/10/2026.
 
 ## Passos
 
-0. Wi-Fi do PC: diagnóstico (abaixo). Falta a bancada dos contornos.
-1. **B:** campos `tb`, `n` e `loop_us` e o `origin` (**feito** em 25/10/2026; falta a conferência na bancada).
+0. Wi-Fi do PC: diagnóstico (abaixo). A economia de energia foi descartada em 25/10/2026; faltam o roaming e o perfil WPA2.
+1. **B:** campos `tb`, `n` e `loop_us` e o `origin` (**feito** em 25/10/2026; `tb` e `n` conferidos na bancada só com o B; o `loop_us` e o `rid` ficam para a bancada com o A).
 2. **Base do cliente:** lógica pura e pytest (**feito** em 25/10/2026).
 3. Simulador, leitura, CSV e reconexão (**feito** em 25/10/2026, no PC, contra o simulador).
-4. Comandos no cliente.
+4. Comandos no cliente (**feito** em 25/10/2026, contra o simulador).
 5. Gráficos ao vivo e `analisar.py`.
 6. Bancada 1: o PC na Horizonte-ESP.
 7. Bancada 2: vários aparelhos, `WS_RATE_HZ` 30 contra 20.
@@ -53,12 +53,12 @@ Sintomas da bancada de 24/10/2026 ([web.md](web.md), "Diagnóstico de rede…"):
 
 **Hipóteses e contornos, a testar num bloco de ~15 min na Horizonte-ESP, com o monitor do B aberto:**
 
-1. Economia de energia do Wi-Fi na bateria: comparar 5 min na tomada (ou com o Wi-Fi em desempenho máximo na bateria) com 5 min na bateria.
+1. ~~Economia de energia do Wi-Fi na bateria~~: **descartada** na bancada de 25/10/2026 (abaixo). O carregador ficou ligado o tempo todo (Wi-Fi em desempenho máximo), e o ciclo de ~33,4 s continuou igual.
 2. Negociação do handshake: o Windows começa a negociação com GCMP-128 e registra CCMP no fim; o perfil aceita WPA3 e WPA2. Teste: um perfil só WPA2/CCMP (muda uma configuração do PC; só com o OK do usuário).
-3. Roaming do driver: "Roaming aggressiveness" no mínimo (exige administrador).
+3. Roaming do driver: "Roaming aggressiveness" no mínimo (exige administrador). **Melhora parcial** na bancada de 25/10/2026 (abaixo): as saídas de ~4,1 s a cada 33 s quase somem, mas as saídas longas continuam.
 4. Handshake do AP: forçar WPA2 no `softAP` do B (mudança de firmware; só com o OK do usuário).
 
-**Para o cliente, independente da causa:** uma reassociação de 60 a 130 ms com o mesmo IP não derruba o TCP. Uma de ~4 s ou ~8 s pode passar dos 2 s sem progresso do B. O cliente tolera lacunas abaixo de 5 s sem largar o socket e reconecta depois disso; o simulador reproduz as duas.
+**Para o cliente, independente da causa:** uma reassociação de 60 a 130 ms com o mesmo IP não derruba o TCP. Uma de ~4 s ou ~8 s pode passar dos 2 s sem progresso do B. O cliente percebe a conexão morta pelo ping (ver "Revisão: telemetria e conexão separadas"); o simulador reproduz as duas.
 
 ## Passo 1: campos novos no B
 
@@ -89,7 +89,7 @@ Pacote `ground-station/python/horizonte`, só com a biblioteca padrão (o pytest
 |---|---|
 | `mensagens` | Confere e decodifica `hello`, `tel` e `cmd`; converte a `tel` numa linha do CSV (`TEL_COLUNAS`; `null` e ausente viram vazio); monta os comandos com `"origin": "pc"` e confere a taxa antes de enviar |
 | `metricas` | `dif_seq16` (volta 65535 → 0), intervalo entre chegadas (mínimo, média, máximo, desvio, p50/p95/p99), telemetrias puladas pelo `n` (um `n` menor é B reiniciado) e atraso relativo pelo menor offset numa janela de 10 × 1 s (o `delay_estimator` do B, em Python) |
-| `conexao` | Estado da telemetria (`aguardando`, `ok`, `sem_telemetria` com 1 s, `abandonar` com 5 s) e agenda das tentativas a cada 2 s |
+| `conexao` | Estado da telemetria (`aguardando`, `ok`, `sem_telemetria` com 1 s; `abandonar` com 5 s só sem o ping) e agenda das tentativas a cada 2 s |
 | `comandos` | Casa o andamento com o pedido só pelo `rid` (seção acima); um estado intermediário depois do fim é ignorado; sem nenhum evento em 3 s, `sem_eco`, e uma resposta depois disso fica marcada como tardia; tempos até cada estado; lembra os últimos 64 pedidos |
 
 33 testes (`python -m pytest`, a partir de `ground-station/python`). Dependências em `requirements.txt` (`websockets`, `matplotlib`, `numpy`, `pytest`; o `matplotlib` ainda falta no PC).
@@ -108,7 +108,7 @@ O `sim_b.py` aceita as falhas: `--reassociar-s 33.4 --reassociar-ms 4000` (o env
 
 | Módulo | O que faz |
 |---|---|
-| `horizonte/rede.py` | Thread de rede: o laço asyncio só lê o socket e põe cada mensagem, com o carimbo de chegada (`time.monotonic_ns`), numa fila; confere a telemetria a cada 100 ms (`conexao.VigiaTelemetria`) e abandona o socket com 5 s sem `tel` (abortando o TCP, como o B); tenta de novo a cada 2 s. A fila cheia descarta e conta, sem bloquear a leitura. Os comandos são enviados pelo laço dela (`enviar`, de qualquer thread) |
+| `horizonte/rede.py` | Thread de rede: o laço asyncio só lê o socket e põe cada mensagem, com o carimbo de chegada (`time.monotonic_ns`), numa fila; confere a telemetria a cada 100 ms (`conexao.VigiaTelemetria`, só para dizer se o dado vale); a conexão morre pelo ping de 1 s sem resposta por 5 s ou pelo reset do B; tenta de novo a cada 2 s. A fila cheia descarta e conta, sem bloquear a leitura. Os comandos são enviados pelo laço dela (`enviar`, de qualquer thread) |
 | `horizonte/registro.py` | Thread de registro: decodifica, grava os CSV (com flush a cada 1 s), calcula as métricas e guarda os últimos 30 s para os gráficos (`amostras()`, com trava). Um erro num callback (terminal, gráfico) é contado e não para o registro |
 | `horizonte/simulador.py` | O B simulado: `hello` e os comandos recentes na conexão, `tel` a 30 Hz montada uma vez para todos (JSON compacto, como o ArduinoJson), comandos com `rid`, PIN, recusas e as falhas acima |
 | `cliente.py` | Linha de comando: liga a rede e o registro, imprime os eventos de conexão e o resumo de 1 s |
@@ -128,7 +128,8 @@ O `sim_b.py` aceita as falhas: `--reassociar-s 33.4 --reassociar-ms 4000` (o env
 | Queda do TCP a cada 1,5 s | reconecta (≥ 3 sessões), motivo "sem quadro de fechamento", telemetria gravada nas sessões |
 | Reassociação de 300 ms a cada 1 s | nenhuma reconexão, nenhum `sem_telemetria` |
 | B travado 2 s | `ok` → `sem_telemetria` → `ok`, sem reconectar |
-| B travado 6 s | `abandonar`, motivo "abandonada", reconecta e volta a `ok` |
+| B travado 7 s, respondendo o ping (revisão de 25/10/2026) | `ok` → `sem_telemetria` → `ok`, sem reconectar; o RTT continua chegando |
+| B sumido 8 s, sem responder o ping | `sem resposta do ping por 5 s`, reconecta |
 | 20 % das telemetrias puladas | `puladas_ws` soma o mesmo que o contador, e linhas + puladas = faixa de `n` |
 | Thread principal presa em conta por 3 s | maior lacuna < 500 ms, nenhum `sem_telemetria`, nada descartado |
 | Comando e recusa com `rid` | `sent` e `done` com o `rid` 5 e `origin` `pc`; PIN errado recusado com o `rid` 6 |
@@ -160,4 +161,69 @@ Testes em `tests/test_registro.py`: as três execuções com o mesmo nome (`x`, 
 - o `cliente.py` termina com `tudo gravado`, com o tempo vencido, ou com `ATENÇÃO: falha na gravação (…); N mensagens não gravadas, e as do último segundo podem ter se perdido` (o que só passou pelo buffer pode não ter chegado ao disco).
 
 Testes novos, com um arquivo que falha num ponto escolhido: escrita falhando depois de 2 telemetrias (2 gravadas, 8 pendentes, nenhum `erro`), flush falhando no meio da execução (as 3 que chegam depois contadas), fechamento falhando com tudo escrito (`False`, 0 pendentes, a falha do fechamento listada) e o mesmo embrulho sem falha (`True`). 53 testes no total.
+
+## Bancada de 25/10/2026, 17:19: só o B, PC na Horizonte-ESP
+
+O `ground` com os campos novos gravado; o A desligado; o PC no carregador o tempo todo; um celular com a página. Log do cliente `261025-171931` (o do monitor do B não foi gravado: o `pio device monitor` não tinha o filtro `log2file`, que agora está no `platformio.ini` do `ground`).
+
+- **Campos novos no B real:** as 7 470 telemetrias trazem `tb` e `n`, com `link.state` `no_signal`, `cur` 0 e sem os campos do pacote (nem o `loop_us`), como esperado sem o A.
+- **Comandos recentes:** a cada uma das 10 conexões, logo depois do `hello`, os 8 comandos do console (`seq` 12784 a 12791), do mais antigo ao mais novo, todos `no_response`.
+- **Taxa real da telemetria no WebSocket:** mediana de 35 ms entre mensagens (~28,5/s), e não 33,3 ms: a `web_task` monta a próxima quando `now − última ≥ 33 ms`, conferido a cada volta.
+- **O cliente antes da rede:** aberto às 17:19:31, antes de o PC entrar na Horizonte-ESP; 3 min de `timed out during opening handshake` e de `rede inalcançável`, sem travar; conectou às 17:23:13.
+- **A conexão do PC morria a cada ~33,4 s.** Todas as sessões: ~28 s normais, ~3 s de chegadas aos trancos (lacunas de ~160 ms a cada ~280 ms, sem telemetria pulada pelo B), depois nada; o cliente abandonava o socket aos 5 s (`abandonada: 5 s sem telemetria`) e reconectava em ~0,1 s. 9 ciclos, ~5 s sem dados em cada (~15 % do tempo). O simulador não mostrava isso: nele, a pausa não mata a conexão. No B real, o mais provável é a derrubada por 2 s sem progresso (`WS_STALL_MS`), com o reset (`tcp_abort`) perdido enquanto o PC está fora do ar; sem nada a enviar, o PC não sabia. Os trancos regulares antes de cada queda parecem a placa Wi-Fi saindo do canal para varrer outras redes, o que reforça a hipótese do roaming do driver. Falta o log do B (`[ws] … derrubado`, `[ap] saiu/entrou`) para confirmar.
+- **Correção no cliente: ping a cada 1 s** (antes, o da biblioteca, a cada 20 s). O primeiro ping que chega ao B depois da derrubada volta como reset, e o cliente reconecta ~1 s depois de o PC voltar, em vez de esperar 5 s. Numa conexão viva sem telemetria (a trava de memória do B pausa a telemetria de todos), o B responde (mas o cliente ainda abandonava o socket aos 5 s sem `tel`: corrigido na revisão abaixo). Foi descartado baixar o abandono para 2,5 s: na trava de memória, o cliente reconectaria em série com o B sem memória. A resposta do ping mede o RTT PC ↔ B (evento `rtt` a cada 1 s, no resumo); sem resposta por 5 s, a biblioteca fecha (`sem resposta do ping por 5 s`). A conferir na próxima bancada: as quedas passam a aparecer como `conexão perdida` ~1 s depois de o PC voltar.
+- **Teste do `busy` pelo console do B: inconclusivo.** Os 5 comandos digitados no console (`seq` 12786 a 12790) terminaram todos em `no_response`: a digitação levou mais que os ~0,9 s de um comando sem o A. Com a `rajada` do cliente (passo 4), os 5 saem juntos. No roteiro, `z` estava descrito como zerar altitude: no console do B, `z` é zerar atitude e `0` é zerar altitude.
+- **Encerramento:** o cliente foi encerrado com Ctrl+C, mas o log não tem o `cliente encerrado` final. Reproduzido no PC com uma interrupção da thread principal, o caminho grava o evento e termina com `tudo gravado`; a suspeita é um segundo Ctrl+C durante o encerramento. Agora o segundo Ctrl+C é ignorado até o fim, e o cliente avisa `encerrando: gravando o que falta`.
+
+## Passo 4: comandos pelo terminal
+
+`horizonte/terminal.py` (o que se digita; lógica pura) e `horizonte/operador.py` (pedido com `rid`, envio pela thread de rede, andamento impresso; o rastreador fica sob uma trava, porque a thread principal pede e a de registro casa os eventos). O `cliente.py` lê o teclado; o resumo sai a cada 5 s (`--resumo-s`; `r` liga e desliga).
+
+| Digite | Faz |
+|---|---|
+| `z` / `0` | zerar atitude / zerar altitude (as teclas do console do B) |
+| `g` / `m` | calibrar giroscópio / magnetômetro; pedem a mesma tecla de novo em 5 s para confirmar (como o segundo toque da página) |
+| `t 25` | taxa do A (10, 20, 25 ou 50 Hz, conferida antes de enviar) |
+| `t! 30` | envia sem conferir, para testar a recusa do A |
+| `rajada` | 5 × zerar atitude seguidos, para testar o `busy` do B (4 lugares) |
+| `pin 2468` / `pin` | troca / mostra o PIN (`--pin`, padrão 2468) |
+| `s` | os últimos 10 pedidos desta execução, com o estado e o tempo |
+| `r`, `?`, `q` | resumo, ajuda, sair |
+
+O terminal mostra cada mudança de estado dos pedidos deste cliente (`[cmd] #rid zerar atitude: enviado ao A (12 ms, seq N)`, `concluído (41 ms)`, `recusado pelo B (…): PIN incorreto`, `ocupado: o B já tem 4 comandos em curso`, `sem resposta do A (3 envios)`, `sem resposta do B em 3 s`, `não enviado: sem conexão`), e os comandos das outras origens uma vez por estado (`[cmd] (página) zerar altitude, seq N: …`), sem os recentes que o B repete depois do `hello`.
+
+**Simulador sem o A** (`sim_b.py --sem-a`): como o B sozinho, cada comando faz 3 envios a cada 300 ms e termina em `no_response`; o B simulado tem 4 lugares, e o 5º pedido vira `busy` com `seq` 0 e o `rid` dele.
+
+Testes: `test_terminal.py` (as teclas e os erros), `test_operador.py` (o caminho completo com os tempos, a confirmação das calibrações, a taxa conferida e a forçada, a rajada com o `busy` só no 5º, sem conexão, envio que falhou na rede, recusa com o motivo, outras origens uma vez por estado e sem o replay, `sem_eco` e a lista) e a integração (o RTT pelo ping; com o A: zerar, taxa, PIN errado e a calibração confirmada até o `done`; sem o A: a rajada com 4 `no_response` e 1 `busy`, o 5º). 87 testes no total. Rodada do `cliente.py` com o teclado contra o simulador sem o A: `z` em `sem resposta do A` em ~950 ms, a rajada com o 5º pedido em `ocupado` e os outros 4 em `sem resposta`, `t 30` não enviado, `q` com `tudo gravado`, RTT de 0,4 ms.
+
+## Bancada de 25/10/2026, 17:53: só o B, comandos pelo cliente e o ping de 1 s
+
+Logs: B `firmware/ground/logs/device-monitor-261025-175254` (o primeiro com o `log2file`; carimbo `17:18:12`) e cliente `261025-175320`. Os instantes do B foram convertidos para a hora do PC pelo `tb`. PC no carregador; um celular com a página.
+
+- **`rid` no B real:** o `z` (17:54:45) voltou com o `rid` 54131 nos 3 `sent` e no `no_response`, e o console do B mostrou `'zerar atitude' (pc, seq 12792) enviado`; o PIN errado (17:56:33) voltou `refused`, `PIN incorreto`, com o `rid` 54133. Comando do celular visto no PC (17:58:53, `origin` `página`). Comandos recentes depois de cada um dos 14 `hello`.
+- **Rajada: não testada.** Foi enviada às 17:56:59 ainda com o PIN `0000`, no instante em que o PC ficou 35 s fora da rede: os 5 pedidos foram para um socket já morto (`sem resposta do B em 3 s`). O `busy` no B real continua pendente.
+- **O PC sai da rede a cada ~33,4 s e fica ~4,1 s fora.** No B: `[ap] 18:47:3D:62:34:9F saiu` e `entrou` 4 094 a 4 141 ms depois (9 vezes), mais algumas saídas de 70 a 114 ms; ~2,5 s depois da saída, `[ws] cliente derrubado: 2000 ms sem espaço no envio`. Não é a reassociação curta de 24/10 (60 a 130 ms na maioria): com 4 s fora do ar, nenhum cliente mantém a conexão, e o ping de 1 s pouco muda (o PC volta perto dos 5 s do abandono). O problema é o Wi-Fi do PC, não o cliente. Os ~3 s de chegadas aos trancos antes de cada saída continuam.
+- **Roaming no mínimo (`1.Lowest`, de ~17:59 ao fim; horário dado pelo usuário):** a saída de 7,35 s às 17:59:33 é a placa reiniciando na troca. Comparação, com as saídas do PC no log do B:
+
+  | | `3.Medium` (17:53 a 17:59, ~6 min) | `1.Lowest` (17:59:33 a 18:04:50, ~5 min) |
+  |---|---|---|
+  | Saídas de ~4,1 s (derrubam a conexão) | 6, a cada ~33 s | 1 |
+  | Saídas curtas, 70 a 114 ms (a conexão aguenta) | 2 | 4 |
+  | Saídas longas | 7,4 s e 35 s | 10,8 s, 30 s e 5,8 s |
+  | Sessões mais longas do cliente | 37 a 66 s | 94 e 105 s |
+
+  O roaming do driver explica boa parte do ciclo de 33 s: no `1.Lowest`, a maioria das saídas de 4,1 s virou reassociação curta, como as de 24/10. As saídas longas (10 a 35 s, com `rede inalcançável` no cliente: o Windows perde a rede de vez) aparecem nos dois ajustes e são outro problema; suspeitas: a varredura e a troca automática de rede do Windows. O ajuste voltou a `3.Medium` depois do teste.
+- **A página aberta também no navegador do PC** (provavelmente duas abas): às 17:57:39 o PC carregou a página duas vezes, e o B chegou a ter 3 WebSockets do PC além do cliente Python (no fim, duas abas com contagens idênticas). A cada saída do PC, 3 conexões penduradas e os buffers do Wi-Fi para um aparelho ausente: heap mínimo de 27 kB, **189 pausas da trava de memória** (29 s no total, a maior de 2,1 s), 57 clientes derrubados. A trava funcionou, sem travar o B, mas atrapalha o celular. Nos testes, a página fica fechada no PC.
+- **RTT PC ↔ B (ping):** mediana de 39 ms, p95 de 165 ms, máximo de 397 ms (542 medidas): alto para dois aparelhos lado a lado, coerente com a placa Wi-Fi do PC saindo do canal.
+- **Próximo teste do PC:** roaming em `1.Lowest` com a varredura periódica do Windows desligada (`netsh wlan set autoconfig enabled=no interface="Wi-Fi"`, administrador; o PC deixa de reconectar sozinho; volta com `enabled=yes`). Depois, se precisar, o perfil só WPA2 (hipótese 2).
+
+## Revisão: telemetria e conexão separadas, tempos pela chegada, orientação do magnetômetro (25/10/2026)
+
+Três pontos de uma revisão externa, confirmados no código:
+
+1. **O cliente desconectava numa pausa de telemetria com o ping respondido.** O estado `abandonar` da `VigiaTelemetria` abortava o socket aos 5 s sem `tel`, apesar dos pongs: o contrário do que este documento dizia para a trava de memória do B (que chegou a 20–30 s com interferência no canal, em 24/10). Agora a validade da telemetria e a vitalidade da conexão são separadas: com o ping ligado, a falta de `tel` só deixa os dados indisponíveis (`sem_telemetria`); a conexão morre pelo ping sem resposta por 5 s (`sem resposta do ping por 5 s`) ou pelo reset do B. Quem responde o ping no B é o `loop()` da biblioteca na `web_task`: com a task travada, o ping fica sem resposta. Sem o ping (`ping_s=None`), vale a regra antiga. O simulador ganhou o B "sumido" (`--sumir-apos-s`/`--sumir-por-s`: não lê o socket, então não responde o ping, e não manda nada), e o "travado" (sem telemetria, respondendo o ping) virou o caso da trava de memória.
+2. **Os tempos dos comandos incluíam o atraso do registro.** O operador usava a hora em que a thread de registro tratava o evento: um evento recebido aos 20 ms e tratado aos 5 000 ms virava uma conclusão aos 5 000 ms. Agora o registro passa o carimbo de chegada (`pc_ns`, o mesmo relógio monotônico do pedido), e os tempos são contados por ele. O mesmo atraso afetava o `sem_eco`: com a fila do registro atrasada, um pedido já respondido venceria antes de a resposta ser lida; o `tick` passa a usar `Processador.relogio_ms()` (a chegada da última mensagem tratada, enquanto há fila; o relógio, com a fila vazia).
+3. **A confirmação do magnetômetro mandava deixar a caixa parada.** A coleta é o contrário ([magnetometro.md](magnetometro.md)): girar a caixa devagar no mesmo lugar, uma volta de 360° com cada face apoiada, longe de metais, por até 3 min. O giroscópio continua com "deixe a caixa parada".
+
+Testes: a pausa de 7 s com o ping respondido (sem reconectar, o RTT seguindo), o B sumido (reconecta pelo ping), a `VigiaTelemetria` sem abandono, o evento tratado aos 5 000 ms com chegada aos 20 ms (conclusão em 20 ms), o `tick` pelo relógio do registro, o `relogio_ms()` com e sem fila e o texto das duas calibrações. 92 testes no total, duas rodadas seguidas.
 

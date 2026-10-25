@@ -64,7 +64,7 @@ No exemplo, `valid` = 13 = `VAL_ATT` + `VAL_ALT` + `VAL_HDG`.
 - `state`: `sent` (enviado ao A; repetido a cada reenvio), `accepted` (em curso no A), `done`, `rejected` (recusado pelo A; o motivo fica na serial do A), `no_response` (nenhum ACK depois de 3 envios), `no_completion` (aceito sem conclusão em 200 s) ou `busy` (o B já tem 4 comandos em curso).
 - `origin`: `página`, `console` ou `encoder`. Todos os clientes veem os comandos de todas as origens.
 - `seq`: o `seq` do `CommandPacket`; as mensagens de um mesmo comando têm o mesmo.
-- **Entrega:** as mensagens `hello` e `cmd` não se perdem por um congestionamento curto (o B as guarda numa fila por cliente e as manda antes da telemetria); a `tel` pode faltar, porque a próxima a substitui. Um cliente que fica 2 s sem conseguir receber é desconectado e, ao reconectar, recebe os comandos recentes.
+- **Entrega:** as mensagens `hello` e `cmd` não se perdem por um congestionamento curto (o B as guarda numa fila por cliente e as manda antes da telemetria); a `tel` pode faltar, porque a próxima a substitui. Um cliente que fica 2 s sem receber nada (o B escreve no socket sem esperar; ver [web.md](web.md)) é desconectado e, ao reconectar, recebe os comandos recentes.
 
 **Recusa no próprio B** (só para quem pediu, sem `seq`):
 

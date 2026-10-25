@@ -49,3 +49,11 @@ def test_aviso_falhas():
     assert a.falha("tempo esgotado", 14_000) == "tempo esgotado"   # motivo novo, na hora
     assert a.conectou() == "depois de 5 tentativa(s) sem conexão"
     assert a.conectou() is None                            # sem falhas antes
+
+
+def test_vigia_sem_abandono_com_o_ping():
+    # Com o ping, a vitalidade é dele: a telemetria só diz se o dado vale
+    v = VigiaTelemetria(agora_ms=0, abandono_ms=None)
+    assert v.estado(60_000) == "aguardando"
+    v.tel(100)
+    assert v.estado(60_000) == "sem_telemetria"

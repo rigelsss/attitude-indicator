@@ -28,6 +28,7 @@ def _json(d):
 
 COMANDOS_DEMORADOS = {"calibrate_gyro": 4.0, "calibrate_mag": 10.0}   # s até o done
 RECENTES = 8
+LUGARES = 4   # comandos em curso ao mesmo tempo no B (CommandLink::SLOTS)
 
 
 @dataclass
@@ -37,6 +38,8 @@ class Falhas:
     queda_s: float = 0.0           # a cada quantos s o TCP é abortado (0 = nunca)
     travar_apos_s: float = 0.0     # B travado: começa depois de tantos s do início (0 = nunca)
     travar_por_s: float = 0.0
+    sumir_apos_s: float = 0.0      # B sumido (não lê o socket, então não responde o ping, e não manda nada): começa
+    sumir_por_s: float = 0.0       #   depois de tantos s do início (0 = nunca), como o PC fora do alcance
     pular: float = 0.0             # probabilidade de pular uma telemetria para um cliente
     perda_a: float = 0.0           # probabilidade de perda de um pacote do A no link A → B
 
@@ -49,7 +52,7 @@ class _Cliente:
 
 
 class SimuladorB:
-    def __init__(self, falhas=None, hz=30, pin="2468", decl=-20.7, semente=None):
+    def __init__(self, falhas=None, hz=30, pin="2468", decl=-20.7, semente=None, sem_a=False):
         self.falhas = falhas or Falhas()
         self.hz = hz
         self.pin = pin
@@ -61,6 +64,8 @@ class SimuladorB:
         self._n = 0
         self._lost = 0
         self._seq_cmd = self._rnd.randint(0, 65535)
+        self.sem_a = sem_a           # como o B sem o A: 3 envios a cada 300 ms e no_response
+        self._em_curso = 0           # o B tem 4 lugares; o 5º pedido é "busy" (seq 0)
         self._recentes = {}                 # seq → último evento (ordem de inserção = do mais antigo ao mais novo)
         self.porta = None
         self.conexoes = 0
@@ -69,12 +74,18 @@ class SimuladorB:
     def _b_ms(self):
         return int((time.monotonic() - self._t0) * 1000)
 
-    def _travado(self):
-        f = self.falhas
-        if f.travar_apos_s <= 0:
+    def _janela(self, apos_s, por_s):
+        if apos_s <= 0:
             return False
         dt = time.monotonic() - self._t0
-        return f.travar_apos_s <= dt < f.travar_apos_s + f.travar_por_s
+        return apos_s <= dt < apos_s + por_s
+
+    def _travado(self):
+        # B travado: sem telemetria, mas o loop() da biblioteca responde o ping
+        return self._janela(self.falhas.travar_apos_s, self.falhas.travar_por_s)
+
+    def _sumido(self):
+        return self._janela(self.falhas.sumir_apos_s, self.falhas.sumir_por_s)
 
     # ---------- mensagens ----------
     def _hello(self):
@@ -148,9 +159,13 @@ class SimuladorB:
         origin = d.get("origin")
         if origin is not None and origin != "pc":
             return await self._recusar(c, cmd, "origem inválida", rid)
+        origem = "pc" if origin == "pc" else "página"
+        if self._em_curso >= LUGARES:
+            return await self._difundir_cmd(self._cmd_evento(cmd, arg, 0, "busy", rid, origem))
         seq = self._seq_cmd
         self._seq_cmd = (self._seq_cmd + 1) & 0xFFFF
-        asyncio.create_task(self._andamento(cmd, arg, seq, rid, "pc" if origin == "pc" else "página"))
+        self._em_curso += 1
+        asyncio.create_task(self._andamento(cmd, arg, seq, rid, origem))
 
     async def _recusar(self, c, cmd, motivo, rid):
         d = {"type": "cmd", "cmd": cmd, "state": "refused", "reason": motivo}
@@ -162,10 +177,22 @@ class SimuladorB:
             pass
 
     async def _andamento(self, cmd, arg, seq, rid, origin):
+        try:
+            await self._andamento_em_curso(cmd, arg, seq, rid, origin)
+        finally:
+            self._em_curso -= 1
+
+    async def _andamento_em_curso(self, cmd, arg, seq, rid, origin):
         ev = lambda st: self._cmd_evento(cmd, arg, seq, st, rid, origin)
         await asyncio.sleep(0.005)
         await self._difundir_cmd(ev("sent"))
-        if cmd == "set_rate":
+        if self.sem_a:
+            for _ in range(2):   # reenvios do B a cada 300 ms
+                await asyncio.sleep(0.3)
+                await self._difundir_cmd(ev("sent"))
+            await asyncio.sleep(0.3)
+            await self._difundir_cmd(ev("no_response"))
+        elif cmd == "set_rate":
             await asyncio.sleep(0.035)
             await self._difundir_cmd(ev("done" if arg in TAXAS_HZ else "rejected"))
         elif cmd in COMANDOS_DEMORADOS:
@@ -213,10 +240,15 @@ class SimuladorB:
     async def _produzir(self):
         periodo = 1.0 / self.hz
         proxima = time.monotonic()
+        sumido = False
         while True:
             proxima += periodo
             await asyncio.sleep(max(0.0, proxima - time.monotonic()))
-            if not self._clientes or self._travado():
+            if self._sumido() != sumido:
+                sumido = not sumido
+                for c in list(self._clientes):   # sem ler o socket, os pings ficam sem resposta
+                    (c.ws.transport.pause_reading if sumido else c.ws.transport.resume_reading)()
+            if not self._clientes or self._travado() or sumido:
                 continue
             texto = self._tel()
             for c in list(self._clientes):

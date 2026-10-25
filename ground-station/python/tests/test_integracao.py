@@ -9,7 +9,9 @@ import pytest
 
 pytest.importorskip("websockets")
 
+from horizonte.comandos import RastreadorComandos                  # noqa: E402
 from horizonte.mensagens import montar_comando                     # noqa: E402
+from horizonte.operador import Operador                            # noqa: E402
 from horizonte.rede import ClienteWS                               # noqa: E402
 from horizonte.registro import Processador                         # noqa: E402
 from horizonte.simulador import Falhas, SimuladorB, SimuladorEmThread  # noqa: E402
@@ -18,15 +20,18 @@ from horizonte.simulador import Falhas, SimuladorB, SimuladorEmThread  # noqa: E
 class Sessao:
     """Simulador, rede e registro rodando juntos; guarda os eventos na ordem."""
 
-    def __init__(self, tmp_path, falhas=None):
-        self.sim = SimuladorEmThread(SimuladorB(falhas or Falhas(), semente=1))
+    def __init__(self, tmp_path, falhas=None, sem_a=False):
+        self.sim = SimuladorEmThread(SimuladorB(falhas or Falhas(), semente=1, sem_a=sem_a))
         self.eventos = []
+        self.saida = []      # o que o operador imprimiria no terminal
         self.tmp = tmp_path
 
     def __enter__(self):
         self.sim.__enter__()
         self.rede = ClienteWS(self.sim.url)
-        self.reg = Processador(self.rede.saida, str(self.tmp), ao_evento=lambda t, d: self.eventos.append((t, d)))
+        self.op = Operador(self.rede.enviar, self.saida.append, rastreador=RastreadorComandos(primeiro_rid=200))
+        self.reg = Processador(self.rede.saida, str(self.tmp), ao_evento=lambda t, d: self.eventos.append((t, d)),
+                               ao_cmd=self.op.ao_cmd)
         self.reg.iniciar()
         self.rede.iniciar()
         return self
@@ -90,11 +95,27 @@ def test_b_travado_por_2s_volta_sem_reconectar(tmp_path):
     assert s.rede.sessao == 1
 
 
-def test_b_travado_por_6s_abandona_e_reconecta(tmp_path):
-    with Sessao(tmp_path, Falhas(travar_apos_s=1.0, travar_por_s=6.0)) as s:
-        assert s.esperar(lambda: s.rede.sessao >= 2 and s.estados()[-1:] == ["ok"], 12)
-    assert "abandonar" in s.estados()
-    assert any(t == "desconectado" and d.startswith("abandonada") for t, d in s.eventos)
+def test_pausa_de_telemetria_com_ping_respondido_nao_derruba(tmp_path):
+    # Revisão de 25/10/2026: como a trava de memória do B (telemetria pausada, o B respondendo o ping). Antes, o
+    # cliente abandonava o socket aos 5 s sem tel, apesar dos pongs
+    with Sessao(tmp_path, Falhas(travar_apos_s=1.0, travar_por_s=7.0)) as s:
+        time.sleep(1.5)
+        rtt_antes = sum(1 for t, _ in s.eventos if t == "rtt")
+        assert s.esperar(lambda: s.estados()[-1:] == ["ok"] and len(s.estados()) >= 4, 10)
+    assert s.rede.sessao == 1
+    quedas = [d for t, d in s.eventos if t == "desconectado" and d != "cliente encerrado"]   # o fim do teste
+    assert "abandonar" not in s.estados() and quedas == []
+    assert s.estados()[-3:] == ["ok", "sem_telemetria", "ok"]
+    assert sum(1 for t, _ in s.eventos if t == "rtt") >= rtt_antes + 5   # o ping seguiu respondido na pausa
+
+
+def test_b_sumido_sem_ping_reconecta(tmp_path):
+    # O B some (não lê o socket: ping sem resposta, nada chega): a conexão é dada como morta pelo ping, em ~5 s
+    with Sessao(tmp_path, Falhas(sumir_apos_s=1.0, sumir_por_s=8.0)) as s:
+        assert s.esperar(lambda: any(t == "desconectado" for t, _ in s.eventos), 9)
+        assert s.esperar(lambda: s.rede.sessao >= 2, 4)
+    motivo = [d for t, d in s.eventos if t == "desconectado"][0]
+    assert motivo == "sem resposta do ping por 5 s"
 
 
 def test_puladas_pelo_b_contadas_pelo_n(tmp_path):
@@ -137,3 +158,41 @@ def test_comando_e_recusa_com_rid(tmp_path):
     recusa = [c for c in cmds if c.get("rid") == 6]
     assert recusa and recusa[0]["state"] == "refused" and recusa[0]["reason"] == "PIN incorreto"
     assert all(c["origin"] == "pc" for c in cmds if c.get("rid") == 5)
+
+
+def test_rtt_pelo_ping(tmp_path):
+    with Sessao(tmp_path) as s:
+        assert s.esperar(lambda: any(t == "rtt" for t, _ in s.eventos), 4)
+    rtts = [float(d) for t, d in s.eventos if t == "rtt"]
+    assert 0 < min(rtts) < 100               # localhost
+
+
+def test_operador_com_o_a(tmp_path):
+    with Sessao(tmp_path) as s:
+        assert s.esperar(lambda: s.rede.conectado, 3)
+        s.op.linha("z")
+        s.op.linha("t 25")
+        s.op.linha("pin 0000")
+        s.op.linha("0")
+        s.op.linha("pin 2468")
+        s.op.linha("g")
+        s.op.linha("g")                      # confirmada
+        # o primeiro g só pede a confirmação: a calibração é o rid 203
+        assert s.esperar(lambda: s.op.rastreador.pedido(203) and s.op.rastreador.pedido(203).final, 8)
+    estado = {p.rid: p.estado for p in s.op.rastreador.todos()}
+    assert estado == {200: "done", 201: "done", 202: "refused", 203: "done"}
+    assert any("#203 calibrar giroscópio: aceito pelo A" in l for l in s.saida)
+    assert any("#202 zerar altitude: recusado pelo B" in l and "PIN incorreto" in l for l in s.saida)
+
+
+def test_rajada_sem_o_a_um_busy(tmp_path):
+    # Como o B sem o A: cada comando faz 3 envios e termina em no_response em ~0,9 s; o B tem 4 lugares
+    with Sessao(tmp_path, sem_a=True) as s:
+        assert s.esperar(lambda: s.rede.conectado, 3)
+        s.op.linha("rajada")
+        assert s.esperar(lambda: all(p.final for p in s.op.rastreador.todos()), 4)
+    estado = {p.rid: p.estado for p in s.op.rastreador.todos()}
+    assert sorted(estado.values()) == ["busy"] + ["no_response"] * 4
+    ocupado = [rid for rid, e in estado.items() if e == "busy"]
+    assert ocupado == [204]                  # o 5º; o busy (seq 0) não mexeu nos outros
+    assert all(p.seq is not None for p in s.op.rastreador.todos() if p.estado == "no_response")

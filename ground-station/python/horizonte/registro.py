@@ -56,13 +56,16 @@ def _abrir_exclusivo(pasta, nome):
 
 
 class Processador:
-    def __init__(self, entrada, pasta, janela_s=30, ao_resumo=None, ao_evento=None, nome=None):
+    def __init__(self, entrada, pasta, janela_s=30, ao_resumo=None, ao_evento=None, ao_cmd=None, nome=None):
         os.makedirs(pasta, exist_ok=True)
         (self.nome, self.caminho_tel, self.caminho_eventos, self._arq_tel,
          self._arq_ev) = _abrir_exclusivo(pasta, nome or time.strftime("%y%m%d-%H%M%S"))
         self.entrada = entrada
         self.ao_resumo = ao_resumo
         self.ao_evento = ao_evento
+        self.ao_cmd = ao_cmd       # (dict do "cmd", replay, chegada_ms): replay = um dos recentes logo depois do hello
+        self._chegada_ms = None    # carimbo de chegada (ms, monotônico) da última mensagem tratada
+        self._apos_hello = False   # do hello até a primeira tel: os "cmd" são os recentes que o B repete
         self._tel = csv.writer(self._arq_tel)
         self._ev = csv.writer(self._arq_ev)
         self._tel.writerow(TEL_COLUNAS + COLUNAS_PC)
@@ -79,6 +82,7 @@ class Processador:
         self.pendentes = 0         # mensagens não gravadas: na fila (tempo vencido ou falha) e a que falhou
         self._perdida = 0          # a mensagem em tratamento quando a gravação falhou
         self.estado_tel = "desconectado"
+        self.rtt_ms = None         # último RTT PC ↔ B (resposta do ping), por conexão
         self.ultimo_resumo = None
         self._janela = deque(maxlen=int(janela_s * 40))   # 30 Hz com folga
         self._trava = threading.Lock()
@@ -197,12 +201,24 @@ class Processador:
         if self.ao_evento is not None:
             self._chamar(self.ao_evento, tipo, detalhe)
 
+    def relogio_ms(self):
+        """O "agora" do que já foi tratado (ms, monotônico): com a fila vazia, o relógio; com mensagens esperando,
+        a chegada da última tratada. Assim, um prazo (o sem_eco dos comandos) não vence por atraso do registro
+        enquanto a resposta ainda está na fila."""
+        if self.entrada.empty() or self._chegada_ms is None:
+            return time.monotonic_ns() / 1e6
+        return self._chegada_ms
+
     def _tratar(self, tipo, pc_ns, pc_unix, sessao, dado):
+        self._chegada_ms = pc_ns / 1e6
         if tipo == "evento":
             nome, detalhe = dado
             if nome == "conectado":
                 self.intervalo.recomecar()
                 self.contador_n.recomecar()
+                self.rtt_ms = None
+            elif nome == "rtt":
+                self.rtt_ms = float(detalhe)
             if nome == "telemetria":
                 self.estado_tel = detalhe
             elif nome in ("desconectado", "falha"):
@@ -217,7 +233,12 @@ class Processador:
             return
         if tipo_msg != "tel":
             self._registrar(pc_ns, pc_unix, sessao, tipo_msg, dado)
+            if tipo_msg == "hello":
+                self._apos_hello = True
+            elif tipo_msg == "cmd" and self.ao_cmd is not None:
+                self._chamar(self.ao_cmd, d, self._apos_hello, pc_ns / 1e6)
             return
+        self._apos_hello = False
         pc_ms = pc_ns / 1e6
         self.intervalo.chegada(pc_ms)
         puladas = self.contador_n.chegada(d["n"])
@@ -250,6 +271,7 @@ class Processador:
             "puladas_total": self.contador_n.puladas, "intervalo": iv,
             "atraso_bpc_max": self._resumo_atraso_max, "delay_ab_max": self._resumo_delay_max,
             "lost": link.get("lost"), "loss_pct": link.get("loss_pct"), "linhas": self.linhas_tel,
+            "rtt_ms": self.rtt_ms,
         }
         self._resumo_tel = self._resumo_puladas = 0
         self._resumo_atraso_max = self._resumo_delay_max = None
@@ -266,4 +288,5 @@ def texto_resumo(r, sessao):
     fmt = lambda v, suf="": "---" if v is None else f"{v:g}{suf}"
     return (f"[r] sessão {sessao} | {r['estado']} | tel {r['tel_s']}/s | puladas {r['puladas']} "
             f"(total {r['puladas_total']}) | {iv_txt} | atraso B->PC máx {fmt(r['atraso_bpc_max'], ' ms')} | "
-            f"A->B máx {fmt(r['delay_ab_max'], ' ms')} | perdidos A->B {fmt(r['lost'])} ({fmt(r['loss_pct'], ' %')})")
+            f"A->B máx {fmt(r['delay_ab_max'], ' ms')} | perdidos A->B {fmt(r['lost'])} ({fmt(r['loss_pct'], ' %')}) | "
+            f"RTT PC<->B {fmt(r.get('rtt_ms'), ' ms')}")

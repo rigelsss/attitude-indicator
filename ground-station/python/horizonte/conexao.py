@@ -1,9 +1,11 @@
 """Regras da conexão do cliente (as mesmas da página, docs/web.md, passo 4). Lógica pura, sem rede; tempos em ms.
 
 - Sem "tel" por SEM_TEL_MS (1 s), o dado não é atual: os gráficos mostram a lacuna.
-- Sem "tel" por ABANDONO_MS (5 s), o cliente abandona o socket e reconecta. Cobre a conexão que morre sem aviso
-  (B travado, PC fora do alcance). As reassociações curtas do PC (60–130 ms, às vezes ~4 s; docs/cliente-python.md)
-  ficam abaixo disso e não derrubam o socket pelo lado do cliente.
+- Validade da telemetria e vitalidade da conexão são coisas separadas (revisão de 25/10/2026). Com o ping ligado
+  (horizonte.rede), a conexão é dada como morta só quando o ping fica sem resposta por ABANDONO_MS (5 s): uma pausa
+  de telemetria com o B respondendo (a trava de memória do B, que chegou a 20–30 s com interferência no canal) deixa
+  os dados indisponíveis, mas não derruba o socket. Sem o ping, a falta de "tel" por ABANDONO_MS abandona o socket
+  (VigiaTelemetria com abandono_ms; None desliga).
 - Tentativas de conexão a cada TENTATIVA_MS (2 s).
 """
 
@@ -14,7 +16,8 @@ TENTATIVA_MS = 2000
 
 class VigiaTelemetria:
     """Estado da telemetria de uma conexão aberta: "aguardando" (nenhuma tel ainda), "ok", "sem_telemetria" ou
-    "abandonar". A contagem começa na abertura: um socket que conecta e nunca manda tel também é abandonado."""
+    "abandonar" (só com abandono_ms; None nunca abandona). A contagem começa na abertura: um socket que conecta e
+    nunca manda tel também é abandonado."""
 
     def __init__(self, agora_ms, sem_tel_ms=SEM_TEL_MS, abandono_ms=ABANDONO_MS):
         self.sem_tel_ms = sem_tel_ms
@@ -28,7 +31,7 @@ class VigiaTelemetria:
     def estado(self, agora_ms):
         ref = self._ultima_ms if self._ultima_ms is not None else self._aberto_ms
         parado = agora_ms - ref
-        if parado >= self.abandono_ms:
+        if self.abandono_ms is not None and parado >= self.abandono_ms:
             return "abandonar"
         if self._ultima_ms is None:
             return "aguardando"

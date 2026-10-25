@@ -24,12 +24,18 @@ def main():
     ap.add_argument("--queda-s", type=float, default=0, help="a cada quantos s o TCP é abortado (0 = nunca)")
     ap.add_argument("--travar-apos-s", type=float, default=0, help="B travado depois de tantos s (0 = nunca)")
     ap.add_argument("--travar-por-s", type=float, default=0)
+    ap.add_argument("--sumir-apos-s", type=float, default=0,
+                    help="B sumido (sem telemetria e sem responder o ping) depois de tantos s (0 = nunca)")
+    ap.add_argument("--sumir-por-s", type=float, default=0)
     ap.add_argument("--pular", type=float, default=0, help="probabilidade de pular uma tel para um cliente")
     ap.add_argument("--perda-a", type=float, default=0, help="probabilidade de perda no link A → B")
+    ap.add_argument("--sem-a", action="store_true", help="como o B sem o A: comandos terminam em no_response")
     a = ap.parse_args()
-    falhas = Falhas(a.reassociar_s, a.reassociar_ms, a.queda_s, a.travar_apos_s, a.travar_por_s, a.pular, a.perda_a)
-    sim = SimuladorB(falhas, hz=a.hz, pin=a.pin)
-    print(f"[sim] B simulado em ws://127.0.0.1:{a.porta}/ ({a.hz:g} Hz) | {falhas}")
+    falhas = Falhas(reassociar_s=a.reassociar_s, reassociar_ms=a.reassociar_ms, queda_s=a.queda_s,
+                    travar_apos_s=a.travar_apos_s, travar_por_s=a.travar_por_s, sumir_apos_s=a.sumir_apos_s,
+                    sumir_por_s=a.sumir_por_s, pular=a.pular, perda_a=a.perda_a)
+    sim = SimuladorB(falhas, hz=a.hz, pin=a.pin, sem_a=a.sem_a)
+    print(f"[sim] B simulado em ws://127.0.0.1:{a.porta}/ ({a.hz:g} Hz{', sem o A' if a.sem_a else ''}) | {falhas}")
     try:
         asyncio.run(sim.servir(porta=a.porta))
     except KeyboardInterrupt:

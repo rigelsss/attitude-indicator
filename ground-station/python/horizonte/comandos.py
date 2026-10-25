@@ -12,7 +12,7 @@ vira "sem_eco"; se a resposta chegar depois, ele é atualizado e marcado como ta
 
 import random
 
-FINAIS = ("done", "rejected", "no_response", "no_completion", "busy", "refused", "sem_eco")
+FINAIS = ("done", "rejected", "no_response", "no_completion", "busy", "refused", "sem_eco", "nao_enviado")
 SEM_ECO_MS = 3000
 MAX_PEDIDOS = 64   # pedidos lembrados (os terminados mais antigos saem primeiro)
 
@@ -96,6 +96,15 @@ class RastreadorComandos:
         for p in vencidos:
             p._mudar("sem_eco", agora_ms)
         return vencidos
+
+    def nao_enviado(self, p, agora_ms, motivo="sem conexão"):
+        """O pedido não saiu (sem conexão, ou a taxa recusada antes de enviar)."""
+        p.motivo = motivo
+        p._mudar("nao_enviado", agora_ms)
+
+    def todos(self):
+        """Os pedidos lembrados, do mais antigo ao mais novo."""
+        return list(self._pedidos.values())
 
     def pendentes(self):
         """Pedidos ainda sem resposta."""

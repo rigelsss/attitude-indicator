@@ -203,3 +203,22 @@ def test_sem_falha_gravou_tudo(tmp_path):
         por(q, tel(n))
     reg.iniciar()
     assert reg.parar() is True and reg.gravou_tudo and not reg.falhas_gravacao
+
+
+def test_relogio_do_registro_com_fila():
+    q = queue.Queue()
+    reg = Processador(q, str(tmp_dir()), nome="rel")
+    antes = time.monotonic_ns() / 1e6
+    assert reg.relogio_ms() >= antes                 # nada tratado: o relógio
+    reg._tratar("msg", 5_000_000, time.time(), 1, tel(1))   # tratada uma que chegou aos 5 ms
+    q.put(("msg", time.monotonic_ns(), time.time(), 1, tel(2)))
+    assert reg.relogio_ms() == 5.0                   # com fila: a chegada da última tratada
+    q.get_nowait()
+    assert reg.relogio_ms() >= antes                 # fila vazia: o relógio de novo
+    reg.iniciar()
+    assert reg.parar()
+
+
+def tmp_dir():
+    import tempfile
+    return tempfile.mkdtemp()

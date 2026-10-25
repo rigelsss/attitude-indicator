@@ -6,10 +6,20 @@ Itens da fila (tuplas):
   ("msg", pc_ns, pc_unix, sessao, texto)      mensagem recebida, sem decodificar
   ("evento", pc_ns, pc_unix, sessao, (nome, detalhe))
 Eventos: "tentando", "conectado", "falha", "desconectado", "telemetria" (mudança de estado: aguardando, ok,
-sem_telemetria, abandonar), "enviado", "envio_falhou".
+sem_telemetria, abandonar), "rtt" (ms, a cada 1 s), "enviado", "envio_falhou".
 
-Reconexão sozinha (horizonte.conexao): tentativa a cada 2 s; sem "tel" por 5 s, o socket é abandonado. O ping da
-biblioteca (20 s) fica ligado, como reserva.
+Reconexão sozinha (horizonte.conexao): tentativa a cada 2 s. A conexão é dada como morta pelo ping sem resposta
+por 5 s (ou pelo reset do B), e não pela falta de telemetria: uma pausa de "tel" com o B respondendo deixa os dados
+indisponíveis ("sem_telemetria") sem derrubar o socket (revisão de 25/10/2026). Com ping_s=None, volta a regra
+antiga: sem "tel" por 5 s, o socket é abandonado.
+
+Ping a cada PING_S (1 s; bancada de 25/10/2026): o B derruba um cliente com 2 s sem progresso no envio, com um
+reset (tcp_abort) que se perde quando o PC está fora do ar (reassociação do Wi-Fi do PC a cada ~33 s). Sem nada a
+enviar, o PC não sabia que a conexão tinha morrido e esperava os 5 s sem telemetria. Com o ping, o primeiro que
+chega ao B depois disso volta como reset, e o cliente reconecta logo. Numa conexão viva sem telemetria (a trava de
+memória do B pausa a telemetria de todos), o B responde o ping e nada cai, e o cliente não reconecta em série com o
+B sem memória. Quem responde o ping é o loop() da biblioteca na web_task do B: com a task travada, o ping fica sem
+resposta e a conexão é fechada. A resposta do ping também mede o RTT PC ↔ B (evento "rtt").
 """
 
 import asyncio
@@ -23,6 +33,7 @@ from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
 from .conexao import ABANDONO_MS, SEM_TEL_MS, AgendaReconexao, VigiaTelemetria
 
 URL_PADRAO = "ws://192.168.4.1:81/"
+PING_S = 1.0
 VOLTA_S = 0.1   # de quanto em quanto tempo a leitura confere o estado da telemetria e o pedido de parar
 
 
@@ -37,7 +48,7 @@ def _e_tel(texto):
 
 
 class ClienteWS:
-    def __init__(self, url=URL_PADRAO, saida=None, ping_s=20.0, sem_tel_ms=SEM_TEL_MS, abandono_ms=ABANDONO_MS):
+    def __init__(self, url=URL_PADRAO, saida=None, ping_s=PING_S, sem_tel_ms=SEM_TEL_MS, abandono_ms=ABANDONO_MS):
         self.url = url
         self.saida = saida if saida is not None else queue.Queue(maxsize=100_000)
         self.ping_s = ping_s
@@ -102,8 +113,9 @@ class ClienteWS:
             agenda.iniciou(_agora_ms())
             self._evento("tentando", self.url)
             try:
-                async with connect(self.url, open_timeout=3, ping_interval=self.ping_s, ping_timeout=self.ping_s,
-                                   close_timeout=1, max_size=1 << 16) as ws:
+                # Sem resposta do ping por abandono_ms, a biblioteca fecha a conexão: o mesmo prazo da telemetria
+                async with connect(self.url, open_timeout=3, ping_interval=self.ping_s,
+                                   ping_timeout=self.abandono_ms / 1000.0, close_timeout=1, max_size=1 << 16) as ws:
                     self.sessao += 1
                     self._ws = ws
                     self._evento("conectado", self.url)
@@ -116,8 +128,10 @@ class ClienteWS:
                 self._ws = None
 
     async def _ler(self, ws):
-        vigia = VigiaTelemetria(_agora_ms(), self.sem_tel_ms, self.abandono_ms)
+        # Com o ping, quem decide que a conexão morreu é ele (ping_timeout); a telemetria só diz se o dado vale
+        vigia = VigiaTelemetria(_agora_ms(), self.sem_tel_ms, None if self.ping_s else self.abandono_ms)
         anterior = None
+        ultimo_rtt = None
         while not self._parar.is_set():
             try:
                 texto = await asyncio.wait_for(ws.recv(), timeout=VOLTA_S)   # cancelar o recv não perde dados
@@ -127,6 +141,8 @@ class ClienteWS:
                 self._ws = None
                 if e.rcvd is not None:
                     return f"fechada pelo B (código {e.rcvd.code})"
+                if e.sent is not None and e.sent.code == 1011:
+                    return f"sem resposta do ping por {self.abandono_ms / 1000:.0f} s"
                 return "conexão perdida (sem quadro de fechamento)"
             if texto is not None:
                 ns = time.monotonic_ns()
@@ -135,7 +151,12 @@ class ClienteWS:
                 self._por("msg", texto, ns)
                 if _e_tel(texto):
                     vigia.tel(ns / 1e6)
-            estado = vigia.estado(_agora_ms())
+            agora = _agora_ms()
+            if ultimo_rtt is None or agora - ultimo_rtt >= 1000:
+                ultimo_rtt = agora
+                if ws.latency:   # 0 até a primeira resposta de ping
+                    self._evento("rtt", f"{ws.latency * 1000:.1f}")
+            estado = vigia.estado(agora)
             if estado != anterior:
                 self._evento("telemetria", estado)
                 anterior = estado

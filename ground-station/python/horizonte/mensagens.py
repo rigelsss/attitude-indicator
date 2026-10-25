@@ -112,11 +112,12 @@ def linha_tel(d, pc_ns, pc_unix, sessao):
     return [_celula(valores[c]) for c in TEL_COLUNAS]
 
 
-def montar_comando(cmd, pin, arg=None, rid=None):
+def montar_comando(cmd, pin, arg=None, rid=None, conferir=True):
     """Comando para o B, com a origem "pc" e o identificador do pedido (rid, 1..65535; o B o repete em todos os
     eventos do comando). ValueError para um nome desconhecido, uma taxa fora da lista ou um rid inválido.
 
-    A taxa é conferida aqui só para avisar antes; o A confere de novo e responde "rejected".
+    A taxa é conferida aqui só para avisar antes; o A confere de novo e responde "rejected". conferir=False envia
+    qualquer inteiro (o "t!" do terminal, para testar a recusa do A).
     """
     if cmd not in COMANDOS:
         raise ValueError(f"comando desconhecido: {cmd}")
@@ -126,7 +127,7 @@ def montar_comando(cmd, pin, arg=None, rid=None):
             raise ValueError(f"rid inválido: {rid}")
         msg["rid"] = rid
     if cmd == "set_rate":
-        if not isinstance(arg, int) or isinstance(arg, bool) or arg not in TAXAS_HZ:
+        if not isinstance(arg, int) or isinstance(arg, bool) or (conferir and arg not in TAXAS_HZ):
             raise ValueError(f"taxa inválida: {arg} (aceitas: {', '.join(map(str, TAXAS_HZ))} Hz)")
         msg["arg"] = arg
     return json.dumps(msg, ensure_ascii=False)

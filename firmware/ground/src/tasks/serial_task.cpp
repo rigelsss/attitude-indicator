@@ -1,6 +1,8 @@
 // serial_task.cpp — ver serial_task.h
 #include "serial_task.h"
 #include <Arduino.h>
+#include <WiFi.h>
+#include <string.h>
 #include <esp_timer.h>
 #include "config.h"
 #include "alarm_task.h"
@@ -99,6 +101,69 @@ static void printCommandEvent(const CmdEventMsg &m) {
                   cmdStateText(e.state));
 }
 
+static void printNetEvent(const NetEventMsg &m) {
+    const String ip = IPAddress(m.ip).toString();
+    const unsigned long t = (unsigned long)m.atMs;
+    switch (m.kind) {
+    case NetEvKind::StaJoin:
+    case NetEvKind::StaLeave:
+        Serial.printf("[ap] %lu ms: celular %02X:%02X:%02X:%02X:%02X:%02X %s | no AP agora: %d\n", t, m.mac[0], m.mac[1],
+                      m.mac[2], m.mac[3], m.mac[4], m.mac[5], m.kind == NetEvKind::StaJoin ? "entrou" : "saiu",
+                      WiFi.softAPgetStationNum());
+        break;
+    case NetEvKind::StaIp:
+        Serial.printf("[ap] %lu ms: IP %s entregue pelo DHCP\n", t, ip.c_str());
+        break;
+    case NetEvKind::HttpOpen:
+        Serial.printf("[http] %lu ms: conexão de %s (vaga %u)\n", t, ip.c_str(), m.slot);
+        break;
+    case NetEvKind::HttpReq:
+        Serial.printf("[http] %lu ms: %s GET %s -> %u (vaga %u)\n", t, ip.c_str(), m.path, m.code, m.slot);
+        break;
+    case NetEvKind::HttpIdle:
+        Serial.printf("[http] %lu ms: %s fechada por ociosidade (vaga %u, %s)\n", t, ip.c_str(), m.slot,
+                      m.code ? "parada no envio" : "sem requisição");
+        break;
+    case NetEvKind::HttpGone:
+        Serial.printf("[http] %lu ms: %s fechou sem requisição (vaga %u)\n", t, ip.c_str(), m.slot);
+        break;
+    case NetEvKind::HttpEvict:
+        Serial.printf("[http] %lu ms: %s ociosa fechada para dar lugar (vaga %u)\n", t, ip.c_str(), m.slot);
+        break;
+    case NetEvKind::HttpReject:
+        Serial.printf("[http] %lu ms: %s recusada: todas as vagas enviando\n", t, ip.c_str());
+        break;
+    case NetEvKind::WsOpen:
+        Serial.printf("[ws] %lu ms: cliente %u conectado (%s)\n", t, m.slot, ip.c_str());
+        break;
+    case NetEvKind::WsClose:
+        Serial.printf("[ws] %lu ms: cliente %u desconectado\n", t, m.slot);
+        break;
+    case NetEvKind::WsPartial:
+        Serial.printf("[ws] %lu ms: cliente %u: quadro saiu pela metade (falta de memória no lwip); derrubado\n", t,
+                      m.slot);
+        break;
+    case NetEvKind::HeapPause:
+        Serial.printf("[web] %lu ms: telemetria PAUSADA para todos: heap livre %u kB (abaixo de %d kB)\n", t, m.code,
+                      WEB_HEAP_PAUSE_KB);
+        break;
+    case NetEvKind::HeapResume:
+        Serial.printf("[web] %lu ms: telemetria retomada: heap livre %u kB, pausada por %lu ms\n", t, m.code,
+                      (unsigned long)m.ip);
+        break;
+    case NetEvKind::WsSendErr:
+        if (m.code == 0)
+            Serial.printf("[ws] %lu ms: cliente %u: sem socket no envio\n", t, m.slot);
+        else
+            Serial.printf("[ws] %lu ms: cliente %u: erro no envio (errno %u: %s); descartado\n", t, m.slot, m.code,
+                          strerror(m.code));
+        break;
+    case NetEvKind::WsDrop:
+        Serial.printf("[ws] %lu ms: cliente %u derrubado: %d ms sem espaço no envio\n", t, m.slot, WS_STALL_MS);
+        break;
+    }
+}
+
 // Taxas aceitas pelo A, em ciclo pela tecla f (50 → 25 → 20 → 10 → 50)
 static int32_t nextRate(int32_t cur) { return cur == 50 ? 25 : cur == 25 ? 20 : cur == 20 ? 10 : 50; }
 
@@ -124,6 +189,9 @@ static void printReport(const LinkReport &r) {
     DisplayStatus ds;   // quadros do TFT no mesmo resumo: o passo 6 compara a recepção com e sem carga do TFT
     if (displayCurrent(ds) && ds.spriteOk)
         Serial.printf(" | tft %.0f q/s, maior %.0f ms", ds.fps, ds.maxFrameUs / 1000.0f);
+    // heap no resumo: mostra o momento em que a memória cai (bancada de 24/10/2026)
+    Serial.printf(" | heap %u kB (bloco %u kB)", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024),
+                  (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) / 1024));
     Serial.println();
 }
 
@@ -222,16 +290,31 @@ static void printState(bool streamR, bool streamA) {
     if (webCurrent(ws))
         Serial.printf("página: %s | http://192.168.4.1 (WebSocket :%d) | clientes %u | telemetria %lu | comandos "
                       "aceitos %lu, recusados %lu | PIN %s\n"
-                      "ws: telemetrias puladas %lu | fila: refeitas %lu, envios recusados %lu | clientes derrubados "
+                      "ws: telemetrias puladas %lu | fila: refeitas %lu | derrubados por quadro pela metade %lu | clientes derrubados "
                       "%lu\n"
-                      "http: requisições %lu | conexões abertas %u/%d | fechadas ociosas %lu, para dar lugar %lu | "
-                      "recusadas %lu\n",
+                      "ap: celulares na rede %d/%d | http: requisições %lu | conexões abertas %u/%d | fechadas "
+                      "ociosas %lu, para dar lugar %lu | recusadas %lu\n",
                       ws.fsOk ? "gravada" : "NÃO GRAVADA (uploadfs)", WS_PORT, ws.clients, (unsigned long)ws.telSent,
                       (unsigned long)ws.cmdsOk, (unsigned long)ws.cmdsRefused, WEB_CMD_PIN[0] ? "exigido" : "desligado",
-                      (unsigned long)ws.wsSkipped, (unsigned long)ws.wsResyncs, (unsigned long)ws.wsSendFail,
+                      (unsigned long)ws.wsSkipped, (unsigned long)ws.wsResyncs, (unsigned long)ws.wsPartial,
                       (unsigned long)ws.wsDropped,
-                      (unsigned long)ws.httpReqs, ws.httpOpen, HTTP_MAX_CONNS, (unsigned long)ws.httpIdle,
+                      WiFi.softAPgetStationNum(), AP_MAX_CLIENTS, (unsigned long)ws.httpReqs, ws.httpOpen,
+                      HTTP_MAX_CONNS, (unsigned long)ws.httpIdle,
                       (unsigned long)ws.httpEvicted, (unsigned long)ws.httpRejected);
+    if (webCurrent(ws)) {
+        Serial.printf("tcp: conexões encerradas com reset %lu | trava de memória: %s, pausas %lu, tempo pausado "
+                      "%lu ms (pausa abaixo de %d kB, volta acima de %d kB)\n",
+                      (unsigned long)ws.tcpResets, ws.heapPaused ? "PAUSADA" : "livre", (unsigned long)ws.heapPauses,
+                      (unsigned long)ws.heapPausedMs, WEB_HEAP_PAUSE_KB, WEB_HEAP_RESUME_KB);
+        for (int i = 0; i < AP_MAX_CLIENTS; i++) {
+            const WsClientStat &cs = ws.ws[i];
+            if (!cs.on) continue;
+            Serial.printf("ws cliente %d: %s | telemetrias enviadas %lu, puladas %lu | último progresso há %lu ms | "
+                          "sem confirmação %ld B (máx %ld, limite %d)\n",
+                          i, IPAddress(cs.ip).toString().c_str(), (unsigned long)cs.sent, (unsigned long)cs.skipped,
+                          (unsigned long)cs.idleMs, (long)cs.inFlight, (long)cs.inFlightMax, WS_MAX_INFLIGHT);
+        }
+    }
     else
         Serial.println("página: task não iniciada");
     Serial.printf("fluxos: r %s, a %s | heap livre %u kB, maior bloco %u kB\n", streamR ? "ligado" : "desligado",
@@ -250,7 +333,8 @@ static void printHelp() {
 static void serialTask(void *) {
     bool streamR = true;   // o resumo começa ligado: é o que a bancada do rádio acompanha
     bool streamA = false;
-    uint32_t reportSeen = 0, droppedSeen = 0, alarmDroppedSeen = 0, inputDroppedSeen = 0, cmdDroppedSeen = 0;
+    uint32_t reportSeen = 0, droppedSeen = 0, alarmDroppedSeen = 0, inputDroppedSeen = 0, cmdDroppedSeen = 0,
+             netDroppedSeen = 0;
     int32_t rate = 50;   // última taxa pedida pela tecla f (o A começa em TX_RATE_HZ, 50 Hz)
     int oledSeen = -1;   // presença do OLED já avisada: −1 ainda não lida, 0 ausente, 1 presente
     uint16_t lastSeqPrinted = 0;
@@ -286,6 +370,14 @@ static void serialTask(void *) {
             Serial.printf("[cmd] %lu mudanças de comando descartadas: fila cheia\n",
                           (unsigned long)(cmdDropped - cmdDroppedSeen));
             cmdDroppedSeen = cmdDropped;
+        }
+        NetEventMsg ne;
+        while (webNetEventReceive(ne)) printNetEvent(ne);
+        const uint32_t netDropped = webNetEventsDropped();
+        if (netDropped != netDroppedSeen) {
+            Serial.printf("[rede] %lu eventos de rede descartados: fila cheia\n",
+                          (unsigned long)(netDropped - netDroppedSeen));
+            netDroppedSeen = netDropped;
         }
         InputEventMsg ie;
         while (inputEventReceive(ie)) printInputEvent(ie);

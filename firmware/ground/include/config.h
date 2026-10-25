@@ -77,6 +77,13 @@
 #define HTTP_CHUNK_BYTES 1024     // bytes do arquivo enviados por conexão a cada volta da web_task
 #define WS_RATE_HZ       30       // telemetria no WebSocket (só com clientes conectados)
 #define WS_STALL_MS      2000     // cliente do WebSocket sem espaço no envio por mais que isso é derrubado
+#define WEB_HEAP_PAUSE_KB  32    // heap livre abaixo disso: telemetria pausada para todos (o ar não está levando;
+#define WEB_HEAP_RESUME_KB 40    // os buffers do Wi-Fi presos chegaram a ~45 kB, heap a 18 kB, em 24/10/2026);
+                                 // volta acima de WEB_HEAP_RESUME_KB. Comandos e eventos continuam
+#define WEB_PAUSE_CHECK_MS 100   // na pausa, consulta do TCP de cada cliente (progresso das confirmações)
+#define WS_MAX_INFLIGHT  3072     // bytes sem confirmação por cliente acima dos quais nada novo sai para ele
+                                  // (~6 telemetrias, ~200 ms; na bancada de 24/10/2026 celulares saudáveis
+                                  // chegaram a 2,2 kB). Limita o heap preso por um cliente que some
 #define WS_OUTBOX_LEN    12       // fila por cliente das mensagens que não podem se perder (hello, comandos)
 #define WS_RECENT_CMDS   8        // últimos comandos (estado atual) enviados a quem conecta
 #define WEB_CMD_PIN      "2468"   // PIN dos comandos pela página (todos veem; só quem digita o PIN comanda).
@@ -137,6 +144,7 @@
 #define WEB_TASK_PRIO           1
 #define WEB_TASK_STACK          8192   // HTTP, WebSocket e JSON
 #define WEB_TASK_PERIOD_MS      5      // volta: atende HTTP e WebSocket
+#define WEB_NET_EVENT_QUEUE_LEN 32     // eventos de rede para a serial (AP, HTTP, WebSocket; diagnóstico)
 #define WEB_MSG_BYTES           768    // maior mensagem JSON montada (a telemetria tem ~450 bytes)
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1

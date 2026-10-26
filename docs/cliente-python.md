@@ -28,7 +28,7 @@ Plano aprovado em 25/10/2026.
 3. Simulador, leitura, CSV e reconexão (**feito** em 25/10/2026, no PC, contra o simulador).
 4. Comandos no cliente (**feito** em 25/10/2026, contra o simulador).
 5. Gráficos ao vivo e `analisar.py`.
-6. Bancada 1: o PC na Horizonte-ESP.
+6. Bancada 1: o PC na Horizonte-ESP (**feita** em 25/10/2026, em duas rodadas, abaixo; o teste do Wi-Fi do PC ficou inconclusivo).
 7. Bancada 2: vários aparelhos, `WS_RATE_HZ` 30 contra 20.
 8. Campanha de métricas.
 9. Item 5 da revisão de 15/10 (reinício da fusão).
@@ -226,4 +226,63 @@ Três pontos de uma revisão externa, confirmados no código:
 3. **A confirmação do magnetômetro mandava deixar a caixa parada.** A coleta é o contrário ([magnetometro.md](magnetometro.md)): girar a caixa devagar no mesmo lugar, uma volta de 360° com cada face apoiada, longe de metais, por até 3 min. O giroscópio continua com "deixe a caixa parada".
 
 Testes: a pausa de 7 s com o ping respondido (sem reconectar, o RTT seguindo), o B sumido (reconecta pelo ping), a `VigiaTelemetria` sem abandono, o evento tratado aos 5 000 ms com chegada aos 20 ms (conclusão em 20 ms), o `tick` pelo relógio do registro, o `relogio_ms()` com e sem fila e o texto das duas calibrações. 92 testes no total, duas rodadas seguidas.
+
+## Bancada 1, primeira rodada (25/10/2026, 18:59 a 19:10): A no power bank, B no USB do PC
+
+Logs: B `device-monitor-261025-185907`, cliente `261025-185923`. Referência com o roaming em `3.Medium` a partir das 19:03; teste do Wi-Fi às 19:09; o A desligado às 19:10:17 (`[link] PERDIDO`).
+
+**Comandos com os ACKs reais do A:**
+
+| Pedido | Resultado |
+|---|---|
+| `z` (`rid` 65312) | `sent` → `done` em 66 ms; o B mostrou `'zerar atitude' (pc, seq 12794) … concluído` |
+| `t 50` (`rid` 65314) | `done` em 52 ms (o primeiro `t 50`, às 18:59:57, saiu um segundo antes de uma queda e se perdeu: `sem resposta do B`) |
+| `t! 30` (×2) | `rejected` pelo A em ~50 ms: a recusa do A pelo `rid` funciona |
+| `pin 0000` + `0` | `refused`, `PIN incorreto`, com o `rid` |
+| zerar altitude pela página (19:02:42 e 19:03:12) | `accepted` → `done` em 2 s; o cliente viu o segundo com `origin` `página` |
+| depois do teste do PIN errado | o PIN foi trocado para `2462`, e não `2468`: zerar altitude (×2), calibrar giroscópio (×2) e a rajada (×5) voltaram `PIN incorreto` |
+
+Não testados por isso: `t 25`, zerar altitude e calibrar o giroscópio pelo PC, e o `busy` (a rajada saiu com o A já desligado, mas foi recusada pelo PIN).
+
+**Link A → B e campos do pacote** (14 371 telemetrias com o A ligado):
+
+- `loop_us`: mediana de 974 µs, p99 1 702 µs, máximo 1 845 µs. É a primeira medida do ciclo completo (pulso do INT → fim da fusão), que inclui a leitura do MPU pelo I2C e as leituras intercaladas do barômetro e do magnetômetro; o `a` do A só mede o atraso do pulso (~110 µs) e o filtro (~60 µs). A conferir com a serial do A na campanha de métricas.
+- `delay_ms` (atraso relativo A → B): mediana 1 ms, p99 20 ms, máximo 42 ms. `age_ms`: mediana 9, p99 30, máximo 487 ms. `rx_hz` de 43 a 52. 7 telemetrias em `late`.
+- **Perdas A → B: 573 em 39 103 (1,47 %)**, em 257 das 666 janelas de 1 s, sem quedas até o A ser desligado. Bem acima dos 0,02–0,04 % com o B sem clientes, e na faixa dos 0,6–1 % com dois celulares (24/10): aqui o B tinha 3 WebSockets do PC (abaixo) e o PC saindo da rede.
+- **`valid` = 5** (`VAL_ATT` + `VAL_ALT`) em todas as linhas, com `status` 55 (`ST_MAG_CAL` ligado): **sem `VAL_HDG`**, o filtro da proa não inicializou no boot. Em 23/10, com o A também no power bank, era 13 (`0x0D`). A investigar na serial do A (`c`, `p`): a suspeita é o magnetômetro recusando as leituras por distúrbio (o power bank perto do sensor).
+- Atraso relativo B → PC: mediana 4,9 ms, p99 201 ms, máximo 1,9 s.
+
+**Conexões:**
+
+- **O navegador do PC abriu a página de novo:** todos os WebSockets da bancada vieram do PC (192.168.4.3), em geral 3 ao mesmo tempo (o cliente e duas abas); o celular estava na rede, mas não conectou o WebSocket. Os dois "zerar altitude" da página saíram do navegador do PC. Com o PC saindo da rede, cada saída deixava 3 conexões penduradas: heap mínimo de 22 kB, **327 pausas da trava de memória (52,7 s no total, a maior de 2,1 s)**.
+- **O ping como vitalidade funcionou:** duas quedas detectadas como `sem resposta do ping por 5 s` (19:02:43 e 19:04:55), e várias saídas curtas do PC atravessadas sem reconectar (`sem_telemetria` → `ok` em 0,1 a 0,9 s).
+- **O Wi-Fi do PC continua saindo**, com o período de ~33 s: entre 19:03 e 19:09 (`3.Medium`), a maioria das saídas foi curta (no mesmo segundo), e as longas foram de 4, 6, 6 e 15 s; o cliente ficou sem rede (`rede inalcançável`) em cada uma das longas. As sessões duraram 48 a 134 s (na bancada das 17:53, ~33 s). O teste do roaming no mínimo com o `autoconfig` desligado (19:09) durou ~1 min, com a saída de 22 s da troca de ajuste no começo: inconclusivo.
+
+## Bancada 1, segunda rodada (25/10/2026, 19:35 a 19:46): a repetição
+
+Logs: B `device-monitor-261025-193520`, cliente `261025-193532`. O navegador do PC fechado; a página só no celular. Referência com o roaming em `3.Medium` a partir das 19:38; teste do Wi-Fi às 19:44. A parte da serial do A (a proa) não gerou log.
+
+**Comandos, todos pelo PC com o PIN certo e os ACKs reais do A:**
+
+| Pedido | Resultado (tempos desde o `sent`) |
+|---|---|
+| `z` | `done` em 17 ms |
+| `t 25` / `t 50` | `done` em 40 ms / no mesmo instante do `sent` |
+| `t! 30` | `rejected` pelo A em 39 ms |
+| `0` | `accepted` em 47 ms, `done` em 2,0 s |
+| `g` (confirmado) | `accepted` em 41 ms, `done` em 4,1 s (`status` 63, com `ST_CALIBRATING`, nessas 111 telemetrias) |
+| zerar atitude pela página do celular | `done` em 35 ms, visto no PC com `origin` `página` |
+| `rajada`, com o A desligado | **`busy` no 5º (`rid` 40130, `seq` 0)**; os outros 4 (`seq` 12807 a 12810) com 3 envios cada e `no_response` em ~1,1 s. É a correção do `seq` 0 da revisão do `rid` funcionando no B real |
+
+**O que mudou com o navegador do PC fechado:** só 2 WebSockets (o cliente e o celular); **28 pausas da trava de memória (4 s no total)**, contra 327 (52,7 s) na primeira rodada; heap mínimo de 30 kB (era 22 kB). As abas do navegador do PC eram a maior parte da pressão de memória.
+
+**Proa:** `valid` = 13 (`VAL_ATT` + `VAL_ALT` + `VAL_HDG`) em todas as 11 538 telemetrias com o A: a proa válida voltou sem mudança nenhuma. O `valid` = 5 da primeira rodada (o filtro da proa sem inicializar desde o boot, com o power bank longe da caixa, como sempre) continua sem explicação; se voltar, olhar o `c` e o `p` na serial do A.
+
+**Link A → B e latência:**
+
+- `loop_us`: mediana 1 024 µs, p99 1 114 µs; o máximo, 10 479 µs, às 19:38:05, no fim da calibração do giroscópio (a gravação do bias na NVS desliga o cache dos dois núcleos; previsto em `docs/plano.md`, "Gravações na NVS").
+- `delay_ms`: mediana 1 ms, p99 10 ms, máximo 28 ms.
+- **Perdas A → B: ~1 %** (812 desde o boot do B, 0,99 %; 0,75 % antes das 19:38, 0,99 % na referência), com só o PC e um celular conectados. 62 % das perdas caíram nas janelas das saídas do PC da rede (3 s antes até 3 s depois da volta), que cobrem 45 % do tempo: uma concentração fraca. O resto acompanha o tráfego do WebSocket no canal 1 (0,02–0,04 % sem clientes): a pendência dos vários aparelhos (`WS_RATE_HZ` 30 contra 20) é o próximo teste disso.
+
+**Wi-Fi do PC:** na referência (`3.Medium`), as saídas de ~4,1 s a cada ~33 s voltaram a ser a maioria (19:37:18, 19:37:52, 19:39:00, 19:41:45, 19:42:04, 19:42:34, 19:43:07), com algumas de 60 a 100 ms e duas de 7,3 s; o cliente reconectou ~1 s depois de cada volta. O teste com o roaming no mínimo e o `autoconfig` desligado começou com a saída de 28 s da troca de ajuste (19:43:27) e durou ~2 min até o fim do bloco, com saídas de 99 ms, 7,3 s, 83 ms e 6 s: **inconclusivo de novo**, e sem sinal de que o `autoconfig` desligado resolva.
 

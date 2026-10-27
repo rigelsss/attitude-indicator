@@ -39,9 +39,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Instalar o pytest e o websockets
-        run: pip install "pytest>=8.0" "websockets>=16.0"
-      - name: python -m pytest (lógica pura e integração com o simulador do B, em localhost)
+      - name: Instalar o pytest, o websockets e o matplotlib
+        run: pip install "pytest>=8.0" "websockets>=16.0" "matplotlib>=3.9"
+      - name: python -m pytest (lógica pura, integração com o simulador do B e figuras sem janela)
         working-directory: ground-station/python
         run: python -m pytest -q
 
@@ -62,6 +62,10 @@ jobs:
             env: ground
           - dir: firmware/ground
             env: ground_diag
+          - dir: firmware/ground
+            env: ground_ws20
+          - dir: firmware/ground
+            env: ground_estavel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

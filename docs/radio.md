@@ -54,7 +54,7 @@ Passo 5, desde 23/10/2026.
 - **Intervalo entre chegadas** (o jitter visto no B): medido só entre dois pacotes com o link OK. Inclui as lacunas de perdas isoladas (40 ms com um pacote perdido). Nos mesmos pares, o `r` mostra o intervalo pelo `t_ms` do A (`no A mín/máx ms`, resolução de 1 ms): se ele varia junto com o do B, o atraso está no envio do A; se fica em ~20 ms, está no ar ou na recepção. A latência A → B não é medida aqui: os relógios não estão sincronizados (semana 6).
 - **Console do B** (`serial_task`, núcleo 0, prioridade 1, única dona do `Serial` depois do boot):
   - eventos, sempre impressos: `[link] estabelecido`, `[link] PERDIDO (N ms sem pacotes)`, `[link] restabelecido depois de N ms`, `[link] ressincronizado: seq X -> Y, t_ms do A …`;
-  - `r` (começa ligado): `[r] link OK | rec N em N ms | perdidos | dup | atrasados | ressinc | recusados | outro remetente | fila cheia | intervalo mín/médio/máx ms | idade | seq | total: rec, perd (%), quedas`;
+  - `r` (começa ligado): `[r] T ms: link OK | rec N em N ms | perdidos | dup | atrasados | ressinc | recusados | outro remetente | fila cheia | intervalo mín/médio/máx ms | idade | seq | total: rec, perd (%), quedas`. O `T ms:` (o `millis()` do B, como nos eventos) entrou em 26/10/2026, para o `analisar_b.py` cruzar os resumos com as entradas e saídas dos aparelhos no AP;
   - `a`: fluxo de pacotes a 10 Hz (`seq`, `t_ms`, roll, pitch, proa, altitude, pressão, temperatura, `status`, `valid`, `loop_us`, idade). Fica em silêncio sem pacote novo;
   - `c`: firmware, MACs, AP, canal, peer, limites do link, totais desde o boot e recusados por motivo.
 

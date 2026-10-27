@@ -46,6 +46,8 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - Compilar/gravar: `pio run -e aircraft -t upload` / `pio run -e ground -t upload`
 - Diagnóstico I2C (ESP A): `pio run -e i2cscan -t upload`
 - Diagnóstico do hardware do B (LEDs, I2C, OLED, encoder, TFT, sprite): `pio run -e ground_diag -t upload`; depois, regravar o `ground`
+- B com a telemetria do WebSocket a 20 Hz (bancada 2): `pio run -e ground_ws20 -t upload`; depois, regravar o `ground`
+- Investigação do travamento do B (CORRUPT HEAP, 26/10/2026): `ground_estavel` (trava antiga e DHCP padrão), `ground_sem_trava`, `ground_sem_dhcp`; ver docs/cliente-python.md
 - Teste de pulsos falsos no INT (ESP A, tecla `F`): `pio run -e aircraft_pulsetest -t upload`; depois, regravar o `aircraft`
 - A/B de tempo sem o Wi-Fi ligado (ESP A): `pio run -e aircraft_noradio -t upload`; depois, regravar o `aircraft`
 - Monitor: `pio device monitor -b 115200` (no `ground`, o filtro `log2file` grava em `firmware/ground/logs`)
@@ -53,6 +55,10 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - Testes de lógica: `pio test -e native`
 - Testes do cliente Python (a partir de `ground-station/python`): `python -m pytest`; dependências: `python -m pip install -r requirements.txt`
 - Cliente Python (a partir de `ground-station/python`): `python cliente.py` (o B, com o PC na Horizonte-ESP) ou `python cliente.py --url ws://127.0.0.1:8765/` com o simulador `python sim_b.py` (`--sem-a`; as falhas em `-h`); `?` no cliente lista os comandos
+- Gráficos ao vivo, num terminal ao lado do cliente (segue o CSV mais recente de `logs/`): `python graficos.py`; uma gravação inteira: `python graficos.py --arquivo logs\<nome>-tel.csv`
+- Figuras e resumo de uma gravação, para o relatório: `python analisar.py logs\<nome>-tel.csv` (cria `logs/analise-<nome>/`)
+- Jitter do loop do A (fluxo `a` do monitor do A; vários logs = comparação): `python analisar_a.py ..\..\firmware\aircraft\logs\device-monitor-<…>.log [outros]`
+- Figuras e resumo do log do monitor do B (perdas, memória, aparelhos no AP; dois logs = comparação): `python analisar_b.py ..\..\firmware\ground\logs\device-monitor-<…>.log [outro log]`
 - Conferência da calibração do magnetômetro (log com a tecla `d`): `python tools/mag_fit.py` (requer numpy)
 - Comparar o texto das mensagens de um log novo com o de logs de base (números trocados por `#`; não confere a ordem): `python tools/log_templates.py logs/base.log [mais bases] [--novo logs/novo.log]`
 

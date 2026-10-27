@@ -27,10 +27,10 @@ Plano aprovado em 25/10/2026.
 2. **Base do cliente:** lógica pura e pytest (**feito** em 25/10/2026).
 3. Simulador, leitura, CSV e reconexão (**feito** em 25/10/2026, no PC, contra o simulador).
 4. Comandos no cliente (**feito** em 25/10/2026, contra o simulador).
-5. Gráficos ao vivo e `analisar.py`.
+5. Gráficos ao vivo e `analisar.py` (**feito** em 26/10/2026, no PC, contra o simulador e com os logs das bancadas).
 6. Bancada 1: o PC na Horizonte-ESP (**feita** em 25/10/2026, em duas rodadas, abaixo; o teste do Wi-Fi do PC ficou inconclusivo).
-7. Bancada 2: vários aparelhos, `WS_RATE_HZ` 30 contra 20.
-8. Campanha de métricas.
+7. Bancada 2: vários aparelhos, `WS_RATE_HZ` 30 contra 20 (rodadas A e B feitas em 26/10/2026: 30 Hz passa; a rodada C, com o PC, não completou por um conflito de IP do DHCP do B, abaixo).
+8. Campanha de métricas (jitter do loop do A a partir dos logs existentes: feito em 27/10/2026, abaixo; falta a gravação longa com o firmware atual).
 9. Item 5 da revisão de 15/10 (reinício da fusão).
 10. Montagem no modelo: o modelo e o power bank do B ainda não estão disponíveis.
 
@@ -285,4 +285,166 @@ Logs: B `device-monitor-261025-193520`, cliente `261025-193532`. O navegador do 
 - **Perdas A → B: ~1 %** (812 desde o boot do B, 0,99 %; 0,75 % antes das 19:38, 0,99 % na referência), com só o PC e um celular conectados. 62 % das perdas caíram nas janelas das saídas do PC da rede (3 s antes até 3 s depois da volta), que cobrem 45 % do tempo: uma concentração fraca. O resto acompanha o tráfego do WebSocket no canal 1 (0,02–0,04 % sem clientes): a pendência dos vários aparelhos (`WS_RATE_HZ` 30 contra 20) é o próximo teste disso.
 
 **Wi-Fi do PC:** na referência (`3.Medium`), as saídas de ~4,1 s a cada ~33 s voltaram a ser a maioria (19:37:18, 19:37:52, 19:39:00, 19:41:45, 19:42:04, 19:42:34, 19:43:07), com algumas de 60 a 100 ms e duas de 7,3 s; o cliente reconectou ~1 s depois de cada volta. O teste com o roaming no mínimo e o `autoconfig` desligado começou com a saída de 28 s da troca de ajuste (19:43:27) e durou ~2 min até o fim do bloco, com saídas de 99 ms, 7,3 s, 83 ms e 6 s: **inconclusivo de novo**, e sem sinal de que o `autoconfig` desligado resolva.
+
+## Um aparelho fora do ar e os outros (análise de 26/10/2026, logs da bancada 1)
+
+- **Isolado:** o B derruba só a conexão do aparelho parado (o PC), e as outras seguem: na 2ª rodada, as conexões do celular receberam ~4 500 telemetrias com 59 puladas (1,5 %) e uma derrubada (dele mesmo) enquanto o PC entrava e saía da rede. O TFT e o OLED do B ficaram a 25 quadros/s nas duas rodadas.
+- **Critério "o B nunca derruba o PC":** não passou (27 e 24 derrubadas), mas pelo Wi-Fi do PC: na 2ª rodada, todas as 24 derrubadas vieram até 4 s depois de um `[ap] … saiu` do PC, menos a do celular; na 1ª, 24 de 27, e as outras 3 foram as três conexões do PC juntas, sem saída do AP antes (o PC fora do canal, ainda associado).
+- **O que vaza: memória e ar.** Com o PC fora do canal, os buffers do Wi-Fi para ele levam o heap abaixo de 32 kB, e a trava de memória pausa a telemetria de todos:
+
+  | | Pausas para todos | Perto das saídas do PC (3 s antes até 2 s depois da volta) | Fora delas |
+  |---|---|---|---|
+  | 2ª rodada (PC + celular) | 28, 4,0 s em ~11 min | 16, 2,9 s | 12, 1,2 s |
+  | 1ª rodada (PC com 2 abas a mais) | 327, 52,7 s | 115, 18,9 s | 212, 33,8 s |
+
+  Na 2ª rodada, ~0,14 s por saída do PC para o celular, abaixo do 1 s de "sem telemetria" da página; o número de conexões pesou mais que as saídas (13 vezes mais pausas com as duas abas). As retransmissões para o ausente dividem o canal com o ESP-NOW: 62 % das perdas A → B nas janelas das saídas do PC, que cobrem 45 % do tempo.
+- **Por que importa:** com até 8 celulares e alguns sumindo juntos (a interferência de 24/10 pausou a telemetria por 20–30 s), o efeito cresce. Medir na bancada 2 e decidir as melhorias do B registradas em [plano.md](plano.md), "Pendências da semana 6".
+- **Outros critérios da bancada 1, conferidos nos logs:** nenhum erro nem mensagem inválida; reconexão ~1 s depois da volta do PC; 99,74 % e 99,96 % das telemetrias montadas pelo B no tempo conectado chegaram ao CSV; 0 quadros pela metade (2ª rodada); perdas do CSV iguais às do `[r]` do B (573 e 812).
+
+## Passo 5: gráficos ao vivo e `analisar.py` (26/10/2026)
+
+**Decisões** (plano aprovado em 26/10/2026):
+
+- **Gráficos num processo separado** (`graficos.py`), lendo o CSV que o cliente grava: o desenho não disputa a CPU nem o GIL com a leitura do socket, e abrir ou fechar a janela não mexe no cliente. Para isso, o registro passou a gravar os CSV em disco a cada 0,25 s (era 1 s): ~0,3 s de atraso no desenho.
+- **Seis painéis, uma escala por painel** (o guia de visualização proíbe dois eixos y; o plano falava em quatro, com proa e altitude juntas e taxa e perdas juntas): atitude (roll e pitch), proa magnética, altitude relativa, atrasos (A → B, B → PC e RTT), telemetria recebida por segundo e perdas A → B por segundo, com os últimos 30 s e a linha de estado no topo (arquivo, sessão, conexão, perdas, RTT, idade do último dado).
+- **Buracos, nunca o último valor repetido:** campo vazio, `cur` = 0, flag de validade desligada (`VAL_ATT`, `VAL_HDG`, `VAL_ALT`, cada uma no seu dado), mais de 1 s entre telemetrias, troca de sessão; o RTT, com mais de 2,5 s entre medidas.
+- **Cores e estilo:** a paleta de referência do guia, validada com o script dele (azul, laranja, água, no modo claro sobre `#fcfcfb`: passam em separação para daltonismo e visão normal; a água tem contraste 2,7:1, compensado com legenda, rótulo direto no último valor de cada série e as tabelas do `resumo.md`); linhas finas, grade em traço contínuo fino, texto em tinta neutra, números com vírgula decimal.
+- **`analisar.py`** gera, numa pasta nova `logs/analise-<nome>/` (nunca sobrescreve: `-2`, `-3`…), `telemetria.png`, `jitter.png`, `latencia.png`, `perdas.png`, `conexoes.png` e o `resumo.md` (entrega no PC, latência, orçamento de latência, perdas A → B por minuto pelo avanço do `seq`, telemetrias puladas, conexões).
+- **O jitter do loop do A** (o `dt` do fluxo `a` na serial do A) fica para a campanha de métricas (passo 8), quando houver um log do A.
+
+**Arquivos:** `horizonte/leitor.py` (CSV lido enquanto cresce: só linhas completas, troca para o mais recente da pasta), `horizonte/series.py` (séries, buracos, contagens, perdas, estatísticas, sessões, orçamento; lógica pura), `horizonte/figuras.py` (o painel ao vivo e as figuras do relatório), `graficos.py` e `analisar.py`.
+
+**Desenho rápido (blitting).** A primeira versão redesenhava a figura inteira a cada atualização: ~170 ms sem concorrência, e no teste de 10 min, com o simulador e o cliente ao lado, 3,9 atualizações/s (mediana de 208 ms), abaixo do critério de 4/s. Agora o fundo (eixos, grade, rótulos) é desenhado uma vez e guardado; a cada atualização, só as linhas, os rótulos diretos e a linha de estado vão por cima. A figura inteira só é redesenhada quando a escala de um painel muda (um dado sai dela, ou os dados ocupam menos de 40 % dela) ou a janela muda de tamanho: **12 ms por atualização**, com o fundo redesenhado 1 vez em 20 atualizações. A gravação inteira (`--arquivo`) desenha do jeito normal, com o zoom do matplotlib.
+
+**Teste de 10 min** (simulador com a pausa de 4 s a cada 33,4 s, a queda a cada 60 s e 0,5 % das telemetrias puladas; o cliente; o `graficos.py --sem-janela`; três processos):
+
+| | Sem o blitting | Com o blitting |
+|---|---|---|
+| Atualizações por segundo | 3,9 (abaixo do critério de 4) | **4,0** (o intervalo configurado, 0,25 s) |
+| Tempo de uma atualização, mediana / máx. | 208 / 1 020 ms | 44 / 380 ms (com o simulador, o cliente e, no 1º minuto, a suíte de testes ao lado) |
+| Fundo redesenhado | sempre | 22 vezes (escalas mudando nas pausas e quedas) |
+| Cliente | 16 829 telemetrias, 0 descartadas, `tudo gravado`; maior lacuna fora das pausas, 94 ms | 16 832 telemetrias, 0 descartadas, `tudo gravado`; 110 ms |
+
+O cliente não muda com o gráfico aberto: nos dois, nada descartado, e a maior lacuna fora das pausas fica na faixa do relógio do simulador no Windows (até ~110 ms).
+
+**Conferências com os logs reais das bancadas** (`python analisar.py logs\<nome>-tel.csv`), números iguais aos calculados nas bancadas:
+
+| Log | Resumo |
+|---|---|
+| `261025-193532` (bancada 1, 2ª rodada) | `loop_us` com mediana 1 024 µs, p99 1 114 µs, máximo 10 479 µs; atraso A → B com p99 de 10 ms; 217 perdidos em 23 781 pacotes do A (0,91 %, desde o início do cliente; o `[r]` do B dá 0,98 % desde o boot dele); 14 conexões |
+| `261025-185923` (bancada 1, 1ª rodada) | `loop_us` com mediana 974 µs; 1,51 % de perdas; 9 conexões |
+| `261025-175320` (só o B) | as seções do A com "sem dados"; 14 conexões |
+| `261025-142712` (simulador) | 3 trechos sem telemetria, 348 telemetrias puladas, 4 conexões |
+
+Olhando as figuras (o guia pede olhar o resultado, não só os números): os rótulos da mediana e do p99 se sobrepunham quando próximos (agora em alturas diferentes), o histograma do `loop_us` começava em 0 com os dados perto de 1 000 µs (agora começa perto dos dados), e no painel ao vivo os rótulos diretos de séries com o mesmo valor (roll e pitch em 0) se cobriam (agora afastados 10 pt) e a linha do RTT atravessava os buracos (agora com buraco acima de 2,5 s).
+
+**Testes** (pytest; o CI instala o `matplotlib` e desenha sem janela):
+
+- `test_leitor.py`: arquivo inteiro; linha pela metade lida uma vez só, quando completa; arquivo crescendo; inexistente, vazio ou só com o cabeçalho; troca para o mais recente da pasta; o mesmo nome recriado; linha corrompida contada; acentos.
+- `test_series.py`: campo vazio vira buraco; dado não atual; cada flag só no seu dado; lacuna e troca de sessão; janela de 30 s; RTT dos eventos; telemetria por segundo com zero nos vazios; perdas por intervalo sem negativo num B reiniciado; perdas por minuto pelo `seq` com a volta de 16 bits e o salto de um A reiniciado; intervalos só dentro da sessão; estatísticas; sessões e trechos sem telemetria; orçamento de latência.
+- `test_figuras.py`: o painel acompanha o CSV crescendo; a pausa vira buraco e a taxa vai a 0; uma atualização abaixo de 100 ms com 30 s de dados, sem redesenhar o fundo; a regra da escala; uma escala nova redesenha o fundo; o modo parado desenha as linhas.
+- `test_analisar.py`: figuras e resumo com números conhecidos; só o B ("sem dados"); não sobrescreve; sem o CSV de eventos; recusa o que não é CSV do cliente.
+
+135 testes no total.
+
+## Bancada 2: preparação (26/10/2026)
+
+**Objetivo:** com vários aparelhos ao mesmo tempo, medir as perdas no rádio A → B, as pausas da trava de memória do B e o efeito de um aparelho que some nos outros, a 30 e a 20 Hz de telemetria no WebSocket. Critério do plano: perdas A → B ≤ 0,5 % com todos conectados; se 30 Hz não passar e 20 Hz passar, fica 20. Os números também decidem a melhoria da trava de memória ([plano.md](plano.md), "Pendências da semana 6").
+
+**Aparelhos:** 4 celulares, mais o PC como 5º. O PC entra só numa rodada: o Wi-Fi dele sai da rede a cada ~33 s e atrapalharia a comparação das taxas. Nas outras, ele grava o log do B pelo USB, na rede de casa, com internet.
+
+**Firmware do B:**
+
+- **Ambiente `ground_ws20`:** o mesmo firmware, com `WS_RATE_HZ` 20 em vez de 30 (o ambiente liga `BANCADA_WS_RATE_HZ_20`, e o `config.h` escolhe; a taxa continua só no `config.h`). Os dois ambientes compilam, e o CI compila os dois.
+- **`[r] T ms: link …`:** o resumo de 1 s ganhou o instante (o `millis()` do B), como os eventos.
+- **O `c` mostra a taxa:** `página: … | telemetria 30 Hz, N enviadas | …`, para o log dizer qual firmware estava gravado.
+
+**`analisar_b.py`** (ground-station/python; leitura em `horizonte/log_b.py`, lógica pura): para cada log do monitor do B, `perdas_ab.png` (perdas por resumo de 1 s, com as saídas dos aparelhos do AP sombreadas), `memoria.png` (heap, com as pausas da trava e os limites de 32 e 40 kB), `aparelhos.png` (cada MAC no AP ao longo do tempo, com o IP) e `resumo.md` (perdas A → B, heap, pausas, WebSocket por IP com as derrubadas e o último `c`, e cada saída do AP com a pausa para todos, as perdas A → B e as derrubadas de outros IPs na janela de 3 s antes da saída até 2 s depois da volta). Com dois logs, também `comparacao-<nome>.md`, lado a lado. Os logs anteriores a 26/10, sem o instante no `[r]`, têm o tempo de cada resumo estimado pela soma das janelas (até ~1 s de erro).
+
+Nos dois logs do B da bancada 1, os números saíram iguais aos calculados à mão: 327 pausas (52,7 s) contra 28 (4,0 s), 27 e 24 WebSockets derrubados; perdas A → B de 1,54 % e 0,89 % pelos resumos do B (1,51 % e 0,91 % pelo CSV do cliente). A figura das perdas da 2ª rodada mostra os picos de perda dentro das faixas em que o PC estava fora do AP.
+
+Testes: `test_log_b.py` (resumos, eventos e o `c`; MAC → IP, saídas e perdas só com o link ativo; o efeito de uma saída: a pausa para todos, as perdas e o outro aparelho derrubado na janela; WebSocket por IP; o formato antigo do `[r]`, estimado pelas janelas; o `analisar_b.py` com as figuras, o resumo e a comparação). 141 testes no total.
+
+## Bancada 2: resultados (26/10/2026, 20:11 a 20:50)
+
+Logs do B: `device-monitor-261026-201139` (rodada A, 30 Hz), `-202847` (rodada B, 20 Hz), `-204146` (rodada C, 20 Hz com o PC); cliente da rodada C: `261026-204057`. Horários dados pelo usuário: A de 20:15 a 20:25 (modo avião às 20:20), B de 20:28 a 20:38 (modo avião às 20:32). A no power bank, B no USB do PC, 4 celulares com a página.
+
+| | Rodada A: 30 Hz, 4 celulares | Rodada B: 20 Hz, 4 celulares |
+|---|---|---|
+| Perdas A → B | **0,19 %** nos 553 s com os 4 WebSockets abertos (0,17 % no log inteiro) | **0,38 %** no log (os 4 conectados o tempo todo, pelo `c`) |
+| Pausas da trava de memória | 98, 14,5 s em 13,7 min (~1,1 s por minuto), a maior de 1,7 s | 54, 16,3 s em 9,6 min (~1,7 s por minuto), a maior de 2,1 s |
+| Heap | mínimo 24 kB, mediana 52 kB | mínimo 23 kB, mediana 52 kB |
+| Modo avião num celular (~31 s fora) | 0 ms de pausa, 0 perdas, nenhum outro derrubado | 51 ms de pausa, 10 perdas na janela, nenhum outro derrubado |
+| Máx. sem confirmação por celular (último `c`) | 1 578 a 3 153 B | 1 599 a 3 168 B |
+
+**Conclusões:**
+
+- **O critério da bancada 2 passa a 30 Hz** (perdas ≤ 0,5 % com todos conectados). A 20 Hz não melhorou: as perdas e as pausas por minuto saíram até maiores (a diferença está na variação entre rodadas). **Fica 30 Hz**; o B volta ao `ground`.
+- **As perdas de ~1 % da bancada 1 vinham do PC**, e não do número de aparelhos: com 4 celulares e sem o PC, 0,17–0,38 %. É o Wi-Fi do PC saindo do canal (o caso que o modo avião não reproduz: o celular em modo avião se despede do AP, e o efeito nos outros foi quase nulo).
+- **A trava de memória pausa a telemetria com frequência com 4 celulares,** sem ligação com saídas do AP: o heap fica em ~52 kB e cai abaixo de 32 kB em picos espalhados (~1 a 1,7 s de telemetria pausada para todos por minuto). Cada celular chega a ~3 kB sem confirmar (o limite por cliente), e os buffers do Wi-Fi somam por cima. Com 8 celulares, a folga diminui. A decisão da melhoria da trava continua em [plano.md](plano.md), agora com estes números.
+- **Rodada C (o PC como 5º): não completou.** O PC ficou ~5 min sem rede (`rede inalcançável` de 20:41:19 a 20:46:21; nem o cliente nem o navegador funcionaram). Causa, pelos logs: **conflito de IP criado pelo DHCP do B.** O B ofereceu ao PC o 192.168.4.2, a cada 3 a 5 s, e o Windows registrou às 20:42:05 (`Tcpip 4199`) um conflito desse endereço com o celular `3A:C0:40:0E:BF:E0`, que já o usava; depois, o B recusou o PC (`DHCPNACK`). A gravação da rodada B reiniciou o B, o que zera a tabela do DHCP dele; os celulares voltaram com os IPs que já tinham, e o servidor DHCP do ESP-IDF 4.4 não confere se o endereço está em uso antes de oferecer, nem trata a recusa (`DHCPDECLINE`): oferece o mesmo IP de novo. Afeta qualquer aparelho que entrar depois de um reinício do B com outros ainda conectados, não só o PC.
+
+## Correções no B depois da bancada 2 (26/10/2026)
+
+**1. Faixa do DHCP alternada a cada boot.** Contra o conflito de IP da rodada C: um contador de boots na NVS (namespace `ap`) escolhe o início da faixa, 192.168.4.2 nos boots pares e 192.168.4.100 nos ímpares (11 IPs cada, `AP_DHCP_INICIO_PAR`/`IMPAR` no `config.h`; `WiFi.softAPConfig` com o início do DHCP, logo depois do `softAP`). Os aparelhos que voltam de um reinício do B com os IPs do boot anterior não coincidem com os oferecidos agora. O boot imprime `[ap] DHCP: 192.168.4.100 a .110 (boot N)`, e o `c` mostra a faixa na linha do rádio. **É um contorno, não uma correção** (revisão de 27/10/2026): as duas faixas se repetem, e um aparelho ausente durante o boot intermediário pode voltar com um IP da faixa atual, já entregue a outro; nada garante que ele tenha pedido um IP novo no meio. O cenário entra numa bancada (ver [plano.md](plano.md)).
+
+**2. Trava de memória mirando o culpado** (`lib/heap_guard`, 6 testes `native`). Com o heap abaixo de 32 kB, o B derruba o cliente com algo pendente (quadro por sair ou bytes sem confirmação) e sem progresso no envio há pelo menos 500 ms, o mais parado deles; uma derrubada por vez, a cada 250 ms, para a memória voltar. Sem culpado (todos progredindo, como os celulares saudáveis da bancada 2, que confirmam em lotes), ou ainda com pouca memória depois dos 250 ms, a telemetria pausa para todos como antes; durante a pausa, um culpado que apareça também cai. A consulta do TCP de cada cliente só acontece com o heap baixo. Na serial: `[ws] … cliente N derrubado: trava de memória (heap livre N kB, N ms sem progresso)`; no `c`: `culpados derrubados N`. O `analisar_b.py` separa essas derrubadas das por 2 s parado (`WebSockets derrubados (pela trava)`).
+
+Compilados: `ground` (flash 72,6 %), `ground_ws20` e `ground_diag`; 146 testes `native`. **Falta a bancada:** a repetição da rodada C (4 celulares e o PC, a 30 Hz, logo depois de um reinício do B com os celulares conectados).
+
+## Repetição da rodada C (26/10/2026, 21:11 a 21:24): o B travou
+
+Log do B `device-monitor-261026-211236`; cliente `261026-211400`. Início às 21:13 (5 aparelhos), modo avião às 21:18, fim às 21:24.
+
+- **DHCP alternado: funcionou.** `DHCP .100 a .110 (boot 1)`; o PC recebeu o 192.168.4.106. A cada reinício do B, o PC pediu o IP antigo (o .2, depois o .106, depois o .2), o B recusou (`DHCPNACK`, evento 1002 do Windows) e ele pegou um da faixa nova. Nenhum conflito de endereço no Windows (sem `Tcpip 4199`).
+- **Trava nova: derrubou 3 culpados** (por exemplo, `heap livre 30 kB, 1005 ms sem progresso`). Perdas A → B de 0,14 % com os 5 aparelhos.
+- **O B travou duas vezes**, às ~21:17:33 e ~21:20:39 (as duas quedas do cliente no PC), com `CORRUPT HEAP: Bad tail at 0x3fff52fa` e `Bad head at 0x3fff47c4`, `assert failed: multi_heap_free`, e reiniciou sozinho (boots 2 e 3). Backtrace idêntico, decodificado com o binário gravado: `ppTask` → `ppProcTxDone` → `esf_buf_recycle` → `free` → `multi_heap_free`. É a task do driver Wi-Fi liberando um buffer de transmissão confirmado e encontrando o bloco vizinho sobrescrito: o backtrace mostra onde a corrupção foi descoberta, não quem a causou. O segundo veio logo depois de o PC sair do AP, com o heap a 23 kB; as 3 derrubadas da trava foram longe dos travamentos.
+- **Inédito:** em todos os logs do B, só aparece neste, o primeiro com a trava nova e o DHCP alternado. A bancada 1 (o PC entrando e saindo, 3 conexões dele, heap a 22 kB, 2 × 11 min) e as rodadas A e B da bancada 2 (4 celulares, sem o PC) não travaram. Depois do segundo travamento, o PC não voltou mais à rede até o fim.
+
+**Investigação** (26–27/10/2026):
+
+- **Consulta do TCP limitada:** a trava nova consultava o TCP de todos os clientes (na thread do TCP/IP) a cada volta da task enquanto o heap estava baixo, centenas de vezes por segundo; agora, no máximo a cada `WEB_PAUSE_CHECK_MS` (100 ms), como na pausa.
+- **Chaves de bancada no `config.h`:** `BANCADA_SEM_TRAVA_NOVA` (a trava antiga: só pausa) e `BANCADA_SEM_DHCP_ALTERNADO` (a faixa padrão). Ambientes: `ground_estavel` (as duas desligadas: o comportamento das rodadas A e B, sem travamento), `ground_sem_trava` e `ground_sem_dhcp`. O `c` mostra qual trava e qual DHCP estão em uso.
+- **Verificação de integridade do heap** a cada `WEB_HEAP_CHECK_MS` (100 ms) na `serial_task` (`heap_caps_check_integrity_all`): na primeira falha, `[heap] T ms: CORRUPÇÃO DO HEAP detectada (última verificação ok em T0 ms)` e os detalhes; o `c` mostra `heap: íntegro | N verificações ok`. Diz quando a corrupção aconteceu, para cruzar com os eventos em volta.
+- **`analisar_b.py`:** conta os reinícios (`rst:`) e as corrupções (`CORRUPT HEAP` e a verificação do B), mantém o tempo contínuo através de um reinício (antes, a duração deste log saía 2,4 min, e não 11,9) e marca os reinícios na figura das perdas; a comparação ganhou a linha `reinícios do B / corrupções do heap`.
+
+Compilados: `ground`, `ground_estavel`, `ground_sem_trava` e `ground_sem_dhcp`; 146 testes `native` e 143 do Python.
+
+### Revisão de 27/10/2026 (antes da bancada da investigação)
+
+1. **A trava podia derrubar um cliente que ainda progredia** (afeta as versões com a trava nova, `ground` e `ground_sem_dhcp`). Fora da pausa, o `s_wsOkMs` só andava com uma escrita nova; um cliente recebendo confirmações, mas acima de `WS_MAX_INFLIGHT` (sem escrita), parecia parado. Na pausa, a atualização pelas confirmações vinha depois da decisão. Agora, na consulta do TCP de cada cliente, as confirmações (bytes sem confirmação zerados ou menores que na consulta anterior) contam como progresso antes da escolha do culpado. A regra virou `heapProgressed` (`lib/heap_guard`, teste `native`), a mesma da pausa.
+2. **A alternância do DHCP é um contorno:** texto do `config.h`, do código e deste documento corrigido; o cenário do aparelho ausente no boot intermediário entra nas pendências de bancada ([plano.md](plano.md)).
+3. **Um A reiniciado distorcia as perdas por minuto:** o limiar do `seq` (30 000) não separa todo reinício da volta do contador (50000 → 5 dá 15 541 pela volta, contados como enviados). Agora o carimbo `t` do A, já no CSV, também marca o reinício (o `t` voltou).
+4. **A corrupção do heap ficava no instante errado no `analisar_b.py`:** a linha `[heap] T ms: CORRUPÇÃO …` traz o próprio instante, e era registrada no último instante visto. Agora usa o dela (mais a base do boot); o `CORRUPT HEAP` do núcleo, sem instante, continua com o último visto.
+5. **O orçamento de latência supunha 30 Hz:** a espera da `web_task` agora é o período medido na gravação, a mediana do avanço do `tb` entre telemetrias consecutivas (`periodo_ws_ms`); sem `tb`, supõe 30 Hz e diz isso no texto.
+
+6. **O `wsCanLoad()` apagava a evidência das confirmações** (complemento do ponto 1): ele roda antes da trava, a cada envio, e sobrescrevia o valor guardado dos bytes sem confirmação sem marcar o progresso. Uma queda ainda acima de `WS_MAX_INFLIGHT` (3 200 → 3 150: confirmações chegaram, mas sem envio liberado) sumia ali, e a trava, comparando 3 150 com 3 150, via o cliente parado. Agora o `wsCanLoad()` aplica a mesma `heapProgressed` antes de sobrescrever. Só com a trava nova ligada, para o `ground_estavel` continuar igual ao firmware sem travamentos (lá, o progresso pelas confirmações também mudaria a derrubada por `WS_STALL_MS`).
+
+**No teste do travamento:** os pontos 1, 4 e 6 mudam a investigação (a trava nova derruba menos, e o instante da corrupção sai certo); os pontos 2, 3 e 5 não (o DHCP não muda, o A não deve reiniciar, e as rodadas são a 30 Hz).
+
+## Passo 8 (parte): jitter do loop do A (27/10/2026)
+
+`analisar_a.py` (leitura em `horizonte/log_a.py`, lógica pura): a partir do fluxo de atitude (`a`) do monitor do A. Cada linha `dt` resume uma janela de ~100 ms, com as estatísticas zeradas a cada linha (`src/console.cpp`): dt mínimo, médio e máximo entre as amostras fundidas (2 casas: resolução de 10 µs), o atraso máximo do pulso do INT até a leitura do MPU, o custo médio e máximo do filtro e os ambíguos, descartados e reinícios da janela. O jitter do loop de 200 Hz é o quanto o dt se afasta dos 5 ms: por janela, o pico a pico (máximo − mínimo) e o maior desvio. Gera `dt.png` (o maior e o menor dt de cada janela, em dois painéis com a mesma escala: numa só, as linhas coincidem quase sempre em 5,01 ms), `jitter.png` (histogramas do pico a pico e do atraso do pulso), `filtro.png` e `resumo.md`; com vários logs, `comparacao-a-<nome>.md`.
+
+Nos logs que já existiam (as rodadas "r e a juntos" do [tasks.md](tasks.md), ~80 s cada), números iguais aos registrados lá:
+
+| | Tasks, sem rádio | Com o rádio (filtro na flash) | Rádio e OLED (filtro na IRAM) |
+|---|---|---|---|
+| Log (firmware) | `261021-150632` (21/10 15:01) | `261021-173359` (21/10 17:28) | `261022-103255` (22/10 10:23) |
+| Amostras | 16 421 | 16 681 | 15 941 |
+| dt médio | 5,01 ms | 5,01 ms | 5,01 ms |
+| Menor / maior dt | 5,00 / 5,01 ms | 5,00 / 5,01 ms | 4,99 / 5,02 ms |
+| Pico a pico do dt por janela, mediana / máx. | 0 / 10 µs | 0 / 10 µs | 0 / 30 µs |
+| Janelas com todo dt a até 10 µs dos 5 ms | 100 % | 100 % | 99,9 % |
+| Atraso do pulso até a leitura, mediana / máx. | 109 / 118 µs | 102 / 115 µs | 110 / 124 µs |
+| Filtro, médio / máx. | 28 / 161 µs | 145 / 277 µs | 53 / 161 µs |
+| Ambíguos / descartados / reinícios | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+
+- **O jitter do loop fica abaixo da resolução do log** (10 µs) em quase todas as janelas: o pico a pico mediano é 0, e o maior foi 30 µs, uma única janela (4,99/5,02 ms, o mesmo caso de ~10 µs no carimbo de um pulso já visto antes das tasks, [tasks.md](tasks.md)). O período médio sai em 5,01 ms (~200 Hz; a média também só vale até a 2ª casa).
+- **O atraso do pulso até a leitura** fica em ~110 µs, com o máximo abaixo de 125 µs, com e sem o rádio e o OLED.
+- **O custo do filtro** mostra o efeito do layout da flash e da correção pela IRAM (`HOT_PATH`), já registrado no [tasks.md](tasks.md): 28 → 145 → 53 µs de média.
+- O `loop_us` da telemetria (pulso → fim da fusão, ~1 ms, bancada 1) inclui a leitura do MPU pelo I2C e as leituras intercaladas do barômetro e do magnetômetro; o atraso daqui vai só até o início da leitura.
+- **Falta:** uma gravação longa (10 min) do fluxo `a` com o firmware atual do A (23/10), com o rádio ativo, na campanha de métricas.
+
+Testes: `test_log_a.py` (as janelas, a de n = 0 fora, o carimbo e o tempo acumulado; o resumo com o pico a pico só das janelas com mais de uma amostra, o desvio, o filtro médio ponderado e os contadores; o `analisar_a.py` com as figuras, o resumo, a comparação e a recusa de um log sem o fluxo).
 

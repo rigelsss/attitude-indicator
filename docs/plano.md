@@ -79,6 +79,22 @@ Conferências a fazer com a fiação já presa, antes de fechar a caixa (depois 
 
   **Feito em 23/10/2026: a montagem gravada continua valendo** ([hardware.md](hardware.md), "Conferência da montagem depois de prender a fiação"). A média nariz/cauda deu roll −0,31° e pitch +0,18°. A caixa pode ser fechada.
 
+## Pendências da semana 6 (cliente Python e métricas)
+
+Andamento em [cliente-python.md](cliente-python.md).
+
+- **Um aparelho que some afeta os outros pela memória e pelo ar do B** (bancada 1, 25/10/2026). O envio por cliente já está isolado (escrita sem espera, `WS_MAX_INFLIGHT` por cliente, derrubada só do cliente parado) e o TFT do B não depende do Wi-Fi. Mas, com o PC fora do canal, os buffers de transmissão do Wi-Fi para ele levam o heap abaixo de `WEB_HEAP_PAUSE_KB`, e a trava de memória pausa a telemetria de **todos** (na 2ª rodada, ~0,14 s por saída do PC para o celular; com duas abas a mais no PC, 52,7 s em 11 min), e as retransmissões para o ausente dividem o canal com o ESP-NOW (62 % das perdas A → B nas janelas das saídas do PC, que cobrem 45 % do tempo). **Medir na bancada 2** (vários celulares, a 30 e a 20 Hz, um celular em modo avião): as pausas para todos, as perdas A → B e quanto cada celular fica sem telemetria quando outro some. **Depois, decidir:**
+  1. *(recomendada; escolhida em 26/10/2026, ver abaixo)* trava de memória mirando o culpado: com o heap baixo, derrubar na hora o cliente com mais tempo sem progresso, em vez de pausar todos;
+  2. derrubar os WebSockets de um aparelho assim que ele sai do AP (ajuda menos: o consumo começa ~3 s antes da saída, com o aparelho ainda associado e fora do canal);
+  3. `WS_RATE_HZ` 20 (já prevista na bancada 2);
+  4. `WS_STALL_MS` menor, só depois de medir quanto os celulares saudáveis ficam sem confirmar.
+- **Bancada 2 (26/10/2026):** com 4 celulares, perdas A → B de 0,19 % a 30 Hz e 0,38 % a 20 Hz: **fica 30 Hz**. A trava de memória pausou a telemetria ~1 a 1,7 s por minuto, em picos espalhados (heap de ~52 kB caindo abaixo de 32 kB), sem ligação com saídas do AP: entra na decisão da melhoria acima, junto com, por exemplo, baixar os limites da trava (o heap mínimo visto foi 23 kB).
+- **Conflito de IP depois de um reinício do B** (bancada 2, rodada C): o DHCP do B (ESP-IDF 4.4) começa com a tabela vazia, os aparelhos que já estavam conectados voltam com os IPs antigos, e o servidor oferece um IP em uso a quem entra depois, sem tratar a recusa: o aparelho novo fica sem rede. **Decidido em 26/10/2026: faixa alternada a cada boot** (192.168.4.2 a .12 nos boots pares, .100 a .110 nos ímpares; contador na NVS, namespace `ap`), implementada e compilada. **É um contorno** (revisão de 27/10/2026): um aparelho ausente durante o boot intermediário pode voltar com um IP da faixa atual. **Bancada a fazer:** um celular fora da rede durante um reinício do B, de volta só depois do reinício seguinte, com outro aparelho entrando em seguida.
+- **TRAVAMENTO DO B com o firmware de 26/10/2026 (prioridade):** na repetição da rodada C (4 celulares e o PC), o B travou duas vezes em ~9 min com `CORRUPT HEAP` na task do driver Wi-Fi e reiniciou; inédito em todos os logs anteriores. Suspeitas: a trava nova (consultava o TCP de todos a cada volta da task com o heap baixo), a reconfiguração do DHCP, ou uma falha antiga do driver com a carga maior. Investigação em [cliente-python.md](cliente-python.md): ambientes `ground_estavel`, `ground_sem_trava` e `ground_sem_dhcp`, verificação de integridade do heap a cada 100 ms. **Até a causa sair, o B fica no `ground_estavel`.**
+- **Trava de memória mirando o culpado: decidido em 26/10/2026 e implementado** (`lib/heap_guard`, testes `native`): com o heap abaixo de 32 kB, o B derruba o cliente com algo pendente e sem progresso no envio há 500 ms (o mais parado), um por vez a cada 250 ms; só sem culpado pausa todos, como antes. Falta a bancada (a repetição da rodada C, com o PC).
+- **Wi-Fi do PC:** a investigação para aqui (25/10/2026). O cliente aguenta as saídas (reconecta em ~1 s depois da volta, sem perder o log); a causa é a placa Wi-Fi do notebook. Um adaptador Wi-Fi USB resolve, se fizer falta nas medições.
+- **`valid` = 5 sem explicação** na 1ª rodada da bancada 1 (o filtro da proa sem inicializar desde o boot); na 2ª, 13. Se voltar, olhar o `c` e o `p` na serial do A.
+
 ## Opcionais (só se sobrar tempo)
 - Indicador de curva (gz) e variômetro (derivada da altitude) no PFD
 - Gravação de "caixa-preta" na flash do A

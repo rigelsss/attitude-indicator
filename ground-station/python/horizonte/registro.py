@@ -29,7 +29,7 @@ from .metricas import ContadorN, EstatIntervalo, EstimadorAtraso
 
 COLUNAS_PC = ("atraso_bpc_ms", "puladas_ws")   # atraso relativo B → PC (pelo tb) e telemetrias puladas antes desta
 EVENTOS_COLUNAS = ("pc_ns", "pc_unix", "sessao", "tipo", "detalhe")
-FLUSH_S = 1.0
+FLUSH_S = 0.25   # o graficos.py lê o CSV enquanto ele é gravado: ~0,3 s de atraso no desenho
 RESUMO_S = 1.0
 MAX_NOMES = 1000   # tentativas de nome livre (-2 a -999)
 

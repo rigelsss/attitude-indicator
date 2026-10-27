@@ -39,6 +39,7 @@ struct WebStatus {
     uint32_t wsDropped;     // clientes do WebSocket derrubados por WS_STALL_MS sem espaço
     uint32_t tcpResets;     // conexões encerradas com reset (derrubadas, erro no envio, HTTP ociosa)
     bool     heapPaused;    // telemetria pausada agora por heap baixo (WEB_HEAP_PAUSE_KB)
+    uint32_t wsHeapDrops;   // clientes derrubados pela trava de memória (o culpado, em vez de pausar todos)
     uint32_t heapPauses;    // vezes que pausou
     uint32_t heapPausedMs;  // tempo total pausado
     WsClientStat ws[AP_MAX_CLIENTS];
@@ -64,6 +65,7 @@ enum class NetEvKind : uint8_t {
     HeapResume,   // telemetria retomada (code: heap livre em kB; ip: ms pausado)
     WsSendErr,    // envio direto falhou e o cliente foi descartado (slot, code: errno; 0 = sem socket)
     WsPartial,    // quadro saiu pela metade (falta de memória no lwip): cliente derrubado (slot)
+    WsHeapDrop,   // derrubado pela trava de memória (slot, code: heap livre em kB; ip: ms sem progresso)
 };
 
 struct NetEventMsg {

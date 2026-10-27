@@ -65,6 +65,17 @@
 #define AP_SSID          "Horizonte-ESP"
 #define AP_PASS          "horizonte123"   // mín. 8 caracteres
 #define AP_CHANNEL       1                // IGUAL ao ESPNOW_CHANNEL do ESP A
+// Faixa do DHCP do AP alternada a cada boot (11 IPs a partir do início; contador de boots na NVS, namespace "ap").
+// O DHCP do ESP-IDF 4.4 recomeça vazio num reinício, os aparelhos voltam com os IPs antigos e ele oferecia um IP em
+// uso a quem entrava depois, sem tratar a recusa (bancada 2, 26/10/2026). É um contorno: os IPs do boot anterior
+// nunca são oferecidos, mas um aparelho ausente no boot intermediário pode voltar com um IP da faixa atual
+#ifdef BANCADA_SEM_DHCP_ALTERNADO
+#define AP_DHCP_ALTERNADO     0          // a faixa padrão do núcleo (192.168.4.2 a .12), sem o contador
+#else
+#define AP_DHCP_ALTERNADO     1
+#endif
+#define AP_DHCP_INICIO_PAR    2          // 192.168.4.2 a .12 nos boots pares
+#define AP_DHCP_INICIO_IMPAR  100        // 192.168.4.100 a .110 nos boots ímpares
 #define AP_MAX_CLIENTS   8                // celulares na rede ao mesmo tempo (padrão do núcleo: 4). Cada um usa
                                           // um socket do WebSocket; o SDK tem 16 sockets: 2 de escuta +
                                           // 8 WebSockets + HTTP_MAX_CONNS (4) = 14. IGUAL ao
@@ -75,11 +86,30 @@
 #define HTTP_IDLE_MS     2000     // conexão HTTP sem requisição ou sem progresso no envio é fechada
 #define HTTP_REQ_BYTES   256      // buffer da linha de requisição (maior: 414)
 #define HTTP_CHUNK_BYTES 1024     // bytes do arquivo enviados por conexão a cada volta da web_task
-#define WS_RATE_HZ       30       // telemetria no WebSocket (só com clientes conectados)
+// Telemetria no WebSocket (só com clientes conectados). O ambiente ground_ws20 (bancada 2 da semana 6,
+// docs/cliente-python.md) liga BANCADA_WS_RATE_HZ_20 para comparar 30 e 20 Hz com vários aparelhos
+#ifdef BANCADA_WS_RATE_HZ_20
+#define WS_RATE_HZ       20
+#else
+#define WS_RATE_HZ       30
+#endif
 #define WS_STALL_MS      2000     // cliente do WebSocket sem espaço no envio por mais que isso é derrubado
 #define WEB_HEAP_PAUSE_KB  32    // heap livre abaixo disso: telemetria pausada para todos (o ar não está levando;
 #define WEB_HEAP_RESUME_KB 40    // os buffers do Wi-Fi presos chegaram a ~45 kB, heap a 18 kB, em 24/10/2026);
                                  // volta acima de WEB_HEAP_RESUME_KB. Comandos e eventos continuam
+#define WEB_HEAP_STALL_MS   500  // com o heap abaixo de WEB_HEAP_PAUSE_KB, o cliente com algo pendente e sem progresso
+                                 // no envio há isso é derrubado antes de pausar todos (lib/heap_guard; bancada 2,
+                                 // 26/10/2026: celulares saudáveis confirmam em lotes, mas progridem bem antes)
+#define WEB_HEAP_DROP_GAP_MS 250 // intervalo mínimo entre duas derrubadas da trava (a memória precisa voltar)
+// Investigação do travamento de 26/10/2026 (CORRUPT HEAP na task do driver Wi-Fi, docs/cliente-python.md): cada
+// mudança nova pode ser desligada por um ambiente de bancada (platformio.ini), sem editar código
+#ifdef BANCADA_SEM_TRAVA_NOVA
+#define WEB_HEAP_TRAVA_NOVA 0    // a trava antiga: só pausa todos
+#else
+#define WEB_HEAP_TRAVA_NOVA 1    // derruba o culpado antes de pausar (lib/heap_guard)
+#endif
+#define WEB_HEAP_CHECK_MS  100   // verificação de integridade do heap na serial_task (0 = desligada): mostra quando a
+                                 // corrupção acontece, e não só quando o driver tropeça nela
 #define WEB_PAUSE_CHECK_MS 100   // na pausa, consulta do TCP de cada cliente (progresso das confirmações)
 #define WS_MAX_INFLIGHT  3072     // bytes sem confirmação por cliente acima dos quais nada novo sai para ele
                                   // (~6 telemetrias, ~200 ms; na bancada de 24/10/2026 celulares saudáveis

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <esp_timer.h>
 #include "config.h"
+#include <esp_heap_caps.h>
 #include "alarm_task.h"
 #include "command_task.h"
 #include "display_task.h"
@@ -161,6 +162,45 @@ static void printNetEvent(const NetEventMsg &m) {
     case NetEvKind::WsDrop:
         Serial.printf("[ws] %lu ms: cliente %u derrubado: %d ms sem espaço no envio\n", t, m.slot, WS_STALL_MS);
         break;
+    case NetEvKind::WsHeapDrop:
+        Serial.printf("[ws] %lu ms: cliente %u derrubado: trava de memória (heap livre %u kB, %lu ms sem progresso)\n",
+                      t, m.slot, m.code, (unsigned long)m.ip);
+        break;
+    }
+}
+
+// Verificação de integridade do heap a cada WEB_HEAP_CHECK_MS (investigação do CORRUPT HEAP de 26/10/2026): a
+// corrupção só era vista quando o driver Wi-Fi liberava o bloco vizinho; aqui, a primeira verificação que falha diz
+// quando ela aconteceu (entre a última ok e esta), para cruzar com os eventos [ap], [ws] e [web] em volta
+static uint32_t s_heapChecks = 0, s_heapOkMs = 0, s_heapBadMs = 0;
+static bool s_heapBad = false;
+
+static void heapIntegrityStep(uint32_t now) {
+    static uint32_t ultima = 0;
+    if (WEB_HEAP_CHECK_MS == 0 || s_heapBad || now - ultima < WEB_HEAP_CHECK_MS) return;
+    ultima = now;
+    if (heap_caps_check_integrity_all(false)) {
+        s_heapChecks++;
+        s_heapOkMs = now;
+        return;
+    }
+    s_heapBad = true;
+    s_heapBadMs = now;
+    Serial.printf("[heap] %lu ms: CORRUPÇÃO DO HEAP detectada (última verificação ok em %lu ms); detalhes:\n",
+                  (unsigned long)now, (unsigned long)s_heapOkMs);
+    Serial.flush();
+    heap_caps_check_integrity_all(true);   // imprime o bloco e o tipo de dano (direto na UART)
+}
+
+static void heapIntegrityLine() {
+    if (WEB_HEAP_CHECK_MS == 0) {
+        Serial.println("heap: verificação de integridade desligada");
+    } else if (s_heapBad) {
+        Serial.printf("heap: CORROMPIDO desde %lu ms (última verificação ok em %lu ms)\n", (unsigned long)s_heapBadMs,
+                      (unsigned long)s_heapOkMs);
+    } else {
+        Serial.printf("heap: íntegro | %lu verificações ok, a cada %d ms\n", (unsigned long)s_heapChecks,
+                      WEB_HEAP_CHECK_MS);
     }
 }
 
@@ -169,9 +209,11 @@ static int32_t nextRate(int32_t cur) { return cur == 50 ? 25 : cur == 25 ? 20 : 
 
 static void printReport(const LinkReport &r) {
     const LinkCounts &w = r.win.counts;
-    Serial.printf("[r] link %s | rec %lu em %lu ms | perdidos %lu | dup %lu | fora de ordem %lu | ressinc %lu | "
+    // O instante (millis do B) no começo, como nos eventos: o analisar_b.py cruza os resumos com as entradas e
+    // saídas dos aparelhos no AP
+    Serial.printf("[r] %lu ms: link %s | rec %lu em %lu ms | perdidos %lu | dup %lu | fora de ordem %lu | ressinc %lu | "
                   "recusados %lu | outro remetente %lu | fila cheia %lu",
-                  linkStateText(r.state), (unsigned long)w.received, (unsigned long)r.windowMs, (unsigned long)w.lost,
+                  (unsigned long)millis(), linkStateText(r.state), (unsigned long)w.received, (unsigned long)r.windowMs, (unsigned long)w.lost,
                   (unsigned long)w.duplicates, (unsigned long)w.late, (unsigned long)w.resyncs,
                   (unsigned long)rxRefused(r.rxWin),
                   (unsigned long)r.rxWin.foreign, (unsigned long)r.rxWin.queueFull);
@@ -213,9 +255,10 @@ static void printState(bool streamR, bool streamA) {
                   TELEMETRY_VERSION, (unsigned)sizeof(TelemetryPacket));
     if (ri.active)
         Serial.printf("rádio: ativo | MAC STA %s (recebe) | MAC AP %s | AP \"%s\" | canal %u | peer "
-                      "%02X:%02X:%02X:%02X:%02X:%02X\n",
+                      "%02X:%02X:%02X:%02X:%02X:%02X | DHCP .%u a .%u (%s %lu)\n",
                       ri.staMac, ri.apMac, AP_SSID, ri.channel, PEER_MAC[0], PEER_MAC[1], PEER_MAC[2], PEER_MAC[3],
-                      PEER_MAC[4], PEER_MAC[5]);
+                      PEER_MAC[4], PEER_MAC[5], ri.dhcpInicio, ri.dhcpInicio + 10,
+                      AP_DHCP_ALTERNADO ? "alternado, boot" : "padrão, sem alternar; boot", (unsigned long)ri.boots);
     else
         Serial.println("rádio: DESLIGADO (falha no boot; ver as linhas [radio])");
     Serial.printf("link: timeout %d ms, ressincroniza acima de %d pacotes, fora de ordem até %d pacotes e %d ms, "
@@ -288,13 +331,14 @@ static void printState(bool streamR, bool streamA) {
                   (unsigned long)c.acks, (unsigned long)c.acksBad, (unsigned long)c.acksDropped);
     WebStatus ws;
     if (webCurrent(ws))
-        Serial.printf("página: %s | http://192.168.4.1 (WebSocket :%d) | clientes %u | telemetria %lu | comandos "
+        Serial.printf("página: %s | http://192.168.4.1 (WebSocket :%d) | clientes %u | telemetria %d Hz, %lu enviadas | comandos "
                       "aceitos %lu, recusados %lu | PIN %s\n"
                       "ws: telemetrias puladas %lu | fila: refeitas %lu | derrubados por quadro pela metade %lu | clientes derrubados "
                       "%lu\n"
                       "ap: celulares na rede %d/%d | http: requisições %lu | conexões abertas %u/%d | fechadas "
                       "ociosas %lu, para dar lugar %lu | recusadas %lu\n",
-                      ws.fsOk ? "gravada" : "NÃO GRAVADA (uploadfs)", WS_PORT, ws.clients, (unsigned long)ws.telSent,
+                      ws.fsOk ? "gravada" : "NÃO GRAVADA (uploadfs)", WS_PORT, ws.clients, WS_RATE_HZ,
+                      (unsigned long)ws.telSent,
                       (unsigned long)ws.cmdsOk, (unsigned long)ws.cmdsRefused, WEB_CMD_PIN[0] ? "exigido" : "desligado",
                       (unsigned long)ws.wsSkipped, (unsigned long)ws.wsResyncs, (unsigned long)ws.wsPartial,
                       (unsigned long)ws.wsDropped,
@@ -302,10 +346,13 @@ static void printState(bool streamR, bool streamA) {
                       HTTP_MAX_CONNS, (unsigned long)ws.httpIdle,
                       (unsigned long)ws.httpEvicted, (unsigned long)ws.httpRejected);
     if (webCurrent(ws)) {
-        Serial.printf("tcp: conexões encerradas com reset %lu | trava de memória: %s, pausas %lu, tempo pausado "
-                      "%lu ms (pausa abaixo de %d kB, volta acima de %d kB)\n",
-                      (unsigned long)ws.tcpResets, ws.heapPaused ? "PAUSADA" : "livre", (unsigned long)ws.heapPauses,
-                      (unsigned long)ws.heapPausedMs, WEB_HEAP_PAUSE_KB, WEB_HEAP_RESUME_KB);
+        Serial.printf("tcp: conexões encerradas com reset %lu | trava de memória: %s, culpados derrubados %lu, pausas "
+                      "%lu, tempo pausado %lu ms (%s; abaixo de %d kB, volta acima de %d kB)\n",
+                      (unsigned long)ws.tcpResets, ws.heapPaused ? "PAUSADA" : "livre", (unsigned long)ws.wsHeapDrops,
+                      (unsigned long)ws.heapPauses, (unsigned long)ws.heapPausedMs,
+                      WEB_HEAP_TRAVA_NOVA ? "nova: derruba quem está parado, ou pausa" : "antiga: só pausa",
+                      WEB_HEAP_PAUSE_KB, WEB_HEAP_RESUME_KB);
+        heapIntegrityLine();
         for (int i = 0; i < AP_MAX_CLIENTS; i++) {
             const WsClientStat &cs = ws.ws[i];
             if (!cs.on) continue;
@@ -341,6 +388,7 @@ static void serialTask(void *) {
     bool printedAny = false;
     TickType_t lastPkt = xTaskGetTickCount();
     for (;;) {
+        heapIntegrityStep(millis());
         LinkEventMsg e;
         while (linkEventReceive(e)) printEvent(e);
         const uint32_t dropped = linkEventsDropped();

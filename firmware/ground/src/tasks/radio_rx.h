@@ -30,6 +30,8 @@ struct RadioInfo {
     bool    active;    // Wi-Fi, AP e ESP-NOW iniciados
     char    staMac[18], apMac[18];
     uint8_t channel;   // canal lido do rádio depois da configuração
+    uint32_t boots;    // contador de boots (NVS, namespace "ap")
+    uint8_t dhcpInicio;   // primeiro IP do DHCP neste boot (192.168.4.x; alterna a cada boot)
 };
 
 // Inicia o Wi-Fi (AP + STA), o ESP-NOW e o peer (o A). Imprime direto no Serial: chamar no setup(), antes das

@@ -12,6 +12,7 @@
 #include "alarm_task.h"
 #include "command_task.h"
 #include "config.h"
+#include "heap_guard.h"
 #include "http_static.h"
 #include "link_task.h"
 #include "tcp_conn.h"
@@ -410,8 +411,16 @@ static bool wsPump(uint8_t num, uint32_t now) {
 
 // Um quadro novo só sai para quem tem até WS_MAX_INFLIGHT bytes sem confirmação (tcp_conn.h): um cliente que some
 // prende no máximo isso, e o que estava por sair espera (telemetria é pulada, a fila não se perde)
-static bool wsCanLoad(uint8_t num) {
+static bool wsCanLoad(uint8_t num, uint32_t now) {
     const int inflight = tcpInFlight(s_ws.fd(num));
+#if WEB_HEAP_TRAVA_NOVA
+    // Confirmações chegando contam como progresso antes de o valor guardado ser sobrescrito: sem isso, uma queda dos
+    // bytes sem confirmação ainda acima de WS_MAX_INFLIGHT (sem escrita nova) sumia aqui, e a trava, comparando
+    // depois, via o cliente parado (revisão de 27/10/2026). Só com a trava nova: o ground_estavel fica como antes
+    if (heapProgressed(s_wsInFlight[num], inflight)) s_wsOkMs[num] = now;
+#else
+    (void)now;
+#endif
     s_wsInFlight[num] = inflight;
     if (inflight > s_wsInFlightMax[num]) s_wsInFlightMax[num] = inflight;
     return inflight >= 0 && inflight <= WS_MAX_INFLIGHT;
@@ -426,7 +435,7 @@ static bool wsFlush(uint8_t num, uint32_t now) {
     }
     WsOut o;
     while (s_out[num].peek(o)) {
-        if (!wsCanLoad(num)) {
+        if (!wsCanLoad(num, now)) {
             wsStalled(num, now);
             return false;
         }
@@ -444,7 +453,7 @@ static bool wsFlush(uint8_t num, uint32_t now) {
 // Telemetria: substituível pela próxima, então só sai para quem não tem nada pendente nem bytes demais sem
 // confirmação
 static void wsSendTelemetry(uint8_t num, size_t n, uint32_t now) {
-    if (!s_tx[num].idle() || !s_out[num].empty() || !wsCanLoad(num)) {
+    if (!s_tx[num].idle() || !s_out[num].empty() || !wsCanLoad(num, now)) {
         s_st.wsSkipped++;
         s_wsSkipped[num]++;
         wsStalled(num, now);
@@ -551,25 +560,65 @@ static void wsPausedProgress(uint32_t now) {
     for (uint8_t i = 0; i < WEBSOCKETS_SERVER_CLIENT_MAX; i++) {
         if (!s_ws.ready(i) || !s_tx[i].idle() || !s_out[i].empty()) continue;   // pendentes: wsFlush cuida
         const int inflight = tcpInFlight(s_ws.fd(i));
-        if (inflight == 0 || (inflight > 0 && inflight < s_wsInFlight[i])) s_wsOkMs[i] = now;
+        if (heapProgressed(s_wsInFlight[i], inflight)) s_wsOkMs[i] = now;
         s_wsInFlight[i] = inflight;
         wsStalled(i, now);
     }
 }
 
 static_assert(WEB_HEAP_RESUME_KB > WEB_HEAP_PAUSE_KB, "histerese da trava de memória");
+// Com pouca memória, primeiro derruba o culpado (um cliente com algo pendente e parado há WEB_HEAP_STALL_MS: o
+// aparelho que sumiu do canal); só sem culpado pausa a telemetria de todos (lib/heap_guard). Bancada 2, 26/10/2026:
+// com 4 celulares, a pausa para todos levava ~1 a 1,7 s de telemetria por minuto
+static HeapGuard s_heapGuard({WEB_HEAP_PAUSE_KB, WEB_HEAP_RESUME_KB, WEB_HEAP_STALL_MS, WEB_HEAP_DROP_GAP_MS});
+
 static void heapGuard(uint32_t now) {
     static uint32_t pausedAt = 0;
     const uint32_t freeKb = heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024;
-    if (!s_st.heapPaused && freeKb < WEB_HEAP_PAUSE_KB) {
+    HeapClient clientes[WEBSOCKETS_SERVER_CLIENT_MAX] = {};
+    int n = 0;
+#if WEB_HEAP_TRAVA_NOVA
+    // Com pouca memória, a consulta do TCP de cada cliente (na thread do TCP/IP) e a decisão no máximo a cada
+    // WEB_PAUSE_CHECK_MS: na primeira versão, a cada volta da task, centenas de consultas por segundo com o heap baixo
+    static uint32_t lastCheck = 0;
+    if (freeKb < WEB_HEAP_PAUSE_KB) {
+        if (now - lastCheck < WEB_PAUSE_CHECK_MS) return;
+        lastCheck = now;
+        n = WEBSOCKETS_SERVER_CLIENT_MAX;
+        for (uint8_t i = 0; i < WEBSOCKETS_SERVER_CLIENT_MAX; i++) {
+            clientes[i].ready = s_ws.ready(i);
+            if (!clientes[i].ready) continue;
+            // Confirmações chegando contam como progresso antes da escolha do culpado (fora da pausa, só uma escrita
+            // nova atualizava o s_wsOkMs; na pausa, o wsPausedProgress rodava depois daqui)
+            const int inflight = tcpInFlight(s_ws.fd(i));
+            if (heapProgressed(s_wsInFlight[i], inflight)) s_wsOkMs[i] = now;
+            s_wsInFlight[i] = inflight;
+            clientes[i].pending = !s_tx[i].idle() || inflight > 0;
+            clientes[i].lastOkMs = s_wsOkMs[i];
+        }
+    }
+#endif
+    const HeapDecision d = s_heapGuard.step(freeKb, now, clientes, n);
+    switch (d.action) {
+    case HeapAction::Drop:
+        if (s_ws.drop((uint8_t)d.client)) s_st.tcpResets++;
+        wsForget((uint8_t)d.client);
+        s_st.wsHeapDrops++;
+        netEvent(NetEvKind::WsHeapDrop, (uint8_t)d.client, d.stalledMs, (uint16_t)freeKb);
+        break;
+    case HeapAction::Pause:
         s_st.heapPaused = true;
         s_st.heapPauses++;
         pausedAt = now;
         netEvent(NetEvKind::HeapPause, 0, 0, (uint16_t)freeKb);
-    } else if (s_st.heapPaused && freeKb >= WEB_HEAP_RESUME_KB) {
+        break;
+    case HeapAction::Resume:
         s_st.heapPaused = false;
         s_st.heapPausedMs += now - pausedAt;
         netEvent(NetEvKind::HeapResume, 0, now - pausedAt, (uint16_t)freeKb);
+        break;
+    case HeapAction::None:
+        break;
     }
 }
 

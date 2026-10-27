@@ -1,6 +1,7 @@
 // radio_rx.cpp — ver radio_rx.h
 #include "radio_rx.h"
 #include <Arduino.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <atomic>
 #include <esp_now.h>
@@ -79,6 +80,27 @@ bool radioRxStart() {
         return false;
     }
     esp_wifi_set_ps(WIFI_PS_NONE);
+    // Faixa do DHCP alternada a cada boot (config.h, AP_DHCP_INICIO_*): os aparelhos que voltam de um reinício do
+    // B com os IPs do boot anterior não coincidem com os que o DHCP oferece agora (contorno: ver o config.h)
+    s_info.boots = 0;
+    s_info.dhcpInicio = AP_DHCP_INICIO_PAR;   // a faixa padrão do núcleo
+#if AP_DHCP_ALTERNADO
+    {
+        Preferences nvs;
+        nvs.begin("ap", false);
+        s_info.boots = nvs.getUInt("boots", 0) + 1;
+        nvs.putUInt("boots", s_info.boots);
+        nvs.end();
+        s_info.dhcpInicio = (s_info.boots % 2 == 0) ? AP_DHCP_INICIO_PAR : AP_DHCP_INICIO_IMPAR;
+        const IPAddress ip(192, 168, 4, 1);
+        if (!WiFi.softAPConfig(ip, ip, IPAddress(255, 255, 255, 0), IPAddress(192, 168, 4, s_info.dhcpInicio)))
+            Serial.println("[radio] AVISO: faixa do DHCP não configurada; ficou a padrão do núcleo");
+        Serial.printf("[ap] DHCP: 192.168.4.%u a .%u (boot %lu)\n", s_info.dhcpInicio, s_info.dhcpInicio + 10,
+                      (unsigned long)s_info.boots);
+    }
+#else
+    Serial.println("[ap] DHCP: faixa padrão do núcleo, sem alternar (BANCADA_SEM_DHCP_ALTERNADO)");
+#endif
     uint8_t primary = 0;
     wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
     esp_wifi_get_channel(&primary, &second);

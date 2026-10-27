@@ -57,6 +57,8 @@ jobs:
           - dir: firmware/aircraft
             env: aircraft_pulsetest
           - dir: firmware/aircraft
+            env: aircraft_resettest
+          - dir: firmware/aircraft
             env: i2cscan
           - dir: firmware/ground
             env: ground

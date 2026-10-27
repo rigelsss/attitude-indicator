@@ -49,6 +49,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - B com a telemetria do WebSocket a 20 Hz (bancada 2): `pio run -e ground_ws20 -t upload`; depois, regravar o `ground`
 - Investigação do travamento do B (CORRUPT HEAP, 26/10/2026): `ground_estavel` (trava antiga e DHCP padrão), `ground_sem_trava`, `ground_sem_dhcp`; ver docs/cliente-python.md
 - Teste de pulsos falsos no INT (ESP A, tecla `F`): `pio run -e aircraft_pulsetest -t upload`; depois, regravar o `aircraft`
+- Teste do reinício da fusão com a caixa em movimento (ESP A, tecla `R`): `pio run -e aircraft_resettest -t upload`; depois, regravar o `aircraft`
 - A/B de tempo sem o Wi-Fi ligado (ESP A): `pio run -e aircraft_noradio -t upload`; depois, regravar o `aircraft`
 - Monitor: `pio device monitor -b 115200` (no `ground`, o filtro `log2file` grava em `firmware/ground/logs`)
 - Página web no B: `pio run -e ground -t uploadfs`

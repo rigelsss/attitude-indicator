@@ -36,6 +36,12 @@ struct FusionParams {
     float maxDtS;        // maior intervalo integrável; acima dele o filtro é reiniciado
     uint16_t initSamples;    // amostras seguidas utilizáveis cuja média define a atitude inicial
     float    initMaxRateDps; // |giroscópio| acima disto durante a inicialização: caixa girando, recomeça
+    // Inicialização relaxada (reinício com a caixa em movimento, docs/fusao.md): depois de relaxAfterS
+    // esperando a inicialização normal, a média aceita |giroscópio| até relaxMaxRateDps e peso a partir de
+    // relaxMinW, e a atitude começa degradada. relaxAfterS = 0 (o padrão dos agregados): desligada.
+    float    relaxAfterS;
+    float    relaxMaxRateDps;
+    float    relaxMinW;
 };
 
 // Peso do acelerômetro na correção (0 a 1), pelo afastamento de |a| em relação a 1 g.
@@ -51,7 +57,7 @@ struct ImuFlags {
 class AttitudeFilter {
 public:
     enum class Step : uint8_t {
-        Initialized,   // atitude inicial tirada do acelerômetro nesta amostra
+        Initialized,   // atitude inicial tirada do acelerômetro nesta amostra (initRelaxed(): pela relaxada)
         Updated,
         Waiting,       // ainda sem referência (peso não pleno, roll não observável, giroscópio saturado
                        // ou girando) ou acumulando as amostras da média inicial
@@ -74,8 +80,14 @@ public:
     float rollDeg() const;
     float pitchDeg() const;
     float lastAccWeight() const { return lastW_; }
-    // O giroscópio saturou e a correção acumulada desde então (∑ peso·dt) ainda não chegou a 3τ
+    // O giroscópio saturou, ou a atitude inicial veio da inicialização relaxada, e a correção acumulada
+    // desde então (∑ peso·dt) ainda não chegou a 3τ
     bool  degraded() const { return degraded_; }
+    // A última inicialização foi a relaxada (com movimento)
+    bool  initRelaxed() const { return initRelaxed_; }
+    // Tempo esperando a inicialização desde o reinício (só os intervalos integráveis); depois da
+    // amostra Initialized, quanto ela demorou
+    float waitedS() const { return waitS_; }
 
 private:
     FusionParams p_;
@@ -87,6 +99,9 @@ private:
     float corrSinceSatS_ = 0;
     uint16_t initN_ = 0;           // amostras acumuladas para a média inicial
     Vec3     initSum_{0, 0, 0};
+    bool     initStrict_ = true;   // todas as amostras da média atual atendem ao critério normal
+    bool     initRelaxed_ = false;
+    float    waitS_ = 0;           // espera pela inicialização desde o reinício
 };
 
 // Média e desvio padrão de um ângulo (graus) numa janela curta, sem o salto de ±180°: cada valor

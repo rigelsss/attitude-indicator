@@ -11,6 +11,8 @@ void tearDown() {}
 // correção nos testes que partem de uma atitude conhecida; P_CFG usa a média de 20 amostras.
 static const FusionParams P_CFG = {1.0f, 0.05f, 0.15f, 0.3f, 0.050f, 20, 5.0f};
 static const FusionParams P = {1.0f, 0.05f, 0.15f, 0.3f, 0.050f, 1, 5.0f};
+// P_RX: o config.h com a inicialização relaxada (2 s, 60 °/s, peso 0,5); nos outros, ela fica desligada
+static const FusionParams P_RX = {1.0f, 0.05f, 0.15f, 0.3f, 0.050f, 20, 5.0f, 2.0f, 60.0f, 0.5f};
 static const float DT = 0.005f;   // 200 Hz
 static const ImuFlags NO_SAT = {false, false};
 static const float D2R = (float)M_PI / 180.0f;
@@ -33,6 +35,10 @@ static float gauss(float sigma) {
 static Vec3 restForce(float rollDeg, float pitchDeg) {
     const float r = rollDeg * D2R, p = pitchDeg * D2R;
     return {sinf(p), -sinf(r) * cosf(p), -cosf(r) * cosf(p)};
+}
+
+static Vec3 scaled3(const Vec3 &v, float k) {
+    return {v.x * k, v.y * k, v.z * k};
 }
 
 // Velocidades angulares no corpo (°/s) para taxas de Euler (φ̇, θ̇, ψ̇) numa atitude (φ, θ)
@@ -216,6 +222,167 @@ static void test_init_bad_data_and_zero_dt() {
     TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized,
                           (int)g.update(restForce(10, 0), {0, 0, 0}, DT, NO_SAT));
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 10.0f, g.rollDeg());   // a amostra a 50° com dt = 0 ficou fora
+}
+
+// ---------- Inicialização relaxada (reinício com a caixa em movimento) ----------
+
+// Caixa girando em roll a rateDps, com |a| = accNorm (o excesso sobre 1 g reduz o peso): n amostras a
+// partir de *t (s), que avança. Devolve o passo da última amostra; para na primeira Initialized.
+static AttitudeFilter::Step rollMoving(AttitudeFilter &f, float rateDps, int n, float &t, float accNorm = 1.0f,
+                                      float dt = DT, float dt2 = 0) {
+    AttitudeFilter::Step st = AttitudeFilter::Step::Waiting;
+    for (int i = 0; i < n; i++) {
+        const float d = (dt2 > 0 && i % 2) ? dt2 : dt;   // dt2: intervalos alternados
+        t += d;
+        st = f.update(scaled3(restForce(rateDps * t, 0), accNorm), {rateDps, 0, 0}, d, NO_SAT);
+        if (st == AttitudeFilter::Step::Initialized) break;
+    }
+    return st;
+}
+
+// Girando a 30 °/s: sem a inicialização normal, a relaxada entra depois de 2 s e da média de 20 amostras,
+// degradada e sem o atraso da média (a soma acompanha o giro); a degradação termina com 3τ de correção
+static void test_relaxed_init_while_moving() {
+    AttitudeFilter f(P_RX);
+    float t = 0;
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Waiting, (int)rollMoving(f, 30, 395, t));   // 1,975 s
+    TEST_ASSERT_FALSE(f.initialized());
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized, (int)rollMoving(f, 30, 40, t));
+    TEST_ASSERT_TRUE(f.initRelaxed());
+    TEST_ASSERT_TRUE(f.degraded());
+    TEST_ASSERT_TRUE(f.waitedS() >= 2.0f && f.waitedS() < 2.11f);
+    // Sem a compensação, a média de 0,1 s ficaria ~1,4° atrás (metade do giro na janela)
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.0f, wrap180(f.rollDeg() - 30 * t));
+    rollMoving(f, 30, 580, t);   // 2,9 s de correção com peso pleno
+    TEST_ASSERT_TRUE(f.degraded());
+    rollMoving(f, 30, 30, t);    // passa de 3τ
+    TEST_ASSERT_FALSE(f.degraded());
+    TEST_ASSERT_TRUE(f.initRelaxed());   // continua dizendo como foi a última inicialização
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.0f, wrap180(f.rollDeg() - 30 * t));
+}
+
+// A janela da média é contada em amostras: com dt de 50 ms (o maior aceito) ela dura ~1 s, e a 60 °/s,
+// sem a compensação do giro, a média sairia 28,5° atrás (revisão de 27/10/2026). Com dt alternado também
+static void test_relaxed_init_long_and_variable_dt() {
+    AttitudeFilter f(P_RX);
+    float t = 0;
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized, (int)rollMoving(f, 60, 200, t, 1.0f, 0.050f));
+    TEST_ASSERT_TRUE(f.initRelaxed());
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.0f, wrap180(f.rollDeg() - 60 * t));
+
+    AttitudeFilter g(P_RX);
+    t = 0;
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized,
+                          (int)rollMoving(g, 45, 400, t, 1.0f, 0.005f, 0.045f));
+    TEST_ASSERT_TRUE(g.initRelaxed());
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.0f, wrap180(g.rollDeg() - 45 * t));
+
+    // Giro em dois eixos (roll e yaw) na atitude inclinada: a soma segue a rotação completa
+    AttitudeFilter h(P_RX);
+    float roll = 0;
+    AttitudeFilter::Step st = AttitudeFilter::Step::Waiting;
+    for (int i = 0; i < 400 && st != AttitudeFilter::Step::Initialized; i++) {
+        roll += 30 * 0.02f;
+        st = h.update(restForce(roll, 10), bodyRates(roll, 10, 30, 0, 40), 0.02f, NO_SAT);
+    }
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized, (int)st);
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.0f, wrap180(h.rollDeg() - roll));
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 10.0f, h.pitchDeg());
+}
+
+// Limitação: o peso limita |a|, não a aceleração horizontal. {0,4; 0; −1} g tem |a| = 1,077 g (peso 0,73):
+// a relaxada aceita e começa com 21,8° de pitch aparente. A correção só tira o erro depois que a aceleração
+// cessa; se ela continuar, a degradação termina em 3τ com o erro ainda lá
+static void test_relaxed_init_horizontal_accel() {
+    const Vec3 accel = {0.4f, 0, -1.0f};
+    AttitudeFilter f(P_RX), g(P_RX);
+    AttitudeFilter::Step st = AttitudeFilter::Step::Waiting;
+    for (int i = 0; i < 500 && st != AttitudeFilter::Step::Initialized; i++) st = f.update(accel, {0, 0, 0}, DT, NO_SAT);
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized, (int)st);
+    TEST_ASSERT_TRUE(f.initRelaxed() && f.degraded());
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 21.8f, f.pitchDeg());
+    st = AttitudeFilter::Step::Waiting;
+    for (int i = 0; i < 500 && st != AttitudeFilter::Step::Initialized; i++) st = g.update(accel, {0, 0, 0}, DT, NO_SAT);
+
+    // A aceleração cessa (nivelado, parado): o erro cai como no resto do filtro, ~exp(−t/τ)
+    for (int i = 0; i < 610; i++) f.update(restForce(0, 0), {0, 0, 0}, DT, NO_SAT);   // 3,05 s
+    TEST_ASSERT_FALSE(f.degraded());
+    TEST_ASSERT_FLOAT_WITHIN(1.2f, 0.0f, f.pitchDeg());   // 21,8°·e⁻³ ≈ 1,1°: 3τ não zera o erro
+    for (int i = 0; i < 400; i++) f.update(restForce(0, 0), {0, 0, 0}, DT, NO_SAT);
+    TEST_ASSERT_FLOAT_WITHIN(0.2f, 0.0f, f.pitchDeg());
+
+    // A aceleração continua: a degradação termina (3τ / 0,73 ≈ 4,1 s) com o pitch aparente ainda lá
+    for (int i = 0; i < 840; i++) g.update(accel, {0, 0, 0}, DT, NO_SAT);   // 4,2 s
+    TEST_ASSERT_FALSE(g.degraded());
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 21.8f, g.pitchDeg());
+}
+
+// Parada, a inicialização é a normal, sem degradação e no mesmo tempo de hoje (20 amostras)
+static void test_relaxed_keeps_normal_init_at_rest() {
+    AttitudeFilter f(P_RX);
+    for (int i = 1; i < P_RX.initSamples; i++) f.update(restForce(15, -5), {0, 0, 0}, DT, NO_SAT);
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized,
+                          (int)f.update(restForce(15, -5), {0, 0, 0}, DT, NO_SAT));
+    TEST_ASSERT_FALSE(f.initRelaxed());
+    TEST_ASSERT_FALSE(f.degraded());
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.1f, f.waitedS());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 15.0f, f.rollDeg());
+}
+
+// Movimento além dos limites (giro acima de 60 °/s ou peso abaixo de 0,5) continua esperando; dentro deles,
+// entra. Depois de passado o tempo, uma média só de amostras paradas vale como a normal; uma média mista, não
+static void test_relaxed_limits() {
+    AttitudeFilter f(P_RX);
+    float t = 0;
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Waiting, (int)rollMoving(f, 90, 800, t));        // 4 s
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Waiting, (int)rollMoving(f, 30, 400, t, 1.12f));  // peso 0,3
+    TEST_ASSERT_FALSE(f.initialized());
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized, (int)rollMoving(f, 30, 20, t, 1.08f));  // 0,7
+    TEST_ASSERT_TRUE(f.initRelaxed());
+
+    AttitudeFilter g(P_RX);
+    t = 0;
+    rollMoving(g, 90, 500, t);   // 2,5 s: a relaxada já valeria
+    for (int i = 0; i < P_RX.initSamples; i++) g.update(restForce(20, 0), {0, 0, 0}, DT, NO_SAT);
+    TEST_ASSERT_TRUE(g.initialized());
+    TEST_ASSERT_FALSE(g.initRelaxed());
+    TEST_ASSERT_FALSE(g.degraded());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.0f, g.rollDeg());
+
+    AttitudeFilter h(P_RX);
+    t = 0;
+    rollMoving(h, 90, 500, t);
+    for (int i = 0; i < 10; i++) h.update(restForce(0, 0), {0, 0, 0}, DT, NO_SAT);
+    t = 0;
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized, (int)rollMoving(h, 30, 10, t));
+    TEST_ASSERT_TRUE(h.initRelaxed());
+    TEST_ASSERT_TRUE(h.degraded());
+}
+
+// O reinício (recuperação do MPU, lacuna, calibração) recomeça a contagem dos 2 s; desligada
+// (relaxAfterS = 0, P_CFG), a caixa em movimento continua sem atitude, como antes
+static void test_relaxed_reset_and_disabled() {
+    AttitudeFilter f(P_RX);
+    float t = 0;
+    rollMoving(f, 30, 300, t);   // 1,5 s
+    f.reset();
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.0f, f.waitedS());
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Waiting, (int)rollMoving(f, 30, 300, t));
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized, (int)rollMoving(f, 30, 200, t));
+    TEST_ASSERT_TRUE(f.initRelaxed());
+    // Lacuna com a atitude já inicializada: Reset, e a contagem recomeça
+    t += 0.2f;
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Reset,
+                          (int)f.update(restForce(30 * t, 0), {30, 0, 0}, 0.2f, NO_SAT));
+    TEST_ASSERT_FALSE(f.initialized());
+    TEST_ASSERT_FALSE(f.initRelaxed());
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Waiting, (int)rollMoving(f, 30, 390, t));
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Initialized, (int)rollMoving(f, 30, 40, t));
+
+    AttitudeFilter g(P_CFG);
+    t = 0;
+    TEST_ASSERT_EQUAL_INT((int)AttitudeFilter::Step::Waiting, (int)rollMoving(g, 30, 1000, t));   // 5 s
+    TEST_ASSERT_FALSE(g.initialized());
 }
 
 // ---------- Predição ----------
@@ -613,6 +780,12 @@ int main() {
     RUN_TEST(test_init_averages_noise);
     RUN_TEST(test_init_restarts_on_bad_sample);
     RUN_TEST(test_init_restarts_after_gap);
+    RUN_TEST(test_relaxed_init_while_moving);
+    RUN_TEST(test_relaxed_init_long_and_variable_dt);
+    RUN_TEST(test_relaxed_init_horizontal_accel);
+    RUN_TEST(test_relaxed_keeps_normal_init_at_rest);
+    RUN_TEST(test_relaxed_limits);
+    RUN_TEST(test_relaxed_reset_and_disabled);
     RUN_TEST(test_init_bad_data_and_zero_dt);
     RUN_TEST(test_constant_rate_roll);
     RUN_TEST(test_constant_rate_pitch_with_roll);

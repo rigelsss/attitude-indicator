@@ -42,6 +42,12 @@ void Console::handleKey(char ch) {
 #ifdef PULSE_TEST
     case 'F': pulseTestStart(); break;   // só no ambiente aircraft_pulsetest
 #endif
+#ifdef FUSION_RESET_TEST
+    case 'R':   // só no ambiente aircraft_resettest: o mesmo reinício de uma recuperação do MPU ou lacuna
+        logPrintln("[teste] fusão reiniciada pela tecla R");
+        d_.fusionReset();
+        break;
+#endif
     default: break;
     }
 }

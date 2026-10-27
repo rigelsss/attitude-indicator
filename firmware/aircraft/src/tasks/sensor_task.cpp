@@ -79,7 +79,8 @@ static CalService g_calSvc(CAL_CFG);
 
 static const FusionParams FUSION_PARAMS = {COMP_FILTER_TAU_S, FUSION_ACC_FULL_DEV_G, FUSION_ACC_ZERO_DEV_G,
                                            FUSION_ROLL_MIN_G, FUSION_MAX_DT_MS / 1000.0f, FUSION_INIT_SAMPLES,
-                                           FUSION_INIT_MAX_RATE_DPS};
+                                           FUSION_INIT_MAX_RATE_DPS, FUSION_INIT_RELAX_MS / 1000.0f,
+                                           FUSION_INIT_RELAX_MAX_RATE_DPS, FUSION_INIT_RELAX_MIN_W};
 static const HeadingParams HEADING_PARAMS = {MAG_HEADING_TAU_S, MAG_MAX_PITCH_DEG, MAG_MAX_DT_MS / 1000.0f};
 // Atitude, diagnóstico só de giroscópio e proa (predição aqui, correção pelo serviço do magnetômetro)
 static FusionCore g_fusion(FUSION_PARAMS, HEADING_PARAMS);
@@ -237,7 +238,12 @@ static void fusionSample(const ImuSample &s, uint32_t intUs) {
     const BodyImu b = imuToBody({s.ax, s.ay, s.az}, {s.gx, s.gy, s.gz}, cal.accelValid, cal.accel, g_calSvc.gyroBias(),
                                 g_calSvc.level().r);
     const ImuFlags flags = {s.accelSaturated, s.gyroSaturated};
-    g_fusion.update(b.acc, b.gyro, flags, intUs, g_magSvc.calibrating());
+    const AttitudeFilter::Step st = g_fusion.update(b.acc, b.gyro, flags, intUs, g_magSvc.calibrating());
+    if (st == AttitudeFilter::Step::Initialized) {   // raro: boot, recuperação, lacuna, calibração gravada
+        logPrintf("[att] atitude inicializada %s após %.2f s de espera: roll %+.2f pitch %+.2f\n",
+                  g_att.initRelaxed() ? "em movimento (relaxada, degradada até 3τ de correção)" : "parada",
+                  g_att.waitedS(), g_att.rollDeg(), g_att.pitchDeg());
+    }
     g_lastGyro = b.gyro;
     if (g_att.initialized()) g_acq.cur().addAttitude(g_att.rollDeg(), g_att.pitchDeg());
     g_console.attitudeSample(b.acc, s.tempC, intUs);   // linha do a, se estiver ligado e vencida

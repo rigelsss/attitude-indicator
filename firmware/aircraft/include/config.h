@@ -167,6 +167,14 @@
 #define FUSION_MAX_DT_MS        50      // intervalo maior que isto: filtro reiniciado (= MPU_INT_TIMEOUT_MS)
 #define FUSION_INIT_SAMPLES     20      // atitude inicial = média de 20 amostras seguidas (0,1 s): ruído ~0,02°
 #define FUSION_INIT_MAX_RATE_DPS 5.0f   // inicialização só com |giroscópio| abaixo disto (caixa sem girar)
+// Inicialização relaxada (reinício com a caixa em movimento, docs/fusao.md): sem a normal em 2 s, a média
+// aceita giro até 60 °/s (o giro durante a média é compensado pelo giroscópio) e peso a partir de 0,5
+// (||a| − 1 g| ≤ 0,10 g). O peso limita |a|, não a aceleração horizontal: uma aceleração perpendicular à
+// gravidade de até ~0,46 g passa e dá até ~25° de inclinação aparente. A atitude começa degradada até 3τ
+// de correção, o que só elimina o erro se a aceleração tiver cessado
+#define FUSION_INIT_RELAX_MS           2000
+#define FUSION_INIT_RELAX_MAX_RATE_DPS 60.0f
+#define FUSION_INIT_RELAX_MIN_W        0.5f
 #define FUSION_MAX_INT_LAG_US   4000    // rede de segurança: leitura mais que isto depois do pulso fica fora da
                                         // fusão (abaixo do período de 5 ms); o critério principal é um pulso
                                         // mais novo chegar antes do fim da leitura

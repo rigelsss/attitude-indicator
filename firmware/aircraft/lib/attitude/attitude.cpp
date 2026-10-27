@@ -22,6 +22,20 @@ static HOT_PATH Vec3 scaled(const Vec3 &v, float k) {
     return {v.x * k, v.y * k, v.z * k};
 }
 
+// Vetor fixo no espaço visto dos eixos do modelo depois de um intervalo dtS girando a gyroDps:
+// v' = R(−ω·dt)·v (Rodrigues; dv/dt = −ω × v). Exato para giro constante no intervalo
+static HOT_PATH Vec3 followRotation(const Vec3 &v, const Vec3 &gyroDps, float dtS) {
+    const Vec3 th = scaled(gyroDps, -dtS * DEG2RAD);
+    const float a = sqrtf(th.x * th.x + th.y * th.y + th.z * th.z);
+    if (a < 1e-9f) return v;
+    const Vec3 k = scaled(th, 1.0f / a);
+    const float c = cosf(a), s = sinf(a);
+    const float kv = k.x * v.x + k.y * v.y + k.z * v.z;
+    const Vec3 kxv = {k.y * v.z - k.z * v.y, k.z * v.x - k.x * v.z, k.x * v.y - k.y * v.x};
+    return {v.x * c + kxv.x * s + k.x * kv * (1 - c), v.y * c + kxv.y * s + k.y * kv * (1 - c),
+            v.z * c + kxv.z * s + k.z * kv * (1 - c)};
+}
+
 static float dot(const Vec3 &a, const Vec3 &b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
@@ -65,6 +79,8 @@ void AttitudeFilter::reset() {
     degraded_ = false;
     corrSinceSatS_ = 0;
     initN_ = 0;
+    initRelaxed_ = false;
+    waitS_ = 0;
 }
 
 void AttitudeFilter::initFrom(float rollDeg, float pitchDeg) {
@@ -74,6 +90,7 @@ void AttitudeFilter::initFrom(float rollDeg, float pitchDeg) {
     degraded_ = false;
     corrSinceSatS_ = 0;
     initN_ = 0;
+    initRelaxed_ = false;
 }
 
 float AttitudeFilter::rollDeg() const {
@@ -100,8 +117,19 @@ HOT_PATH AttitudeFilter::Step AttitudeFilter::update(const Vec3 &acc, const Vec3
     // referência completa: peso pleno, roll observável (uma amostra vertical pode ter |a| = 1 g sem
     // dar roll), giroscópio não saturado e caixa sem girar. Uma amostra só carregaria o ruído do
     // acelerômetro (~0,1°) para a atitude inicial, que levaria ~3τ para sair.
+    // Se a espera passar de relaxAfterS (reinício com a caixa em movimento: sem isso, a atitude ficaria
+    // inválida até a caixa parar), a média passa a aceitar giro e peso menores, e a atitude começa
+    // degradada até 3τ de correção. A soma da média acompanha o giro pelo giroscópio (followRotation):
+    // sem isso, ela representaria o meio da janela, que depende do dt (20 amostras de 50 ms a 60 °/s
+    // dariam 28,5° de atraso; revisão de 27/10/2026). O peso limita |a|, não a aceleração horizontal:
+    // ver docs/fusao.md.
     if (!init_) {
-        const bool usable = w >= 1.0f && rollObservable && !flags.gyroSaturated && norm(gyro) <= p_.initMaxRateDps;
+        if (dtS > 0 && dtS <= p_.maxDtS) waitS_ += dtS;
+        const bool relaxed = p_.relaxAfterS > 0 && waitS_ >= p_.relaxAfterS;
+        const float rate = norm(gyro);
+        const bool base = rollObservable && !flags.gyroSaturated;
+        const bool strict = base && w >= 1.0f && rate <= p_.initMaxRateDps;
+        const bool usable = strict || (relaxed && base && w >= p_.relaxMinW && rate <= p_.relaxMaxRateDps);
         if (!usable) {
             initN_ = 0;   // a média só vale para amostras seguidas
             return Step::Waiting;
@@ -113,7 +141,12 @@ HOT_PATH AttitudeFilter::Step AttitudeFilter::update(const Vec3 &acc, const Vec3
             if (dtS <= 0) return Step::Skipped;
             if (dtS > p_.maxDtS) initN_ = 0;
         }
-        if (initN_ == 0) initSum_ = {0, 0, 0};
+        if (initN_ == 0) {
+            initSum_ = {0, 0, 0};
+            initStrict_ = true;
+        }
+        initStrict_ = initStrict_ && strict;
+        if (initN_ > 0) initSum_ = followRotation(initSum_, gyro, dtS);   // a soma nos eixos desta amostra
         initSum_ = {initSum_.x + acc.x, initSum_.y + acc.y, initSum_.z + acc.z};
         if (++initN_ < p_.initSamples) return Step::Waiting;
         const Vec3 m = scaled(initSum_, 1.0f / initN_);
@@ -121,7 +154,8 @@ HOT_PATH AttitudeFilter::Step AttitudeFilter::update(const Vec3 &acc, const Vec3
         pitch_ = atan2f(m.x, sqrtf(m.y * m.y + m.z * m.z));
         initN_ = 0;
         init_ = true;
-        degraded_ = false;
+        initRelaxed_ = !initStrict_;   // uma média só de amostras paradas vale como a normal
+        degraded_ = initRelaxed_;
         corrSinceSatS_ = 0;
         return Step::Initialized;
     }

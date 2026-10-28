@@ -66,8 +66,6 @@ jobs:
             env: ground_diag
           - dir: firmware/ground
             env: ground_ws20
-          - dir: firmware/ground
-            env: ground_estavel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

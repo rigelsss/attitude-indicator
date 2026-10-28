@@ -69,17 +69,16 @@
 // O DHCP do ESP-IDF 4.4 recomeça vazio num reinício, os aparelhos voltam com os IPs antigos e ele oferecia um IP em
 // uso a quem entrava depois, sem tratar a recusa (bancada 2, 26/10/2026). É um contorno: os IPs do boot anterior
 // nunca são oferecidos, mas um aparelho ausente no boot intermediário pode voltar com um IP da faixa atual
-#ifdef BANCADA_SEM_DHCP_ALTERNADO
-#define AP_DHCP_ALTERNADO     0          // a faixa padrão do núcleo (192.168.4.2 a .12), sem o contador
-#else
-#define AP_DHCP_ALTERNADO     1
-#endif
 #define AP_DHCP_INICIO_PAR    2          // 192.168.4.2 a .12 nos boots pares
 #define AP_DHCP_INICIO_IMPAR  100        // 192.168.4.100 a .110 nos boots ímpares
-#define AP_MAX_CLIENTS   8                // celulares na rede ao mesmo tempo (padrão do núcleo: 4). Cada um usa
-                                          // um socket do WebSocket; o SDK tem 16 sockets: 2 de escuta +
-                                          // 8 WebSockets + HTTP_MAX_CONNS (4) = 14. IGUAL ao
-                                          // WEBSOCKETS_SERVER_CLIENT_MAX do platformio.ini (docs/web.md)
+#define AP_MAX_STATIONS  3                // aparelhos no AP ao mesmo tempo, o notebook incluído (o 4º é recusado).
+                                          // Com o notebook e 4 celulares, o B travou no driver Wi-Fi em todas as
+                                          // rodadas; com o notebook e até 2 celulares, nunca (27/10/2026,
+                                          // docs/cliente-python.md). Os slots do WebSocket continuam 8
+#define AP_MAX_CLIENTS   8                // WebSockets ao mesmo tempo (um aparelho pode ter mais de uma aba).
+                                          // O SDK tem 16 sockets: 2 de escuta + 8 WebSockets + HTTP_MAX_CONNS (4)
+                                          // = 14. IGUAL ao WEBSOCKETS_SERVER_CLIENT_MAX do platformio.ini
+                                          // (docs/web.md)
 #define HTTP_PORT        80
 #define WS_PORT          81
 #define HTTP_MAX_CONNS   4        // conexões HTTP atendidas ao mesmo tempo (servidor próprio; docs/web.md)
@@ -101,15 +100,9 @@
                                  // no envio há isso é derrubado antes de pausar todos (lib/heap_guard; bancada 2,
                                  // 26/10/2026: celulares saudáveis confirmam em lotes, mas progridem bem antes)
 #define WEB_HEAP_DROP_GAP_MS 250 // intervalo mínimo entre duas derrubadas da trava (a memória precisa voltar)
-// Investigação do travamento de 26/10/2026 (CORRUPT HEAP na task do driver Wi-Fi, docs/cliente-python.md): cada
-// mudança nova pode ser desligada por um ambiente de bancada (platformio.ini), sem editar código
-#ifdef BANCADA_SEM_TRAVA_NOVA
-#define WEB_HEAP_TRAVA_NOVA 0    // a trava antiga: só pausa todos
-#else
-#define WEB_HEAP_TRAVA_NOVA 1    // derruba o culpado antes de pausar (lib/heap_guard)
-#endif
 #define WEB_HEAP_CHECK_MS  100   // verificação de integridade do heap na serial_task (0 = desligada): mostra quando a
-                                 // corrupção acontece, e não só quando o driver tropeça nela
+                                 // corrupção acontece, e não só quando o driver tropeça nela (travamento do driver
+                                 // Wi-Fi com o notebook saindo e voltando ao AP, 27/10/2026: docs/cliente-python.md)
 #define WEB_PAUSE_CHECK_MS 100   // na pausa, consulta do TCP de cada cliente (progresso das confirmações)
 #define WS_MAX_INFLIGHT  3072     // bytes sem confirmação por cliente acima dos quais nada novo sai para ele
                                   // (~6 telemetrias, ~200 ms; na bancada de 24/10/2026 celulares saudáveis

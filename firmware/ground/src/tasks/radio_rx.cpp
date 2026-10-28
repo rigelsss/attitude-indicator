@@ -75,16 +75,13 @@ bool radioRxStart() {
         Serial.println("[radio] ERRO: Wi-Fi não iniciado em AP+STA; rádio desligado");
         return false;
     }
-    if (!WiFi.softAP(AP_SSID, AP_PASS, AP_CHANNEL, 0, AP_MAX_CLIENTS)) {
+    if (!WiFi.softAP(AP_SSID, AP_PASS, AP_CHANNEL, 0, AP_MAX_STATIONS)) {
         Serial.println("[radio] ERRO: AP não iniciado; rádio desligado");
         return false;
     }
     esp_wifi_set_ps(WIFI_PS_NONE);
     // Faixa do DHCP alternada a cada boot (config.h, AP_DHCP_INICIO_*): os aparelhos que voltam de um reinício do
     // B com os IPs do boot anterior não coincidem com os que o DHCP oferece agora (contorno: ver o config.h)
-    s_info.boots = 0;
-    s_info.dhcpInicio = AP_DHCP_INICIO_PAR;   // a faixa padrão do núcleo
-#if AP_DHCP_ALTERNADO
     {
         Preferences nvs;
         nvs.begin("ap", false);
@@ -98,9 +95,6 @@ bool radioRxStart() {
         Serial.printf("[ap] DHCP: 192.168.4.%u a .%u (boot %lu)\n", s_info.dhcpInicio, s_info.dhcpInicio + 10,
                       (unsigned long)s_info.boots);
     }
-#else
-    Serial.println("[ap] DHCP: faixa padrão do núcleo, sem alternar (BANCADA_SEM_DHCP_ALTERNADO)");
-#endif
     uint8_t primary = 0;
     wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
     esp_wifi_get_channel(&primary, &second);

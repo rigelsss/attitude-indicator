@@ -413,14 +413,10 @@ static bool wsPump(uint8_t num, uint32_t now) {
 // prende no máximo isso, e o que estava por sair espera (telemetria é pulada, a fila não se perde)
 static bool wsCanLoad(uint8_t num, uint32_t now) {
     const int inflight = tcpInFlight(s_ws.fd(num));
-#if WEB_HEAP_TRAVA_NOVA
     // Confirmações chegando contam como progresso antes de o valor guardado ser sobrescrito: sem isso, uma queda dos
     // bytes sem confirmação ainda acima de WS_MAX_INFLIGHT (sem escrita nova) sumia aqui, e a trava, comparando
-    // depois, via o cliente parado (revisão de 27/10/2026). Só com a trava nova: o ground_estavel fica como antes
+    // depois, via o cliente parado (revisão de 27/10/2026)
     if (heapProgressed(s_wsInFlight[num], inflight)) s_wsOkMs[num] = now;
-#else
-    (void)now;
-#endif
     s_wsInFlight[num] = inflight;
     if (inflight > s_wsInFlightMax[num]) s_wsInFlightMax[num] = inflight;
     return inflight >= 0 && inflight <= WS_MAX_INFLIGHT;
@@ -577,7 +573,6 @@ static void heapGuard(uint32_t now) {
     const uint32_t freeKb = heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024;
     HeapClient clientes[WEBSOCKETS_SERVER_CLIENT_MAX] = {};
     int n = 0;
-#if WEB_HEAP_TRAVA_NOVA
     // Com pouca memória, a consulta do TCP de cada cliente (na thread do TCP/IP) e a decisão no máximo a cada
     // WEB_PAUSE_CHECK_MS: na primeira versão, a cada volta da task, centenas de consultas por segundo com o heap baixo
     static uint32_t lastCheck = 0;
@@ -597,7 +592,6 @@ static void heapGuard(uint32_t now) {
             clientes[i].lastOkMs = s_wsOkMs[i];
         }
     }
-#endif
     const HeapDecision d = s_heapGuard.step(freeKb, now, clientes, n);
     switch (d.action) {
     case HeapAction::Drop:

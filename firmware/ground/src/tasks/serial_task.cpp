@@ -255,10 +255,9 @@ static void printState(bool streamR, bool streamA) {
                   TELEMETRY_VERSION, (unsigned)sizeof(TelemetryPacket));
     if (ri.active)
         Serial.printf("rádio: ativo | MAC STA %s (recebe) | MAC AP %s | AP \"%s\" | canal %u | peer "
-                      "%02X:%02X:%02X:%02X:%02X:%02X | DHCP .%u a .%u (%s %lu)\n",
+                      "%02X:%02X:%02X:%02X:%02X:%02X | DHCP .%u a .%u (alternado, boot %lu)\n",
                       ri.staMac, ri.apMac, AP_SSID, ri.channel, PEER_MAC[0], PEER_MAC[1], PEER_MAC[2], PEER_MAC[3],
-                      PEER_MAC[4], PEER_MAC[5], ri.dhcpInicio, ri.dhcpInicio + 10,
-                      AP_DHCP_ALTERNADO ? "alternado, boot" : "padrão, sem alternar; boot", (unsigned long)ri.boots);
+                      PEER_MAC[4], PEER_MAC[5], ri.dhcpInicio, ri.dhcpInicio + 10, (unsigned long)ri.boots);
     else
         Serial.println("rádio: DESLIGADO (falha no boot; ver as linhas [radio])");
     Serial.printf("link: timeout %d ms, ressincroniza acima de %d pacotes, fora de ordem até %d pacotes e %d ms, "
@@ -342,16 +341,16 @@ static void printState(bool streamR, bool streamA) {
                       (unsigned long)ws.cmdsOk, (unsigned long)ws.cmdsRefused, WEB_CMD_PIN[0] ? "exigido" : "desligado",
                       (unsigned long)ws.wsSkipped, (unsigned long)ws.wsResyncs, (unsigned long)ws.wsPartial,
                       (unsigned long)ws.wsDropped,
-                      WiFi.softAPgetStationNum(), AP_MAX_CLIENTS, (unsigned long)ws.httpReqs, ws.httpOpen,
+                      WiFi.softAPgetStationNum(), AP_MAX_STATIONS, (unsigned long)ws.httpReqs, ws.httpOpen,
                       HTTP_MAX_CONNS, (unsigned long)ws.httpIdle,
                       (unsigned long)ws.httpEvicted, (unsigned long)ws.httpRejected);
     if (webCurrent(ws)) {
         Serial.printf("tcp: conexões encerradas com reset %lu | trava de memória: %s, culpados derrubados %lu, pausas "
-                      "%lu, tempo pausado %lu ms (%s; abaixo de %d kB, volta acima de %d kB)\n",
+                      "%lu, tempo pausado %lu ms (derruba quem está parado, ou pausa; abaixo de %d kB, volta acima "
+                      "de %d kB)\n",
                       (unsigned long)ws.tcpResets, ws.heapPaused ? "PAUSADA" : "livre", (unsigned long)ws.wsHeapDrops,
-                      (unsigned long)ws.heapPauses, (unsigned long)ws.heapPausedMs,
-                      WEB_HEAP_TRAVA_NOVA ? "nova: derruba quem está parado, ou pausa" : "antiga: só pausa",
-                      WEB_HEAP_PAUSE_KB, WEB_HEAP_RESUME_KB);
+                      (unsigned long)ws.heapPauses, (unsigned long)ws.heapPausedMs, WEB_HEAP_PAUSE_KB,
+                      WEB_HEAP_RESUME_KB);
         heapIntegrityLine();
         for (int i = 0; i < AP_MAX_CLIENTS; i++) {
             const WsClientStat &cs = ws.ws[i];

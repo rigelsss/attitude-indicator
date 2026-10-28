@@ -47,7 +47,6 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - Diagnóstico I2C (ESP A): `pio run -e i2cscan -t upload`
 - Diagnóstico do hardware do B (LEDs, I2C, OLED, encoder, TFT, sprite): `pio run -e ground_diag -t upload`; depois, regravar o `ground`
 - B com a telemetria do WebSocket a 20 Hz (bancada 2): `pio run -e ground_ws20 -t upload`; depois, regravar o `ground`
-- Investigação do travamento do B (CORRUPT HEAP, 26/10/2026): `ground_estavel` (trava antiga e DHCP padrão), `ground_sem_trava`, `ground_sem_dhcp`; ver docs/cliente-python.md
 - Teste de pulsos falsos no INT (ESP A, tecla `F`): `pio run -e aircraft_pulsetest -t upload`; depois, regravar o `aircraft`
 - Teste do reinício da fusão com a caixa em movimento (ESP A, tecla `R`): `pio run -e aircraft_resettest -t upload`; depois, regravar o `aircraft`
 - A/B de tempo sem o Wi-Fi ligado (ESP A): `pio run -e aircraft_noradio -t upload`; depois, regravar o `aircraft`

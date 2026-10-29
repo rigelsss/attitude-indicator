@@ -15,7 +15,8 @@ Plano aprovado em 23/10/2026.
   - **link no LED azul da placa (GPIO 2)**, sem fiação;
   - **alarme no LED vermelho externo (GPIO 13, 330 Ω)**;
   - o LED verde externo (GPIO 27) saiu do projeto.
-- **Buzzer adiado:** é ativo, e não há transistor. A `alarm_task` o deixa previsto no GPIO 26 ([plano.md](plano.md), semana 4). Se a corrente medida em 3,3 V der até ~12 mA, ele pode entrar direto no GPIO.
+- **Buzzer adiado:** é ativo, e não há transistor. A `alarm_task` o deixa previsto no GPIO 26 ([plano.md](plano.md), semana 4). Se a corrente medida em 3,3 V der até ~12 mA, ele pode entrar direto no GPIO. **29/10/2026:** decidido ligar pelo BC337 ([caixa-b.md](caixa-b.md), "Buzzer").
+- **Montagem na caixa (29/10/2026, a implementar):** segundo OLED no `Wire1` com uma página fixa em cada OLED, no lugar das páginas trocadas pelo encoder, e anel de LEDs na tampa. Decisões em [caixa-b.md](caixa-b.md).
 - **Sprite de 8 bits (RGB332) para a tela inteira** (item 1 da revisão de 15/10):
   - ocupa 57,6 kB, contra 113 kB de um sprite de 16 bits, que não cabe no maior bloco livre do B (107 kB);
   - as cores ficam limitadas a 256 (escolher as que o RGB332 representa exatamente) e as fontes ficam as de bitmap (GLCD, 2 e 4), sem as suavizadas;

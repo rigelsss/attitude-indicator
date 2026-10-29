@@ -96,6 +96,7 @@ Andamento em [cliente-python.md](cliente-python.md).
 - **`valid` = 5 sem explicação** na 1ª rodada da bancada 1 (o filtro da proa sem inicializar desde o boot); na 2ª, 13. Se voltar, olhar o `c` e o `p` na serial do A.
 
 ## Opcionais (só se sobrar tempo)
+- **Caixa do B** (discutido em 29/10/2026, [caixa-b.md](caixa-b.md)): o segundo OLED e o buzzer com transistor entram antes; o **anel de LEDs na tampa é o último item do projeto**, e a proa no anel é um extra dentro dele
 - Indicador de curva (gz) e variômetro (derivada da altitude) no PFD
 - Gravação de "caixa-preta" na flash do A
 - Replay de um log CSV na página web
@@ -105,4 +106,5 @@ Andamento em [cliente-python.md](cliente-python.md).
 - Mesmo canal para o AP e o ESP-NOW (fixo em 1) — validar já na semana 3
 - O GY-273 é HMC5883L (0x1E), mas alguns módulos vendidos assim trazem um clone QMC5883L (0x0D), que usa outra biblioteca: confirmar no diagnóstico `i2cscan`
 - O magnetômetro sofre interferência de ímãs, de correntes nos fios de alimentação e da própria protoboard: calibrar já montado no modelo
-- Buzzer ativo direto no GPIO: medir a corrente; se passar de 20 mA, usar transistor
+- Buzzer ativo direto no GPIO: medir a corrente; se passar de 20 mA, usar transistor (29/10/2026: decidido usar um BC337, [caixa-b.md](caixa-b.md))
+- Power bank do B desligando sozinho por carga baixa, ou brownout pelo cabo: conferir na bancada ([caixa-b.md](caixa-b.md))

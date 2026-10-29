@@ -19,6 +19,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - `docs/radio.md`: ESP-NOW (configuração do A e do B, campos do pacote, contadores do console) e a bancada do rádio.
 - `docs/web.md`: semana 5: comandos do B para o A (camada única de comandos, ACK, reenvio), servidor web, WebSocket e página.
 - `docs/solo.md`: semana 4 do ESP B: decisões (TFT só com o horizonte, páginas do OLED pelo encoder, LEDs, sprite de 8 bits, buzzer adiado), passos, ligação e diagnóstico (`ground_diag`).
+- `docs/caixa-b.md`: montagem do B na caixa (power bank, layout e conectores da tampa, segundo OLED no `Wire1`, buzzer com BC337, anel de LEDs WS2812B, última prioridade); discutido em 29/10/2026, sem código.
 - `docs/cliente-python.md`: semana 6: cliente Python (leitura sem bloqueio, CSV, reconexão, comandos), métricas, campos `tb`/`n`/`loop_us` e `origin` do JSON, diagnóstico do Wi-Fi do PC.
 - `docs/tasks.md`: tasks do ESP A (núcleos, prioridades, filas, logger com um consumidor só) e as medições de tempo de cada passo da semana 3.
 - Antes de concluir uma etapa, atualize o doc afetado (procedimento de uso, resultados, decisões).

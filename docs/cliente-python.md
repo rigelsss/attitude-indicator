@@ -32,7 +32,7 @@ Plano aprovado em 25/10/2026.
 7. Bancada 2: vários aparelhos, `WS_RATE_HZ` 30 contra 20 (rodadas A e B feitas em 26/10/2026: 30 Hz passa; a rodada C, com o PC, não completou por um conflito de IP do DHCP do B, abaixo).
 8. Campanha de métricas (jitter do loop do A a partir dos logs existentes: feito em 27/10/2026, abaixo; falta a gravação longa com o firmware atual).
 9. Item 5 da revisão de 15/10 (reinício da fusão).
-10. Montagem no modelo: o modelo e o power bank do B ainda não estão disponíveis.
+10. Montagem no modelo: o modelo ainda não está disponível. O power bank do B foi comprado em 29/10/2026 ([caixa-b.md](caixa-b.md)).
 
 ## Passo 0: o PC sai e volta da Horizonte-ESP
 

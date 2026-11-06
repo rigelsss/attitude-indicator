@@ -1,13 +1,14 @@
-// oled_view.h — texto das duas páginas do OLED de 0,96" do ESP B (128x64; fonte 6x10: 6 linhas de 21
-// caracteres, só ASCII), montado pela oled_task a partir das cópias publicadas (docs/solo.md, passo 3).
-// Lógica pura (sem Arduino.h), testável com pio test -e native.
-//   Página 1 (dados):   ROLL/PIT, PROA (MAG ou VERD), ALT, pressão e temperatura, CURVA (gz)
-//   Página 2 (link):    estado e taxa, perdas e quedas, intervalo entre chegadas, sensores do A, calibração e
-//                       loop_us, alarme
-// A primeira linha é o título com a página ("1/2"); sem dado atual, vira uma faixa (vídeo inverso) com SEM SINAL,
-// LINK PERDIDO ou DADO ATRASADO, e os valores da página 1 vão para "---". Cada valor com a flag valid desligada também é "---":
+// oled_view.h — texto das telas dos dois OLEDs de 0,96" do ESP B (128x64; fonte 6x10: 6 linhas de 21
+// caracteres, só ASCII), montado pela oled_task a partir das cópias publicadas (docs/solo.md, passo 3; uma tela
+// fixa por OLED desde 02/11/2026, docs/caixa-b.md). Lógica pura (sem Arduino.h), testável com pio test -e native.
+//   OLED 1 (dados): ROLL/PIT, PROA (MAG ou VERD), ALT, pressão e temperatura, CURVA (gz); um "<" na última
+//                   coluna marca o alvo da pressão longa do encoder (ROLL/PIT = zerar a atitude, ALT = a altitude)
+//   OLED 2 (link):  estado e taxa, perdas e quedas, intervalo entre chegadas, sensores do A, calibração e
+//                   loop_us, alarme
+// A primeira linha é o título; sem dado atual, vira uma faixa (vídeo inverso) com SEM SINAL, LINK PERDIDO ou
+// DADO ATRASADO, e os valores dos dados vão para "---". Cada valor com a flag valid desligada também é "---":
 // nunca o último valor congelado. Pressão e temperatura seguem a VAL_ALT (leitura recente), e não só o ST_BARO_OK.
-// Atitude degradada (VAL_ATT_DEGRADED): o título da página 1 vira "ATT DEGRADADA".
+// Atitude degradada (VAL_ATT_DEGRADED): o título dos dados vira "ATT DEGRADADA".
 #pragma once
 #include <stdint.h>
 #include "command_link.h"
@@ -27,6 +28,8 @@ struct OledLinkStats {
     float    intMinMs, intAvgMs, intMaxMs;
 };
 
+enum class OledScreen : uint8_t { Data, Link };
+
 struct OledInputs {
     bool            everLinked;    // já chegou um pacote aceito
     bool            linkOk;        // o último pacote tem no máximo o timeout de idade
@@ -35,11 +38,12 @@ struct OledInputs {
     TelemetryPacket pkt;           // o último pacote aceito (vale com everLinked)
     OledLinkStats   link;
     const char     *alarmText;     // texto curto do alarme atual (alarmKindShort)
-    uint8_t         page;          // 0..pages−1
-    uint8_t         pages;
+    OledScreen      screen;
+    uint8_t         zeroTarget;    // alvo da pressão longa (CMD_ZERO_ATTITUDE ou CMD_ZERO_ALTITUDE), marcado com
+                                   // "<" nos dados; 0 sem marca
     bool            headingTrue;   // false: proa magnética (MAG); true: verdadeira (VERD), com a declinação
     float           declinationDeg;
-    const char     *footer;        // não nulo: substitui a última linha da página (andamento do comando do
+    const char     *footer;        // não nulo: substitui a última linha da tela (andamento do comando do
                                    // encoder; oledEncoderFooter)
 };
 
@@ -53,8 +57,12 @@ void oledBuildPage(const OledInputs &in, OledPage &out);
 // Rodapé do comando da pressão longa (até 21 colunas, ASCII): com o botão apertado, o que vai acontecer
 // ("segure 1s: ZERO ATT"); depois, o andamento ("ZERO ATT: ENVIADO", "ACEITO", "OK", "RECUSADO", "SEM RESP.",
 // "SEM FIM", "OCUPADO"): em curso, sempre; os finais, por showMs. nullptr sem rodapé
-const char *oledEncoderFooter(char *buf, int n, bool buttonHeld, uint8_t pageCmd, bool haveEvent, uint8_t evCmd,
+const char *oledEncoderFooter(char *buf, int n, bool buttonHeld, uint8_t targetCmd, bool haveEvent, uint8_t evCmd,
                               CmdState state, bool localFull, uint32_t ageMs, uint32_t showMs);
+
+// Alvo da pressão longa depois de um clique do encoder: com dois alvos, cada clique (nos dois sentidos) troca a
+// atitude pela altitude e vice-versa. Um alvo desconhecido volta à atitude
+uint8_t oledNextZeroTarget(uint8_t current);
 
 // Proa exibida, 0..360 (exclusive): a magnética, ou a verdadeira = magnética + declinação
 float oledHeading(float magneticDeg, bool headingTrue, float declinationDeg);

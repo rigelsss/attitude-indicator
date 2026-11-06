@@ -12,12 +12,14 @@
 #define PFD_LADDER_SPAN_DEG 25    // escala de pitch desenhada até ±isto em torno do pitch atual
 #define PFD_ROLL_RADIUS_PX 100    // raio da escala de roll (centro no avião)
 
-// ---------- I2C (OLED 0,96") ----------
-#define PIN_I2C_SDA      21
+// ---------- I2C (dois OLEDs 0,96", uma página fixa em cada; docs/caixa-b.md) ----------
+#define PIN_I2C_SDA      21       // Wire: OLED 1, à esquerda do TFT (dados)
 #define PIN_I2C_SCL      22
+#define PIN_I2C1_SDA     4        // Wire1: OLED 2, à direita do TFT (link e saúde do A). Os dois módulos ficam em
+#define PIN_I2C1_SCL     19       // 0x3C (sem o resistor de seleção), por isso um barramento para cada
 #define ADDR_OLED_DATA   0x3C
 #define OLED_I2C_FREQ_HZ 400000   // quadro de 128x64 em 32,7 ms (hardware.md, 23/10/2026)
-#define OLED_RATE_HZ     5        // redesenho; a troca de página redesenha na hora
+#define OLED_RATE_HZ     5        // redesenho de cada OLED; a troca do alvo do zero redesenha na hora
 #define OLED_RETRY_MS    5000     // OLED ausente: nova tentativa de iniciar
 #define OLED_BOOT_SCREEN_MS 1000  // tela de boot
 #define OLED_CMD_FOOTER_MS 4000  // resultado do comando da pressão longa no rodapé do OLED por este tempo
@@ -26,15 +28,14 @@
 // ---------- Encoder KY-040 (interrupção) ----------
 #define PIN_ENC_CLK      32
 #define PIN_ENC_DT       33
-#define PIN_ENC_SW       25       // botão: curto = reconhecer o alarme; longo = zerar atitude (página 1 do OLED)
-                                  // ou altitude (página 2)
+#define PIN_ENC_SW       25       // botão: curto = reconhecer o alarme; longo = zerar o alvo marcado no OLED 1
+                                  // (atitude ou altitude, trocado pelo giro)
 #define ENC_STEPS_PER_CLICK 2     // o KY-040 da bancada: 2 passos por clique, repouso em 11 e 00 (hardware.md)
-#define ENC_DIR          1        // +1: horário = próxima página; −1 inverte
+#define ENC_DIR          1        // +1: horário positivo; −1 inverte (o giro alterna o alvo nos dois sentidos)
 #define ENC_QUEUE_LEN    64       // estados lidos pela ISR até a input_task decodificar. Com 32, o repique de um
                                   // giro rápido encheu a fila uma vez (hardware.md, 23/10/2026)
 #define BTN_DEBOUNCE_MS  20       // botão: estado estável por este tempo
 #define BTN_LONG_MS      1000     // pressão longa (comandos da semana 5: não disparar sem querer)
-#define OLED_PAGES       2        // páginas do OLED trocadas pelo giro: dados; link e saúde do A
 
 // ---------- Alarmes (docs/solo.md) ----------
 #define PIN_BUZZER       26       // buzzer ativo, ADIADO (sem transistor; usar um se a corrente passar de ~12 mA)
@@ -158,7 +159,7 @@
 #define OLED_TASK_CORE          0
 #define OLED_TASK_PRIO          1
 #define OLED_TASK_STACK         4096
-#define OLED_TASK_PERIOD_MS     50     // volta da oled_task: confere a página e o tempo do redesenho
+#define OLED_TASK_PERIOD_MS     50     // volta da oled_task: confere o alvo do zero e o tempo do redesenho
 #define CMD_TASK_CORE           0
 #define CMD_TASK_PRIO           2
 #define CMD_TASK_STACK          3072

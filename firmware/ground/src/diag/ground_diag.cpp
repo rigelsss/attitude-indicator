@@ -2,8 +2,8 @@
 // do firmware: sem tasks nem rádio, cada peça testada sozinha pela serial.
 //   1  liga/desliga o LED do link (PIN_LED_LINK, o azul da placa)
 //   2  liga/desliga o LED de alarme (PIN_LED_ALARM, vermelho externo)
-//   i  scan do I2C (PIN_I2C_SDA/SCL) e conferência do OLED (ADDR_OLED_DATA)
-//   o  OLED: moldura, texto e um xadrez; mede o tempo de um quadro a DIAG_OLED_FREQ_HZ
+//   i  scan dos dois I2C (Wire: PIN_I2C_SDA/SCL; Wire1: PIN_I2C1_SDA/SCL) e conferência dos OLEDs (ADDR_OLED_DATA)
+//   o  os dois OLEDs: moldura, "OLED 1" ou "OLED 2" e um xadrez; mede o tempo de um quadro a DIAG_OLED_FREQ_HZ
 //   e  liga/desliga o fluxo do encoder: passos de quadratura (com sinal; 2 por clique no KY-040 da bancada),
 //      bordas e transições inválidas (repiques), e os
 //      eventos do botão (curto/longo), sempre impressos
@@ -24,8 +24,9 @@
 extern const char *const BUILD_STAMP;   // build_info.cpp
 
 static TFT_eSPI tft;
-static U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE, PIN_I2C_SCL, PIN_I2C_SDA);
-static bool s_tftReady = false, s_oledReady = false, s_tftInverted = false;
+static U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled1(U8G2_R0, U8X8_PIN_NONE, PIN_I2C_SCL, PIN_I2C_SDA);
+static U8G2_SSD1306_128X64_NONAME_F_2ND_HW_I2C oled2(U8G2_R0, U8X8_PIN_NONE);   // Wire1 (WIRE_INTERFACES_COUNT=2)
+static bool s_tftReady = false, s_tftInverted = false;
 static bool s_ledLink = false, s_ledAlarm = false;
 
 // ---------- Encoder: ISR de quadratura (só no diagnóstico usa attachInterrupt) ----------
@@ -98,64 +99,88 @@ static void toggleLed(int pin, bool &state, const char *name) {
     Serial.printf("[led] %s (GPIO %d): %s\n", name, pin, state ? "ACESO" : "apagado");
 }
 
-// Inicia o I2C só uma vez: um segundo Wire.begin() não muda a frequência e imprime "Bus already started".
-// A frequência é acertada a cada uso com setClock (o OLED deixa o barramento a DIAG_OLED_FREQ_HZ)
-static bool s_wireStarted = false;
+// Os dois barramentos dos OLEDs (docs/caixa-b.md): OLED 1 no Wire, OLED 2 no Wire1
+struct DiagBus {
+    TwoWire    &wire;
+    U8G2       &oled;
+    int         sda, scl;
+    const char *name;
+    bool        started, oledReady;
+};
 
-static void wireStart(uint32_t freqHz) {
-    if (!s_wireStarted) s_wireStarted = Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, freqHz);
-    Wire.setClock(freqHz);
+static DiagBus s_buses[2] = {
+    {Wire, oled1, PIN_I2C_SDA, PIN_I2C_SCL, "OLED 1 (Wire)", false, false},
+    {Wire1, oled2, PIN_I2C1_SDA, PIN_I2C1_SCL, "OLED 2 (Wire1)", false, false},
+};
+
+// Inicia cada barramento só uma vez: um segundo begin() não muda a frequência e imprime "Bus already started".
+// A frequência é acertada a cada uso com setClock (o OLED deixa o barramento a DIAG_OLED_FREQ_HZ)
+static void wireStart(DiagBus &b, uint32_t freqHz) {
+    if (!b.started) b.started = b.wire.begin(b.sda, b.scl, freqHz);
+    b.wire.setClock(freqHz);
 }
 
 static void scanI2C() {
-    wireStart(DIAG_I2C_FREQ_HZ);
-    Serial.printf("[i2c] scan em SDA %d / SCL %d a %lu Hz:\n", PIN_I2C_SDA, PIN_I2C_SCL,
-                  (unsigned long)DIAG_I2C_FREQ_HZ);
-    int found = 0;
-    bool oled = false;
-    for (uint8_t a = 0x08; a <= 0x77; a++) {
-        Wire.beginTransmission(a);
-        if (Wire.endTransmission() == 0) {
-            Serial.printf("[i2c]   0x%02X%s\n", a, a == ADDR_OLED_DATA ? " (OLED esperado)" : "");
-            found++;
-            if (a == ADDR_OLED_DATA) oled = true;
+    for (DiagBus &b : s_buses) {
+        wireStart(b, DIAG_I2C_FREQ_HZ);
+        Serial.printf("[i2c] %s: scan em SDA %d / SCL %d a %lu Hz:\n", b.name, b.sda, b.scl,
+                      (unsigned long)DIAG_I2C_FREQ_HZ);
+        int found = 0;
+        bool oled = false;
+        for (uint8_t a = 0x08; a <= 0x77; a++) {
+            b.wire.beginTransmission(a);
+            if (b.wire.endTransmission() == 0) {
+                Serial.printf("[i2c]   0x%02X%s\n", a, a == ADDR_OLED_DATA ? " (OLED esperado)" : "");
+                found++;
+                if (a == ADDR_OLED_DATA) oled = true;
+            }
         }
+        Serial.printf("[i2c] %s: %d dispositivo(s); OLED 0x%02X: %s\n", b.name, found, ADDR_OLED_DATA,
+                      oled ? "OK" : "AUSENTE");
     }
-    Serial.printf("[i2c] %d dispositivo(s); OLED 0x%02X: %s\n", found, ADDR_OLED_DATA, oled ? "OK" : "AUSENTE");
 }
 
-static void testOled() {
+static void testOled(DiagBus &b, int number) {
     // O begin() da U8g2 sempre devolve sucesso, sem conferir o ACK: a presença é conferida antes, a cada teste
-    wireStart(DIAG_I2C_FREQ_HZ);
-    Wire.beginTransmission(ADDR_OLED_DATA);
-    if (Wire.endTransmission() != 0) {
-        Serial.printf("[oled] ERRO: sem resposta em 0x%02X (fiação ou endereço; ver o i)\n", ADDR_OLED_DATA);
-        s_oledReady = false;   // na volta, inicia de novo
+    wireStart(b, DIAG_I2C_FREQ_HZ);
+    b.wire.beginTransmission(ADDR_OLED_DATA);
+    if (b.wire.endTransmission() != 0) {
+        Serial.printf("[oled] %s: ERRO: sem resposta em 0x%02X (fiação ou endereço; ver o i)\n", b.name,
+                      ADDR_OLED_DATA);
+        b.oledReady = false;   // na volta, inicia de novo
         return;
     }
-    if (!s_oledReady) {
-        oled.setI2CAddress(ADDR_OLED_DATA << 1);   // o U8g2 usa o endereço de 8 bits
-        oled.setBusClock(DIAG_OLED_FREQ_HZ);
-        // O begin() da U8g2 chama Wire.begin() com os pinos do construtor: o barramento é liberado antes, para
-        // ela o iniciar sem o aviso "Bus already started"
-        Wire.end();
-        oled.begin();
-        s_wireStarted = true;
-        s_oledReady = true;
+    if (!b.oledReady) {
+        b.oled.setI2CAddress(ADDR_OLED_DATA << 1);   // o U8g2 usa o endereço de 8 bits
+        b.oled.setBusClock(DIAG_OLED_FREQ_HZ);
+        // O begin() da U8g2 inicia o barramento: ele é liberado antes, para não haver o aviso "Bus already
+        // started". O Wire1 é iniciado pela U8g2 sem pinos: eles vão antes, por setPins
+        b.wire.end();
+        b.wire.setPins(b.sda, b.scl);
+        b.oled.begin();
+        b.started = true;
+        b.oledReady = true;
     }
-    oled.clearBuffer();
-    oled.drawFrame(0, 0, 128, 64);
-    oled.setFont(u8g2_font_6x10_tf);
-    oled.drawStr(4, 12, "ESP B - OLED");
-    oled.drawStr(4, 24, "128x64 SSD1306");
+    char title[24];
+    snprintf(title, sizeof(title), "ESP B - OLED %d", number);
+    b.oled.clearBuffer();
+    b.oled.drawFrame(0, 0, 128, 64);
+    b.oled.setFont(u8g2_font_6x10_tf);
+    b.oled.drawStr(4, 12, title);
+    b.oled.drawStr(4, 24, "128x64 SSD1306");
     for (int y = 34; y < 60; y += 4)
-        for (int x = 4 + ((y / 4) % 2) * 4; x < 124; x += 8) oled.drawBox(x, y, 4, 4);
+        for (int x = 4 + ((y / 4) % 2) * 4; x < 124; x += 8) b.oled.drawBox(x, y, 4, 4);
     const uint32_t t0 = micros();
-    oled.sendBuffer();
+    b.oled.sendBuffer();
     const uint32_t dt = micros() - t0;
-    Serial.printf("[oled] desenhado: moldura, 2 linhas de texto e um xadrez. Quadro em %lu us a %lu Hz\n",
+    Serial.printf("[oled] %s: desenhado: moldura, \"%s\" e um xadrez. Quadro em %lu us a %lu Hz\n", b.name, title,
                   (unsigned long)dt, (unsigned long)DIAG_OLED_FREQ_HZ);
-    Serial.println("[oled] confira: moldura inteira nas bordas (sem faixa de lixo nas laterais) e texto legível");
+}
+
+static void testOleds() {
+    for (int i = 0; i < 2; i++) testOled(s_buses[i], i + 1);
+    Serial.println("[oled] confira em cada um: moldura inteira nas bordas (sem faixa de lixo nas laterais), texto "
+                   "legível e o número certo (OLED 1 à esquerda, OLED 2 à direita)");
 }
 
 static void ensureTft() {
@@ -250,7 +275,7 @@ static void testSprite() {
 }
 
 static void printHelp() {
-    Serial.println("[diag] teclas: 1 = LED do link | 2 = LED de alarme | i = scan I2C | o = OLED | e = encoder | "
+    Serial.println("[diag] teclas: 1 = LED do link | 2 = LED de alarme | i = scan I2C (os dois) | o = os dois OLEDs | e = encoder | "
                    "t = TFT | v = inverter cores do TFT | s = sprite 8 bits | h = heap");
 }
 
@@ -262,8 +287,10 @@ void setup() {
     Serial.begin(115200);
     delay(500);   // tempo para o monitor reabrir depois do reset
     Serial.printf("\n[diag] ESP B — diagnóstico do hardware — compilado em %s\n", BUILD_STAMP);
-    Serial.printf("[diag] LEDs: link GPIO %d, alarme GPIO %d | I2C: SDA %d, SCL %d | encoder: CLK %d, DT %d, SW %d\n",
-                  PIN_LED_LINK, PIN_LED_ALARM, PIN_I2C_SDA, PIN_I2C_SCL, PIN_ENC_CLK, PIN_ENC_DT, PIN_ENC_SW);
+    Serial.printf("[diag] LEDs: link GPIO %d, alarme GPIO %d | I2C: OLED 1 SDA %d, SCL %d; OLED 2 SDA %d, SCL %d | "
+                  "encoder: CLK %d, DT %d, SW %d\n",
+                  PIN_LED_LINK, PIN_LED_ALARM, PIN_I2C_SDA, PIN_I2C_SCL, PIN_I2C1_SDA, PIN_I2C1_SCL, PIN_ENC_CLK,
+                  PIN_ENC_DT, PIN_ENC_SW);
     Serial.printf("[diag] TFT: MOSI %d, SCLK %d, CS %d, DC %d, RST %d\n", TFT_MOSI, TFT_SCLK, TFT_CS, TFT_DC, TFT_RST);
     pinMode(PIN_LED_LINK, OUTPUT);
     pinMode(PIN_LED_ALARM, OUTPUT);
@@ -290,7 +317,7 @@ void loop() {
         case '1': toggleLed(PIN_LED_LINK, s_ledLink, "LED do link"); break;
         case '2': toggleLed(PIN_LED_ALARM, s_ledAlarm, "LED de alarme"); break;
         case 'i': scanI2C(); break;
-        case 'o': testOled(); break;
+        case 'o': testOleds(); break;
         case 'e':
             s_encStream = !s_encStream;
             Serial.printf("[enc] fluxo %s\n", s_encStream ? "ligado (gire devagar, um clique por vez)" : "desligado");

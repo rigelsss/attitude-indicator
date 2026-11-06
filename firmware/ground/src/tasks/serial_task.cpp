@@ -58,18 +58,19 @@ static void printAlarmEvent(const AlarmEventMsg &e) {
     }
 }
 
+static const char *oledName(int i) { return i == 0 ? "dados" : "link"; }
+
 static void printInputEvent(const InputEventMsg &e) {
     switch (e.type) {
     case InputEventMsg::Click:
-        Serial.printf("[enc] %lu ms: clique %s, página %u/%d\n", (unsigned long)e.atMs,
-                      e.dir > 0 ? "horário" : "anti-horário", e.page + 1, OLED_PAGES);
+        Serial.printf("[enc] %lu ms: clique %s, alvo da pressão longa: %s\n", (unsigned long)e.atMs,
+                      e.dir > 0 ? "horário" : "anti-horário", commandText(e.target));
         break;
     case InputEventMsg::ShortPress:
         Serial.printf("[enc] %lu ms: botão curto: reconhecer o alarme\n", (unsigned long)e.atMs);
         break;
     case InputEventMsg::LongPress:
-        Serial.printf("[enc] %lu ms: pressão longa na página %u: %s\n", (unsigned long)e.atMs, e.page + 1,
-                      commandText((uint8_t)e.dir));
+        Serial.printf("[enc] %lu ms: pressão longa: %s\n", (unsigned long)e.atMs, commandText((uint8_t)e.dir));
         break;
     case InputEventMsg::AckDropped:
         Serial.printf("[enc] %lu ms: botão curto descartado: fila de reconhecimento do alarme cheia\n",
@@ -296,22 +297,29 @@ static void printState(bool streamR, bool streamA) {
         Serial.println("alarme: task não iniciada");
     InputStatus in;
     if (inputCurrent(in))
-        Serial.printf("encoder: página %u/%d | cliques horário %lu, anti-horário %lu | inválidas %lu | fila da ISR "
-                      "cheia %lu (lacunas %lu) | eventos descartados %lu\n",
-                      in.page + 1, OLED_PAGES, (unsigned long)in.clicksCw, (unsigned long)in.clicksCcw,
+        Serial.printf("encoder: alvo da pressão longa %s | cliques horário %lu, anti-horário %lu | inválidas %lu | "
+                      "fila da ISR cheia %lu (lacunas %lu) | eventos descartados %lu\n",
+                      commandText(in.target), (unsigned long)in.clicksCw, (unsigned long)in.clicksCcw,
                       (unsigned long)in.invalid, (unsigned long)in.isrDropped, (unsigned long)in.gaps,
                       (unsigned long)inputEventsDropped());
     else
         Serial.println("encoder: task não iniciada");
     OledStatus ol;
-    if (!oledCurrent(ol))
+    if (!oledCurrent(ol)) {
         Serial.println("oled: task não iniciada");
-    else if (ol.present)
-        Serial.printf("oled: presente | página %u/%d | último quadro %lu us | quadros %lu | proa %s\n", ol.page + 1,
-                      OLED_PAGES, (unsigned long)ol.frameUs, (unsigned long)ol.frames,
-                      OLED_HEADING_TRUE ? "verdadeira (VERD)" : "magnética (MAG)");
-    else
-        Serial.printf("oled: AUSENTE em 0x%02X (nova tentativa a cada %d ms)\n", ADDR_OLED_DATA, OLED_RETRY_MS);
+    } else {
+        for (int i = 0; i < OLED_COUNT; i++) {
+            const OledDisplayStatus &d = ol.d[i];
+            Serial.printf("oled %d (%s, SDA %d / SCL %d): ", i + 1, oledName(i), i == 0 ? PIN_I2C_SDA : PIN_I2C1_SDA,
+                          i == 0 ? PIN_I2C_SCL : PIN_I2C1_SCL);
+            if (d.present)
+                Serial.printf("presente | último quadro %lu us | quadros %lu\n", (unsigned long)d.frameUs,
+                              (unsigned long)d.frames);
+            else
+                Serial.printf("AUSENTE em 0x%02X (nova tentativa a cada %d ms)\n", ADDR_OLED_DATA, OLED_RETRY_MS);
+        }
+        Serial.printf("oled: proa %s\n", OLED_HEADING_TRUE ? "verdadeira (VERD)" : "magnética (MAG)");
+    }
     DisplayStatus ds;
     if (!displayCurrent(ds))
         Serial.println("tft: task não iniciada (ou ainda sem janela de 1 s)");
@@ -382,7 +390,7 @@ static void serialTask(void *) {
     uint32_t reportSeen = 0, droppedSeen = 0, alarmDroppedSeen = 0, inputDroppedSeen = 0, cmdDroppedSeen = 0,
              netDroppedSeen = 0;
     int32_t rate = 50;   // última taxa pedida pela tecla f (o A começa em TX_RATE_HZ, 50 Hz)
-    int oledSeen = -1;   // presença do OLED já avisada: −1 ainda não lida, 0 ausente, 1 presente
+    int oledSeen[OLED_COUNT] = {-1, -1};   // presença de cada OLED já avisada: −1 ainda não lida, 0 ausente, 1 presente
     uint16_t lastSeqPrinted = 0;
     bool printedAny = false;
     TickType_t lastPkt = xTaskGetTickCount();
@@ -405,10 +413,15 @@ static void serialTask(void *) {
             alarmDroppedSeen = alarmDropped;
         }
         OledStatus ol;
-        if (oledCurrent(ol) && (oledSeen < 0 || ol.present != (oledSeen == 1))) {
-            if (oledSeen >= 0 || !ol.present)   // no boot, só avisa se faltar
-                Serial.printf("[oled] %s\n", ol.present ? "presente" : "AUSENTE: sem resposta em 0x3C");
-            oledSeen = ol.present ? 1 : 0;
+        if (oledCurrent(ol)) {
+            for (int i = 0; i < OLED_COUNT; i++) {
+                const bool present = ol.d[i].present;
+                if (oledSeen[i] >= 0 && present == (oledSeen[i] == 1)) continue;
+                if (oledSeen[i] >= 0 || !present)   // no boot, só avisa se faltar
+                    Serial.printf("[oled] OLED %d (%s): %s\n", i + 1, oledName(i),
+                                  present ? "presente" : "AUSENTE: sem resposta em 0x3C");
+                oledSeen[i] = present ? 1 : 0;
+            }
         }
         CmdEventMsg ce;
         while (commandEventReceive(ce)) printCommandEvent(ce);

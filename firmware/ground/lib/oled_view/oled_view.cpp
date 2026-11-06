@@ -25,14 +25,12 @@ static void setLine(OledPage &out, int row, const char *text) {
     snprintf(out.lines[row], sizeof(out.lines[row]), "%s", text);   // corta em OLED_COLS
 }
 
-// Título à esquerda e "p/N" na coluna da direita
-static void title(OledPage &out, const char *text, const OledInputs &in) {
-    char pg[8];
-    snprintf(pg, sizeof(pg), "%u/%u", (unsigned)(in.page + 1), (unsigned)in.pages);
-    char line[OLED_COLS + 1];
-    const int pgLen = (int)strlen(pg);
-    snprintf(line, sizeof(line), "%-*.*s%s", OLED_COLS - pgLen, OLED_COLS - pgLen, text, pg);
-    setLine(out, 0, line);
+// Marca "<" na última coluna (a linha mais larga dos dados, a do ROLL, tem 20 colunas)
+static void markRow(OledPage &out, int row) {
+    char *l = out.lines[row];
+    for (int c = (int)strlen(l); c < OLED_COLS; c++) l[c] = ' ';
+    l[OLED_COLS - 1] = '<';
+    l[OLED_COLS] = '\0';
 }
 
 // Título da faixa sem dado atual
@@ -50,7 +48,7 @@ static void buildData(const OledInputs &in, OledPage &out) {
 
     // Atitude degradada (giroscópio saturou, correção se recuperando): no título, para não parecer a normal
     const bool degraded = att && (p.valid & VAL_ATT_DEGRADED);
-    title(out, have ? (degraded ? "ATT DEGRADADA" : "DADOS") : noDataTitle(in), in);
+    setLine(out, 0, have ? (degraded ? "ATT DEGRADADA" : "DADOS") : noDataTitle(in));
     out.banner = !have;
 
     if (att) {
@@ -108,7 +106,7 @@ static void buildLink(const OledInputs &in, OledPage &out) {
 
     if (have && in.link.valid) snprintf(line, sizeof(line), "LINK OK %lu/s", (unsigned long)in.link.recPerS);
     else snprintf(line, sizeof(line), "%s", have ? "LINK OK" : noDataTitle(in));
-    title(out, line, in);
+    setLine(out, 0, line);
     out.banner = !have;
 
     // Compacto para caber com os valores da bancada (1 049 perdidos, 17 %, 11 quedas: "perd 1049 17.0% q11")
@@ -157,17 +155,26 @@ static void buildLink(const OledInputs &in, OledPage &out) {
 
 void oledBuildPage(const OledInputs &in, OledPage &out) {
     memset(&out, 0, sizeof(out));
-    if (in.page == 0) buildData(in, out);
-    else buildLink(in, out);
+    if (in.screen == OledScreen::Data) {
+        buildData(in, out);
+        if (in.zeroTarget == CMD_ZERO_ATTITUDE) markRow(out, 1);
+        else if (in.zeroTarget == CMD_ZERO_ALTITUDE) markRow(out, 3);
+    } else {
+        buildLink(in, out);
+    }
     if (in.footer != nullptr) setLine(out, OLED_ROWS - 1, in.footer);
+}
+
+uint8_t oledNextZeroTarget(uint8_t current) {
+    return current == CMD_ZERO_ATTITUDE ? CMD_ZERO_ALTITUDE : CMD_ZERO_ATTITUDE;
 }
 
 static const char *zeroLabel(uint8_t cmd) { return cmd == CMD_ZERO_ATTITUDE ? "ZERO ATT" : "ZERO ALT"; }
 
-const char *oledEncoderFooter(char *buf, int n, bool buttonHeld, uint8_t pageCmd, bool haveEvent, uint8_t evCmd,
+const char *oledEncoderFooter(char *buf, int n, bool buttonHeld, uint8_t targetCmd, bool haveEvent, uint8_t evCmd,
                               CmdState state, bool localFull, uint32_t ageMs, uint32_t showMs) {
     if (buttonHeld) {
-        snprintf(buf, n, "segure 1s: %s", zeroLabel(pageCmd));
+        snprintf(buf, n, "segure 1s: %s", zeroLabel(targetCmd));
         return buf;
     }
     if (!haveEvent) return nullptr;

@@ -8,6 +8,7 @@
 #include "command_task.h"
 #include "config.h"
 #include "encoder_decode.h"
+#include "oled_view.h"
 
 static_assert(PIN_ENC_CLK >= 32 && PIN_ENC_DT >= 32, "a ISR lê o encoder pelo GPIO_IN1 (pinos 32 a 39)");
 
@@ -44,8 +45,8 @@ static void IRAM_ATTR onEncoder(void *) {
     if (woke) portYIELD_FROM_ISR();
 }
 
-static void publish(InputEventMsg::Type type, int8_t dir, uint8_t page) {
-    const InputEventMsg e = {type, dir, page, millis()};
+static void publish(InputEventMsg::Type type, int8_t dir, uint8_t target) {
+    const InputEventMsg e = {type, dir, target, millis()};
     if (xQueueSend(s_events, &e, 0) != pdTRUE) s_eventsDropped.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -54,7 +55,9 @@ static bool setupPins() {
     gpio_config_t io = {};
     io.pin_bit_mask = (1ULL << PIN_ENC_CLK) | (1ULL << PIN_ENC_DT);
     io.mode = GPIO_MODE_INPUT;
-    io.pull_up_en = GPIO_PULLUP_DISABLE;   // o KY-040 tem pull-ups no CLK e no DT (alimentado em 3V3)
+    // Pull-up interno (~45 kΩ) mesmo com os 10 kΩ do KY-040 (os dois no 3V3): sem o módulo, o CLK e o DT soltos
+    // captavam a rede de 60 Hz e a ISR disparava sem parar (cliques falsos a cada ~8 ms; hardware.md, 02/11/2026)
+    io.pull_up_en = GPIO_PULLUP_ENABLE;
     io.pull_down_en = GPIO_PULLDOWN_DISABLE;
     io.intr_type = GPIO_INTR_ANYEDGE;
     esp_err_t err = gpio_config(&io);
@@ -80,6 +83,7 @@ static void inputTask(void *) {
     EncoderDecoder dec(cfg, encState());
     ButtonDebounce btn(BTN_DEBOUNCE_MS, BTN_LONG_MS);
     InputStatus st = {};
+    st.target = CMD_ZERO_ATTITUDE;
     for (;;) {
         uint8_t s;
         if (xQueueReceive(s_encQueue, &s, pdMS_TO_TICKS(INPUT_TASK_WAIT_MS)) == pdTRUE) {
@@ -91,24 +95,23 @@ static void inputTask(void *) {
                 }
                 const int8_t click = dec.feed(s);
                 if (click != 0) {
-                    st.page = (uint8_t)((st.page + OLED_PAGES + click) % OLED_PAGES);
+                    st.target = oledNextZeroTarget(st.target);
                     (click > 0 ? st.clicksCw : st.clicksCcw)++;
-                    publish(InputEventMsg::Click, click, st.page);
+                    publish(InputEventMsg::Click, click, st.target);
                 }
             } while (xQueueReceive(s_encQueue, &s, 0) == pdTRUE);
         }
         switch (btn.update(digitalRead(PIN_ENC_SW) == LOW, millis())) {
         case ButtonEvent::Short:
-            publish(InputEventMsg::ShortPress, 0, st.page);
+            publish(InputEventMsg::ShortPress, 0, st.target);
             // A alarm_task avisa "reconhecido" ou "nada a reconhecer"; com a fila dela cheia, o pedido não chega
-            if (!alarmAcknowledge()) publish(InputEventMsg::AckDropped, 0, st.page);
+            if (!alarmAcknowledge()) publish(InputEventMsg::AckDropped, 0, st.target);
             break;
         case ButtonEvent::Long: {
-            // Pressão longa conforme a página do OLED: dados = zerar a atitude; link = zerar a altitude
-            // (docs/web.md). A serial e o OLED mostram o andamento do comando
-            const uint8_t cmd = encoderLongPressCommand(st.page);
-            publish(InputEventMsg::LongPress, (int8_t)cmd, st.page);
-            if (!commandSubmit(cmd, 0, CMD_FROM_ENCODER)) publish(InputEventMsg::CmdDropped, (int8_t)cmd, st.page);
+            // Pressão longa: zera o alvo marcado no OLED 1 (docs/web.md). A serial e o OLED 1 mostram o andamento
+            const uint8_t cmd = st.target;
+            publish(InputEventMsg::LongPress, (int8_t)cmd, st.target);
+            if (!commandSubmit(cmd, 0, CMD_FROM_ENCODER)) publish(InputEventMsg::CmdDropped, (int8_t)cmd, st.target);
             break;
         }
         case ButtonEvent::None: break;
@@ -131,8 +134,6 @@ bool inputTaskStart() {
     while (!s_startDone) vTaskDelay(1);   // a task configura os pinos e a ISR no próprio núcleo
     return s_startOk;
 }
-
-uint8_t encoderLongPressCommand(uint8_t page) { return page == 0 ? CMD_ZERO_ATTITUDE : CMD_ZERO_ALTITUDE; }
 
 bool inputEventReceive(InputEventMsg &out) { return s_events != nullptr && xQueueReceive(s_events, &out, 0) == pdTRUE; }
 

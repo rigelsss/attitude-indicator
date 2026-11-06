@@ -1,22 +1,22 @@
 # ESP B: horizonte no TFT, OLED, encoder e alarmes
 
-Semana 4 do [plano.md](plano.md). O B já recebe a telemetria e conta perdas e quedas do link ([radio.md](radio.md), "ESP B"). Nesta etapa, ele passa a mostrar o horizonte no TFT e os dados no OLED, a trocar de página pelo encoder e a avisar com o LED de alarme. Ele nunca mostra um dado velho ou inválido como atual.
+Semana 4 do [plano.md](plano.md). O B já recebe a telemetria e conta perdas e quedas do link ([radio.md](radio.md), "ESP B"). Nesta etapa, ele passa a mostrar o horizonte no TFT e os dados no OLED, a trocar de página pelo encoder e a avisar com o LED de alarme. **Desde 02/11/2026, são dois OLEDs com uma tela fixa cada** (dados e link), e o giro do encoder escolhe o que a pressão longa zera ([caixa-b.md](caixa-b.md), "Segundo OLED"). Ele nunca mostra um dado velho ou inválido como atual.
 
 Plano aprovado em 23/10/2026.
 
 ## Decisões
 
 - **TFT só com o horizonte** (opção b): céu e terra girando com o roll, escala de pitch, marca de roll, proa e altitude em números e um indicador pequeno do link. Com a atitude inválida ou o dado velho, o horizonte fica riscado, com "SEM LINK" ou "ATT INVÁLIDA". Uma tela de números grandes no TFT pode entrar na folga da semana 7, sem retrabalho.
-- **OLED com páginas, trocadas pelo giro do encoder:**
-  1. dados: roll, pitch, proa (MAG ou VERD, com a declinação), altitude, pressão, temperatura e taxa de curva (`gz`); `---` com a flag `valid` desligada;
-  2. link e saúde do A: estado, recebidos por segundo, perdidos (janela e % total), quedas, atrasados, intervalo entre chegadas, atraso estimado, sensores do A (`status`), calibração em curso e `loop_us`.
-- **Botão do encoder:** a pressão curta reconhece o alarme (o LED para de piscar e fica aceso enquanto a condição durar). A pressão longa, desde a semana 5, zera a atitude na página 1 do OLED e a altitude na página 2 ([web.md](web.md)).
+- **Duas telas de OLED** (até 02/11/2026, duas páginas num OLED só, trocadas pelo giro do encoder; desde então, um OLED para cada tela):
+  1. dados (OLED 1): roll, pitch, proa (MAG ou VERD, com a declinação), altitude, pressão, temperatura e taxa de curva (`gz`); `---` com a flag `valid` desligada;
+  2. link e saúde do A (OLED 2): estado, recebidos por segundo, perdidos (janela e % total), quedas, atrasados, intervalo entre chegadas, atraso estimado, sensores do A (`status`), calibração em curso e `loop_us`.
+- **Botão do encoder:** a pressão curta reconhece o alarme (o LED para de piscar e fica aceso enquanto a condição durar). A pressão longa, desde a semana 5, zerava a atitude na página 1 do OLED e a altitude na página 2 ([web.md](web.md)). **Desde 02/11/2026,** ela zera o alvo marcado com `<` no OLED 1 (ROLL/PIT = atitude, ALT = altitude), e cada clique do giro troca o alvo.
 - **LEDs, o meio-termo:**
   - **link no LED azul da placa (GPIO 2)**, sem fiação;
   - **alarme no LED vermelho externo (GPIO 13, 330 Ω)**;
   - o LED verde externo (GPIO 27) saiu do projeto.
 - **Buzzer adiado:** é ativo, e não há transistor. A `alarm_task` o deixa previsto no GPIO 26 ([plano.md](plano.md), semana 4). Se a corrente medida em 3,3 V der até ~12 mA, ele pode entrar direto no GPIO. **29/10/2026:** decidido ligar pelo BC337 ([caixa-b.md](caixa-b.md), "Buzzer").
-- **Montagem na caixa (29/10/2026, a implementar):** segundo OLED no `Wire1` com uma página fixa em cada OLED, no lugar das páginas trocadas pelo encoder, e anel de LEDs na tampa. Decisões em [caixa-b.md](caixa-b.md).
+- **Montagem na caixa (29/10/2026):** segundo OLED no `Wire1` com uma página fixa em cada OLED, no lugar das páginas trocadas pelo encoder, e anel de LEDs na tampa. Decisões em [caixa-b.md](caixa-b.md). **O segundo OLED foi implementado em 02/11/2026** (compilado e com testes `native`; bancada a fazer); o anel de LEDs continua por fazer.
 - **Sprite de 8 bits (RGB332) para a tela inteira** (item 1 da revisão de 15/10):
   - ocupa 57,6 kB, contra 113 kB de um sprite de 16 bits, que não cabe no maior bloco livre do B (107 kB);
   - as cores ficam limitadas a 256 (escolher as que o RGB332 representa exatamente) e as fontes ficam as de bitmap (GLCD, 2 e 4), sem as suavizadas;
@@ -49,8 +49,9 @@ Na NodeMCU-32S, o LED de alarme e o encoder ficam no lado esquerdo, e o TFT e o 
 |---|---|---|---|
 | LED vermelho (alarme) | ânodo (perna longa) | GPIO 13, via 330 Ω | cátodo no GND |
 | LED do link | — | GPIO 2 | o LED azul da placa, sem fiação |
-| OLED 0,96" | VCC / GND / SCL / SDA | 3V3 / GND / 22 / 21 | endereço esperado `0x3C` |
-| Encoder KY-040 | + / GND / CLK / DT / SW | **3V3** / GND / 32 / 33 / 25 | nunca 5 V: os pull-ups do módulo levariam os 5 V ao GPIO. O botão usa o pull-up interno |
+| OLED 1 0,96" (dados) | VCC / GND / SCL / SDA | 3V3 / GND / 22 / 21 | `Wire`, endereço esperado `0x3C` |
+| OLED 2 0,96" (link) | VCC / GND / SCL / SDA | 3V3 / GND / 19 / 4 | `Wire1`, também em `0x3C` (o módulo não tem o resistor de seleção; 02/11/2026, [caixa-b.md](caixa-b.md)) |
+| Encoder KY-040 | + / GND / CLK / DT / SW | **3V3** / GND / 32 / 33 / 25 | nunca 5 V: os pull-ups do módulo levariam os 5 V ao GPIO. O botão usa o pull-up interno; no firmware, o CLK e o DT também, desde 02/11/2026 (com o módulo desligado, os pinos soltos geravam cliques falsos; [hardware.md](hardware.md)) |
 | TFT ST7789 240×240 | VCC / GND | 3V3 / GND | |
 | | SCL / SDA | 18 / 23 | clock e dado do **SPI**, e não I2C |
 | | RES / DC / CS | 17 / 16 / 5 | o GPIO 5 é pino de strapping; o CS do TFT é só entrada e não deve atrapalhar o boot (item 13 da revisão, conferir na bancada) |
@@ -67,8 +68,8 @@ Separado do firmware, em `src/diag/`, sem tasks, como o `i2cscan` do A. Também 
 | Tecla | Teste |
 |---|---|
 | `1` / `2` | liga e desliga o LED do link (GPIO 2) e o de alarme (GPIO 13) |
-| `i` | scan do I2C (21/22) e conferência do `0x3C` |
-| `o` | OLED: texto e um padrão de pixels |
+| `i` | scan dos dois barramentos I2C (`Wire` 21/22 e `Wire1` 4/19) e conferência do `0x3C` em cada um |
+| `o` | OLEDs: texto ("ESP B - OLED 1" e "ESP B - OLED 2", cada um no seu display) e um padrão de pixels |
 | `e` | fluxo do encoder: contagem, sentido, botão (curto/longo) e repiques descartados |
 | `t` | TFT: cores cheias, texto e tempo para mandar uma tela inteira |
 | `s` | sprite de 8 bits 240×240: cria, desenha, envia, mede o tempo e mostra o heap antes e depois |
@@ -119,39 +120,43 @@ Os resultados vão para o [hardware.md](hardware.md).
   - uma **ISR em IRAM**, registrada pelo ESP-IDF (`gpio_isr_handler_add`, como a do INT no A), dispara nas duas bordas do CLK e do DT, lê os dois pinos numa só leitura do `GPIO_IN1` e **só enfileira** o estado (fila de `ENC_QUEUE_LEN` = 64; com 32, o repique de um giro rápido a encheu uma vez). Com a fila cheia, conta o descarte;
   - a task decodifica: cada transição válida soma ±1, e um clique sai quando a soma chega a ±2 num repouso (`11` ou `00`). O repique (ida e volta) se cancela. A transição que pula um estado é contada como inválida e **zera a soma**: a contagem só recomeça no próximo repouso, e um passo parcial não se junta a passos do outro lado dela (revisão de 23/10/2026). O sentido vem de `ENC_DIR` (horário positivo);
   - **lacuna na fila:** com a fila cheia, a ISR descarta o estado e, no primeiro item que couber depois, enfileira um **marcador de lacuna**. O marcador é copiado na pilha da ISR antes de entrar na fila: uma constante em `.flash.rodata` não pode ser lida com o cache desligado, como durante uma gravação na flash (conferido no binário: `movi` para a pilha, sem leitura da flash). A task ressincroniza exatamente ali: descarta o clique parcial e recomeça no próximo repouso. Sem isso, estados perdidos podiam inverter o sentido (um giro horário lido como 11 → 10 → 00 vira um clique anti-horário), e não só perder um clique;
-  - **cada clique troca a página do OLED** (horário = próxima, anti-horário = anterior, dando a volta em `OLED_PAGES` = 2). A página fica numa caixa de correio, lida pela `oled_task` no passo 3.
+  - **cada clique troca o alvo da pressão longa** (`oledNextZeroTarget`): atitude ↔ altitude, nos dois sentidos, começando pela atitude no boot. O alvo fica numa caixa de correio, lida pela `oled_task`, que o marca com `<` no OLED 1. Até 02/11/2026, cada clique trocava a página do OLED (horário = próxima, dando a volta em `OLED_PAGES` = 2).
+  - **pull-up interno no CLK e no DT** (02/11/2026), além dos 10 kΩ do módulo: sem o encoder, os pinos soltos captavam a rede de 60 Hz e geravam ~120 cliques/s ([hardware.md](hardware.md), "Encoder desligado"). O `ground_diag` fica sem ele, para não mascarar um `+` do módulo solto.
 - **Botão, por consulta periódica** (decisão de 23/10/2026, no lugar da interrupção prevista): a task o lê a cada 5 ms, com 20 ms de estabilidade. Uma interrupção receberia dezenas de bordas por aperto, por causa do repique.
   - **curto** (solto antes de 1 s): reconhece o alarme, o mesmo caminho da tecla `k`. Com a fila de reconhecimento cheia, a serial avisa `botão curto descartado`;
   - **longo** (`BTN_LONG_MS` = 1 s, avisado ainda com o botão apertado, sem curto ao soltar): reservado para os comandos da semana 5. Um segundo, e não os 600 ms do diagnóstico, para os comandos de calibração não dispararem sem querer.
-- **Console:** `[enc] clique horário, página 2/2`, `[enc] botão curto: reconhecer o alarme`, `[enc] pressão longa (reservada …)`. O `c` mostra a página, os cliques de cada sentido, as transições inválidas, a fila da ISR cheia (com as lacunas tratadas) e os eventos descartados.
+- **Console:** `[enc] clique horário, alvo da pressão longa: zerar altitude`, `[enc] botão curto: reconhecer o alarme`, `[enc] pressão longa: zerar atitude`. O `c` mostra o alvo da pressão longa, os cliques de cada sentido, as transições inválidas, a fila da ISR cheia (com as lacunas tratadas) e os eventos descartados.
 
 ## Passo 3: OLED
 
-`lib/oled_view` (testes `native`) e `src/tasks/oled_task.cpp` (núcleo 0, prioridade 1). A task é a **única dona do `Wire`**: o OLED é o único dispositivo no I2C do B.
+`lib/oled_view` (testes `native`) e `src/tasks/oled_task.cpp` (núcleo 0, prioridade 1). A task é a **única dona do `Wire` e do `Wire1`**: cada OLED é o único dispositivo no seu barramento.
 
-- **Duas páginas**, trocadas pelo giro do encoder. Fonte 6×10: 6 linhas de 21 caracteres, só ASCII.
+- **Duas telas fixas, uma em cada OLED** (desde 02/11/2026; antes, duas páginas num OLED, trocadas pelo giro do encoder, com `1/2` e `2/2` no título). Fonte 6×10: 6 linhas de 21 caracteres, só ASCII. No OLED 1, um `<` na última coluna marca o alvo da pressão longa (aqui, a atitude):
 
   ```
-  DADOS             1/2      LINK OK 50/s      2/2
-  ROLL +12.3 PIT  -4.5      perd 1 0.02% q0
-  PROA 095 MAG              interv 12/20/28 ms
+  OLED 1 (Wire)             OLED 2 (Wire1)
+  DADOS                     LINK OK 50/s
+  ROLL +12.3 PIT  -4.5<     perd 1 0.02% q0
+  PROA 095 MAG              int 12/20/28 at 0
   ALT  +0.25 m              MPU ok BAR ok MAG ok
   1009.3hPa  25.9C          cal: - loop 180us
   CURVA   +3.2 g/s          ALARME nenhum
   ```
 
 - **Regras de exibição:**
-  - sem link (antes do primeiro pacote, ou idade acima de `LINK_TIMEOUT_MS`): o título vira uma faixa em vídeo inverso, `SEM SINAL` ou `LINK PERDIDO`, e os valores da página 1 vão para `---`. A página 2 mantém as estatísticas e a saúde do A do último pacote (`?` antes do primeiro);
+  - sem link (antes do primeiro pacote, ou idade acima de `LINK_TIMEOUT_MS`): o título vira uma faixa em vídeo inverso, `SEM SINAL` ou `LINK PERDIDO`, e os valores dos dados vão para `---` (a marca `<` continua). A tela do link mantém as estatísticas e a saúde do A do último pacote (`?` antes do primeiro);
   - `VAL_ATT` desligada, ou ângulo não finito: roll, pitch e curva em `---`. `VAL_HDG`: proa. `VAL_ALT`: altitude **e também pressão e temperatura** (revisão de 23/10/2026). O `ST_BARO_OK` só diz que o sensor responde; a `VAL_ALT` inclui a idade da leitura, e uma pressão parada não fica na tela. Consequência aceita: pressão e temperatura só aparecem depois do zero da altitude, ~4 s depois do boot do A. Mostrá-las antes exigiria uma flag de leitura recente no contrato;
-  - `VAL_ATT_DEGRADED` (giroscópio saturou, correção se recuperando): o título da página 1 vira `ATT DEGRADADA`, para a atitude não parecer a normal;
+  - `VAL_ATT_DEGRADED` (giroscópio saturou, correção se recuperando): o título dos dados vira `ATT DEGRADADA`, para a atitude não parecer a normal;
   - `VAL_HDG_GYRO_ONLY`: proa com `~` (`095~MAG`), porque segue só pelo giroscópio e pode derivar;
-  - `ST_CALIBRATING`: `cal: SIM` na página 2.
+  - `ST_CALIBRATING`: `cal: SIM` na tela do link.
 - **Proa magnética (MAG)**, como nos instrumentos de cabine (decisão de 23/10/2026). `OLED_HEADING_TRUE 1` mostra a verdadeira (VERD = magnética + `MAG_DECLINATION_DEG`, −20,7° na bancada).
 - **Linhas compactas para caber com os valores reais:** as perdas como `perd 1049 17.0% q11` (a rodada de distância de 23/10 deu 1 049 perdidos, 17 % e 11 quedas) e a calibração como `cal: SIM` (com `loop 65535us`, `EM CURSO` passaria de 21 colunas). Os testes conferem as linhas com os valores extremos.
-- **Atualização:** a task dá uma volta a cada 50 ms e redesenha a 5 Hz (`OLED_RATE_HZ`) ou **logo que a página muda**. As chamadas de atualização somam ~164 ms por segundo.
-- **Presença:** o endereço `0x3C` é conferido antes de iniciar e antes de cada quadro (o `sendBuffer` da U8g2 não informa erro). Ausente, a task tenta iniciar de novo a cada `OLED_RETRY_MS` (5 s). A serial avisa `[oled] AUSENTE` e `[oled] presente`; o `c` mostra a página, o último quadro e o total de quadros.
-- **Tela de boot:** `Horizonte - ESP B` / `aguardando o A`, por 1 s.
-- **No passo 4**, o atraso estimado do dado entra na página 2.
+- **Atualização:** a task dá uma volta a cada 50 ms e redesenha cada OLED a 5 Hz (`OLED_RATE_HZ`), um depois do outro (~65 ms dos 200 ms); o OLED 1 também **logo que o alvo da pressão longa muda**. Numa volta em que algum OLED redesenha, a task lê uma vez as cópias publicadas (link, resumo, alarme), e os dois usam o mesmo retrato (06/11/2026). Com os dois, as chamadas de atualização somam ~330 ms por segundo (~164 ms com um OLED só).
+- **Rodapé do comando** (só no OLED 1): com o botão apertado, `segure 1s: ZERO ATT` (ou `ALT`); depois, o andamento (`ENVIADO`, `ACEITO`, `OK`, `RECUSADO`…) na última linha.
+- **Presença, por OLED:** o endereço `0x3C` é conferido antes de iniciar e antes de cada quadro (o `sendBuffer` da U8g2 não informa erro). Ausente, a task tenta iniciar de novo aquele OLED a cada `OLED_RETRY_MS` (5 s), sem afetar o outro; sem o OLED 2, o B funciona só com os dados no OLED 1. A serial avisa `[oled] OLED 2 (link): AUSENTE: sem resposta em 0x3C` e `[oled] OLED 2 (link): presente`; o `c` mostra uma linha por OLED (`oled 1 (dados, SDA 21 / SCL 22): presente | último quadro … us | quadros …`).
+- **`Wire1` na U8g2:** a classe `…_2ND_HW_I2C` só envia com `-D WIRE_INTERFACES_COUNT=2` no `platformio.ini` (sem ele, compila e não envia nada; [tasks.md](tasks.md)). Ela inicia o `Wire1` sem pinos, por isso a task passa os pinos antes, por `setPins`.
+- **Tela de boot:** `Horizonte - ESP B` / `OLED 1: dados` (ou `OLED 2: link`), por 1 s.
+- **No passo 4**, o atraso estimado do dado entra na tela do link.
 
 ## Passo 4: atraso dos pacotes
 
@@ -165,10 +170,10 @@ Pendência da semana 3 ([radio.md](radio.md), "Passo 5"): com o link ruim, os pa
   - A `link_task` calcula o atraso e o publica junto com o pacote (`RxItem.delayMs`).
   - **Idade estimada do dado acima de `LINK_STALE_DELAY_MS` (250 ms, metade do timeout): dado atrasado**, tratado como sem dado atual. A idade é o atraso na chegada **mais** o tempo desde a chegada (`dataAgeMs`; revisão de 23/10/2026): 240 ms de atraso seguidos de 490 ms sem pacote novo dão 730 ms, embora cada parte, sozinha, passasse pelos limites. **Consequência:** numa queda do link, o `DADO ATRASADO` aparece aos 250 ms sem pacote, e o `LINK PERDIDO` aos 500 ms;
     - alarme **`DADO ATRASADO`**, no ritmo do link perdido (1 Hz), logo abaixo dele na prioridade. O LED do link continua aceso, porque o link está vivo;
-    - OLED com a faixa `DADO ATRASADO` e `---` na página 1;
+    - OLED com a faixa `DADO ATRASADO` e `---` nos dados;
     - o TFT, no passo 5, segue a mesma regra.
   - **Console do B:** o `r` mostra `atraso N (máx N) ms`; o `a`, o atraso de cada pacote; o `c`, o limite e a janela. Para não confundir, o pacote que chega depois de um mais novo passou a aparecer como `fora de ordem` (antes, `atrasados`).
-  - **OLED, página 2:** a linha do intervalo virou `int 12/20/28 at 3` (mín/médio/máx do intervalo; "at" = atraso do último pacote, em ms). O atraso sempre aparece inteiro: se a linha não couber, o intervalo vira mín-máx (`int 100-400 at 412`).
+  - **OLED, tela do link:** a linha do intervalo virou `int 12/20/28 at 3` (mín/médio/máx do intervalo; "at" = atraso do último pacote, em ms). O atraso sempre aparece inteiro: se a linha não couber, o intervalo vira mín-máx (`int 100-400 at 412`).
 - **Regravar os dois:** o A (pela USB, com o B desconectado) e o B.
 - **Bancada** ([hardware.md](hardware.md), "Atraso dos pacotes"): sem o B, o A envia ~29/s e pula ~21/s, com 0 erros de envio (antes, ~10/s). No trajeto até a varanda, o **atraso máximo foi de 76 ms** (antes, ~1 s), sem rajadas longas e sem `DADO ATRASADO`.
 

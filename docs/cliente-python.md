@@ -347,6 +347,25 @@ Olhando as figuras (o guia pede olhar o resultado, não só os números): os ró
 
 135 testes no total.
 
+### Gráficos ao vivo engasgando (revisão de 02/11/2026)
+
+Nas rodadas de 27/10, os gráficos ao vivo pareceram com defeito. Duas causas possíveis foram separadas simulando o modo ao vivo com os CSV `261027-212245`, `-214101` e `-220028`, atualização por atualização, a cada 0,25 s, como o `graficos.py` faz:
+
+- **B reiniciando (`tb`, `n` e `lost` voltando a zero): tratado.** Os CSV têm 9 reinícios do B. O atraso B → PC recomeça (nenhum valor acima de 5 s), as perdas não ficam negativas e as puladas recomeçam.
+- **Rede ruim: aparece, mas o desenho está certo.** Os buracos, a taxa caindo a 0 e os atrasos de até 2,6 s são os dados reais: sem conexão e pausas da trava de memória.
+- **Defeito: redesenho inútil do fundo.** O `_escala_nova` (`horizonte/figuras.py`) devolvia uma escala "nova" igual à atual quando os dados estavam fora do centro de uma escala ampliada que precisa incluir a mínima. É o caso da altitude oscilando entre +0,2 e +0,65 m, com a escala de −0,5 a +0,72 m, e também do painel de atrasos. A cada atualização, isso redesenhava a figura inteira (~180 ms, contra ~12 ms do desenho rápido).
+  - **Correção:** o `_escala_nova` devolve `None` quando a escala calculada é igual à atual. Dois casos novos em `test_figuras.py`.
+
+| CSV | Redesenhos do fundo, antes → depois | Tempo por atualização (p90), antes → depois |
+|---|---|---|
+| `212245` (2 304 atualizações) | 404 → 94 | 176 → 14 ms |
+| `214101` (3 265) | 561 → 105 | 187 → 16 ms |
+| `220028` (2 286) | 839 → 123 | 187 → 21 ms |
+
+Os redesenhos que sobram são mudanças reais de escala (picos de atraso, altitude, perdas).
+
+O `261027-230531-tel.csv` está vazio: é de um cliente aberto que nunca conectou. No modo ao vivo, o `graficos.py` segue o CSV mais novo da pasta e mostraria um painel vazio, o que é o comportamento esperado.
+
 ## Bancada 2: preparação (26/10/2026)
 
 **Objetivo:** com vários aparelhos ao mesmo tempo, medir as perdas no rádio A → B, as pausas da trava de memória do B e o efeito de um aparelho que some nos outros, a 30 e a 20 Hz de telemetria no WebSocket. Critério do plano: perdas A → B ≤ 0,5 % com todos conectados; se 30 Hz não passar e 20 Hz passar, fica 20. Os números também decidem a melhoria da trava de memória ([plano.md](plano.md), "Pendências da semana 6").
@@ -444,7 +463,25 @@ Nos logs que já existiam (as rodadas "r e a juntos" do [tasks.md](tasks.md), ~8
 - **O atraso do pulso até a leitura** fica em ~110 µs, com o máximo abaixo de 125 µs, com e sem o rádio e o OLED.
 - **O custo do filtro** mostra o efeito do layout da flash e da correção pela IRAM (`HOT_PATH`), já registrado no [tasks.md](tasks.md): 28 → 145 → 53 µs de média.
 - O `loop_us` da telemetria (pulso → fim da fusão, ~1 ms, bancada 1) inclui a leitura do MPU pelo I2C e as leituras intercaladas do barômetro e do magnetômetro; o atraso daqui vai só até o início da leitura.
-- **Falta:** uma gravação longa (10 min) do fluxo `a` com o firmware atual do A (23/10), com o rádio ativo, na campanha de métricas.
+- **Gravação longa, feita em 02/11/2026 (20:47 a 20:57).** Log `device-monitor-261102-204630`, `aircraft` compilado às 20:45:44 (com o rádio e o OLED). A no USB do PC, caixa parada; B na fonte de celular, com 2 celulares na página. O cliente Python não rodou: o PC precisava continuar na internet.
+
+  | | 10 min, firmware de 02/11 |
+  |---|---|
+  | Janelas / amostras | 5 971 / 119 401 (598,2 s) |
+  | dt médio | 5,01 ms |
+  | Menor / maior dt | 5,00 / 5,01 ms |
+  | Pico a pico do dt por janela, mediana / p99 / máx. | 0 / 10 / 10 µs |
+  | Janelas com todo dt a até 10 µs dos 5 ms | 100 % |
+  | Atraso do pulso até a leitura, mediana / p99 / máx. | 115 / 123 / 130 µs |
+  | Filtro, médio / máx. | 86 / 207 µs |
+  | Ambíguos / descartados / reinícios | 0 / 0 / 0 |
+
+  - **O jitter continua abaixo da resolução do log** em todas as janelas dos 10 min: nenhuma passou de 10 µs de pico a pico. O atraso do pulso ficou ~5 µs acima do de 22/10.
+  - **O custo do filtro subiu** em relação a 22/10 (de 53 para 86 µs de média, e de 161 para 207 µs de máximo), provavelmente pelo layout da flash com o firmware maior, o mesmo efeito já visto no [tasks.md](tasks.md). Mesmo assim, ocupa 1,7 % do período de 5 ms, sem efeito no dt. Fica como observação, não como pendência.
+  - **Atitude parada:** em 10 min, o filtro variou 0,06° pico a pico em roll (+0,83 a +0,89°) e em pitch (−0,03 a +0,03°); a meta do [fusao.md](fusao.md) é < 0,2°. No mesmo intervalo, o giroscópio puro derivou +4,2° em roll e −15,4° em pitch, com a temperatura subindo de 28,37 para 28,71 °C.
+  - **Rádio no `c` do início:** 1 869 enviados e 1 869 entregues, 0 falhas.
+  - **O `c` do fim não foi registrado:** o terminal do monitor travou no fim, e o log termina no meio de uma linha às 20:57. O B e os celulares não mostraram nenhuma ocorrência: o travamento foi do terminal no PC, não do A.
+  - **Falta (parte 3b):** o CSV do cliente Python ao mesmo tempo, com o PC na Horizonte-ESP.
 
 Testes: `test_log_a.py` (as janelas, a de n = 0 fora, o carimbo e o tempo acumulado; o resumo com o pico a pico só das janelas com mais de uma amostra, o desvio, o filtro médio ponderado e os contadores; o `analisar_a.py` com as figuras, o resumo, a comparação e a recusa de um log sem o fluxo).
 
@@ -489,3 +526,50 @@ As pausas são contadas pelas linhas `telemetria retomada` de cada log (revisão
 
 **Decisão (27 e 28/10/2026):** o B volta ao `ground`. Os ambientes `ground_estavel`, `ground_sem_trava` e `ground_sem_dhcp` e as chaves `BANCADA_SEM_TRAVA_NOVA` e `BANCADA_SEM_DHCP_ALTERNADO` saíram: a trava nova e o DHCP alternado ficam sempre ligados. A verificação de integridade do heap continua (`WEB_HEAP_CHECK_MS`). Na demonstração e nas medições, o notebook não divide o AP com 4 celulares: adaptador Wi-Fi USB, ou o cliente Python com no máximo 2 celulares (a configuração da bancada 1, que nunca travou). **O AP aceita no máximo 3 aparelhos** (`AP_MAX_STATIONS`, 28/10/2026, o notebook incluído), para o limite não depender de quem conecta. A atualização para o Arduino-ESP32 3.x (ESP-IDF 5) fica fora, registrada como limitação conhecida no relatório (o travamento com a carga cheia, de causa não determinada).
 
+
+## Bancada de 02/11/2026, parte 1: limite do AP e contorno do DHCP (19:22 a 19:50)
+
+B no USB do PC, A no power bank, o notebook e 2 celulares. O B estava com o `ground` compilado às 19:19:32, já com o pull-up interno do encoder ([hardware.md](hardware.md), "Encoder desligado"). Logs do B: `device-monitor-261102-192813`, `-193311` e `-194707`. As primeiras ~8 000 linhas do `-194707` são uma repetição de `kB (bloco 59 kB)` na abertura do monitor, um artefato da USB. Aparelhos: o celular 1 é `A6:E5:E4:C0:F6:20`, o celular 2 é `3A:C0:40:0E:BF:E0` e o notebook é `18:47:3D:62:34:9F`. Os horários foram convertidos pelo início de cada log.
+
+**Limite do AP (`AP_MAX_STATIONS` = 3):** o notebook e os 2 celulares ficaram juntos, com `ap: celulares na rede 3/3` às 19:31:48 e 4 WebSockets (o notebook com 2). Não houve travamento. A trava de memória pausou a telemetria 5 vezes, 586 ms no total, e o heap ficou íntegro. Segundo o usuário, a página e o cliente funcionaram o tempo todo. **O teste do 4º aparelho, que deve ser recusado, ficou pendente**, por falta de um 4º aparelho.
+
+**Contorno do DHCP:**
+
+| Hora | Boot (faixa) | Evento |
+|---|---|---|
+| 19:28:16 | 49 (.100–.110) | O B reinicia (cabo religado). O celular 1 entra **sem DHCP** e continua usando o **.2** do boot 48: a página abre por esse IP às 19:30:31 |
+| 19:29:12 | | O celular 2 recebe o .100 pelo DHCP; o notebook recebe o .101 às 19:30:52 |
+| 19:35:21 | | O celular 1 entra em modo avião |
+| 19:35:35 | 50 (.2–.12) | EN. O celular 2 volta em 1,5 s **mantendo o .100, sem DHCP**, e a página continua funcionando |
+| 19:35:51 | 51 (.100–.110) | EN. O celular 2 recebe o .100 pelo DHCP |
+| 19:36:14 | | O celular 1 volta e recebe o **.102** pelo DHCP. Páginas OK, IPs diferentes |
+| 19:37–19:44 | 52, 53 | Reinícios com o monitor fechado, sem log |
+| 19:48:47 | 53 (.100–.110) | O celular 2 entra em modo avião. O celular 1 está no .100 |
+| ~19:48:50 | 54 (.2–.12) | EN. O celular 1 volta em 1,5 s **mantendo o .100, sem DHCP** |
+| 19:49:41 | | O celular 2 volta e recebe o **.2** pelo DHCP. Páginas OK, IPs diferentes |
+
+- **Nenhum conflito**, e as páginas abriram em todos os passos.
+- **O caso de risco não chegou a ser testado:** o aparelho ausente nunca voltou num boot da mesma faixa do IP que ele tinha. Em todos os retornos, o IP antigo estava fora da faixa daquele boot.
+- **Mecanismo novo:** um celular que volta ao AP logo depois de um reinício do B (~1,5 s) **continua com o IP antigo, sem passar pelo DHCP** (o B não imprime `IP … entregue`). Aconteceu três vezes: nos boots 49, 50 e 54. Com isso, o servidor DHCP do B não sabe que aquele IP está em uso. Na faixa alternada, o IP mantido fica fora da faixa do boot e não conflita. O conflito só pode acontecer se esse IP cair dentro da faixa do boot: o aparelho fica ausente por um número par de reinícios, e outro aparelho pede um IP do zero (por exemplo, depois de esquecer a rede).
+- **Rodada D (20:16 a 20:23, logs `-200305` e `-201612`), o caso de risco montado:**
+  - o celular 2 recebeu o primeiro IP da faixa (.2, boot 54) e entrou em modo avião às 20:19:41;
+  - houve dois EN: o boot 55 (.100–.110) às 20:20:37 e o boot 56 (.2–.12) às 20:22:03;
+  - o celular 2 voltou às 20:22:39.
+  - Ao esquecer a rede, o celular 1 trocou de MAC (`A6:E5:E4:C0:F6:20` → `FA:A4:62:37:79:E7`). O notebook não conseguiu se conectar, e o log não mostra nenhuma tentativa dele.
+
+  | Hora | Boot (faixa) | Celular 1 | Celular 2 |
+  |---|---|---|---|
+  | 20:16–20:18 | 54 (.2–.12) | .5 (DHCP) | .2 (DHCP) |
+  | 20:19:41 | | | modo avião |
+  | 20:21:07 | 55 (.100–.110) | volta em 30 s, .100 (DHCP) | ausente |
+  | 20:22:05 | 56 (.2–.12) | volta em 1,5 s, **mantém o .100 sem DHCP** | ausente |
+  | 20:22:39 | | | volta e **passa pelo DHCP**: .2, agora registrado |
+  | 20:23:15 | | sai e volta sozinho, **.4 (DHCP)** | |
+
+  **Sem conflito:** depois de ~36 s ausente, o celular 2 pediu o IP antigo pelo DHCP, o B confirmou e registrou o IP, e quem entrasse depois não o receberia. O usuário leu ".4.1" no celular 1, mas esse é o campo do roteador (o B); o IP do celular é o do log.
+- **Conclusão sobre o contorno (02/11/2026):** em 8 reinícios do B, com retornos rápidos e lentos, não houve conflito.
+  - **Retorno sem DHCP:** só aconteceu quando o celular voltou ~1,5 s depois do boot (4 vezes), e nesses casos o IP mantido era sempre o do boot anterior, **fora da faixa**. Num dos casos, o celular refez o DHCP sozinho ~70 s depois.
+  - **Retorno lento:** o celular que volta depois de mais tempo passa pelo DHCP (3 vezes), e o B registra o IP.
+  - **O que sobra para o conflito:** um aparelho que volte sem DHCP em **dois reinícios seguidos**, segurando justamente o primeiro IP livre da faixa, e outro aparelho pedindo um IP do zero logo em seguida. Não foi reproduzido.
+  - **Fica como limitação conhecida.** Na demonstração, evitar reiniciar o B com os aparelhos conectados; se reiniciar, desligar e ligar o Wi-Fi dos aparelhos.
+- O reinício pelo cabo às 19:28 explica o boot extra. Abrir o monitor não reinicia o B (`monitor_dtr`/`monitor_rts` = 0).

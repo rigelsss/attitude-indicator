@@ -53,14 +53,15 @@ Atenção na compra de CIs: o **74HC** (sem o T) alimentado em 5 V só aceita co
 ## Segundo OLED
 
 - **O segundo OLED 0,96" não tem o resistor de seleção de endereço** e fica em `0x3C`, como o primeiro. Por isso vai no **segundo controlador I2C (`Wire1`), SDA no GPIO 4 e SCL no GPIO 19**. Os dois pinos estão livres e não são de strapping crítico. Os pull-ups vêm no módulo.
-  - O GPIO 19 é o MISO padrão do SPI. O TFT não usa MISO, mas conferir na compilação que a TFT_eSPI não reserva o pino.
+  - O GPIO 19 é o MISO padrão do SPI. O TFT não usa MISO. **Conferido na compilação (02/11/2026):** sem o `TFT_MISO` definido, a TFT_eSPI chama `spi.begin(18, -1, 23, -1)` e não toca no GPIO 19.
   - Barramentos independentes: cada OLED leva os mesmos 32,7 ms por quadro a 400 kHz ([solo.md](solo.md), passo 3), e um não atrasa o outro.
-- **Uma página fixa por OLED**, em vez das duas páginas trocadas pelo giro do encoder (`OLED_PAGES`): **à esquerda os dados** (a página 1 de hoje), **à direita o link e a saúde do A** (a página 2).
-- **A decidir na implementação:**
-  - a pressão longa do botão hoje depende da página (zera a atitude na 1 e a altitude na 2, [web.md](web.md)). Sem páginas, ela precisa de outra regra;
-  - o giro do encoder fica sem função;
-  - como a `oled_task` passa a ser dona dos dois barramentos;
-  - estender o `ground_diag` ao `Wire1`.
+- **Uma página fixa por OLED**, em vez das duas páginas trocadas pelo giro do encoder: **à esquerda os dados** (a página 1 de antes), **à direita o link e a saúde do A** (a página 2).
+- **Implementado em 02/11/2026** (compilado e com testes `native`; bancada a fazer, [hardware.md](hardware.md)). As decisões que estavam em aberto:
+  - **pressão longa:** o giro escolhe, a pressão longa executa. O OLED 1 marca com `<`, na última coluna, a linha que será zerada: ROLL/PIT (atitude) ou ALT (altitude). Cada clique, nos dois sentidos, troca o alvo; a pressão de 1 s zera o alvo marcado. No boot, o alvo é a atitude. O rodapé do andamento ("segure 1s: ZERO ATT", "ACEITO", "OK"…) continua no OLED 1. Assim, o giro do encoder continua com função (o tópico "encoder via interrupção" da semana 4). Descartadas: 1 s zera a atitude e 3 s a altitude (fácil de errar, giro sem função), e a pressão longa só para a atitude;
+  - **uma `oled_task` dona dos dois barramentos:** redesenha cada OLED a 5 Hz, um depois do outro (~65 ms dos 200 ms), e o OLED 1 na hora em que o alvo muda. Cada OLED tem a sua presença e a sua nova tentativa a cada 5 s: um ausente não afeta o outro. Sem o OLED 2, o B funciona como antes, só com os dados no OLED 1;
+  - **o `Wire1` na U8g2:** a classe `U8G2_SSD1306_128X64_NONAME_F_2ND_HW_I2C` só é compilada com `WIRE_INTERFACES_COUNT` definido, e o núcleo do ESP32 não o define: `-D WIRE_INTERFACES_COUNT=2` no `platformio.ini`. Ela inicia o `Wire1` sem pinos, por isso os pinos vão antes, por `setPins`;
+  - **`ground_diag`:** o `i` varre os dois barramentos, e o `o` desenha "ESP B - OLED 1" e "ESP B - OLED 2", cada um no seu display;
+  - **console:** o `c` mostra uma linha por OLED (`oled 1 (dados, SDA 21 / SCL 22): presente | …`) e o alvo da pressão longa na linha `encoder:`; os eventos são `[enc] clique horário, alvo da pressão longa: zerar altitude` e `[oled] OLED 2 (link): AUSENTE …`.
 
 ## Buzzer
 

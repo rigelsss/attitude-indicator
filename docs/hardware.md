@@ -1274,6 +1274,18 @@ Passo 2 da semana 4 ([solo.md](solo.md), "Passo 2"). Log `firmware/ground/logs/2
 - **Sem clique no sentido errado**, mesmo nas rajadas rápidas.
 - **A fila da ISR encheu uma vez** (32 estados). Um repique longo nas bordas pode gerar dezenas de interrupções antes de a `input_task` esvaziar a fila. Os estados perdidos podem fazer perder um clique e, dependendo de quais se perdem, **inverter o sentido de um clique** (revisão de 23/10/2026; não aconteceu neste log). **Tratamento:** o `ENC_QUEUE_LEN` subiu de 32 para 64, para a lacuna ser rara, e a ISR passou a marcar a lacuna na fila, onde a task ressincroniza ([solo.md](solo.md), "Passo 2").
 
+### Encoder desligado: CLK e DT soltos (02/11/2026)
+
+O encoder foi desligado do B para a montagem no exibidor final, e o B passou a trocar a página do OLED sozinho. Log `firmware/ground/logs/device-monitor-261102-190927`, carimbo `2026-11-02 19:07:50` (boot 45).
+
+- **691 linhas `[enc] clique horário`** em 5,75 s (60 597 a 66 348 ms), alternando a página 1/2 e 2/2, **todas no mesmo sentido**. Intervalo médio de **8,33 ms** (mínimo 6, máximo 11): **120 cliques/s, duas bordas por ciclo da rede de 60 Hz**. São os fios soltos captando a rede.
+- **No `c` (~62,5 s de boot):** `cliques horário 7441, anti-horário 0 | inválidas 0 | fila da ISR cheia 120401 (lacunas 12104)`. Quer dizer: ~120 cliques/s desde o boot, e a ISR descartou ~1 900 estados/s por fila cheia. A interrupção roda no núcleo 0, o mesmo do driver Wi-Fi.
+- **O resto não mudou nesses segundos:** link OK, 0,13 % de perdas, TFT a 25 quadros/s, heap íntegro (69 kB). O botão (GPIO 25, com pull-up interno) não gerou nenhum aperto falso.
+- **Causa:** o CLK (32) e o DT (33) estavam configurados sem pull-up interno, contando com os 10 kΩ da placa do KY-040. Sem o módulo, os dois pinos ficam flutuando.
+- **Correção (02/11/2026, `src/tasks/input_task.cpp`):** pull-up interno ligado no CLK e no DT (~45 kΩ, em paralelo com os 10 kΩ do módulo, os dois no 3V3; com o encoder ligado, o nível alto passa de 10 para ~8 kΩ, sem efeito no funcionamento). O `ground_diag` ficou sem o pull-up interno: lá ele mascararia um `+` do módulo solto.
+- **Bancada da correção (02/11/2026):** log `device-monitor-261102-192246`, carimbo `2026-11-02 19:19:32`, boot 48, encoder desligado com os fios soltos. **Passou:** nenhuma linha `[enc]` em 61 s desde o boot, e o `c` (~47 s) mostra `cliques horário 0, anti-horário 0 | inválidas 0 | fila da ISR cheia 0 (lacunas 0)`. Link OK, heap íntegro.
+- **Pendente:** com o encoder religado, na montagem, refazer os cliques devagar e rápidos da tabela de 23/10.
+
 ### OLED do B no firmware (23/10/2026)
 
 Passo 3 da semana 4 ([solo.md](solo.md), "Passo 3"). Log `firmware/ground/logs/261023-174022`, carimbo `2026-10-23 17:25:24`. A tela foi conferida a olho em cada passo, e tudo apareceu no lugar: tela de boot, `SEM SINAL` com `---` antes de ligar o A, valores com o A ligado, roll e pitch acompanhando a caixa, troca para a página 2 no clique, `ALARME AVISO BANK` com a caixa além de 35°, e `LINK PERDIDO` com `---` durante o EN do A.
@@ -1281,6 +1293,15 @@ Passo 3 da semana 4 ([solo.md](solo.md), "Passo 3"). Log `firmware/ground/logs/2
 - **Log:** `estabelecido` aos 44,6 s (o A ligado depois); `AVISO DE BANK` aos +35,0°; `LINK PERDIDO` 3 ms depois do `[link] PERDIDO`, e `terminou` 18 ms depois do `restabelecido`.
 - **`c`:** `oled: presente | página 2/2 | último quadro 36 572 us | quadros 749`. O quadro, medido dentro da task de prioridade 1, inclui as interrupções pelas tasks de prioridade maior e pelo Wi-Fi; no diagnóstico, sozinho, foram 32,7 ms. Nenhum `[oled] AUSENTE`.
 - **Três linhas embaralhadas pela USB**, de novo: o clique do encoder, um `terminou` e o cabeçalho do `c` perderam o começo, mas o resto do texto ficou legível.
+
+### Dois OLEDs no `ground_diag` (05/11/2026)
+
+Segundo OLED no `Wire1` ([caixa-b.md](caixa-b.md), "Segundo OLED"). Log `firmware/ground/logs/device-monitor-261105-181156` (sem a linha de boot nem o carimbo: o monitor foi aberto depois do boot). **Passou.**
+
+- **`i`:** `0x3C` nos dois barramentos, um dispositivo em cada: `Wire` (SDA 21 / SCL 22) e `Wire1` (SDA 4 / SCL 19). Os dois módulos no mesmo endereço não se enxergam.
+- **`o`:** moldura, "ESP B - OLED 1" / "ESP B - OLED 2" e o xadrez, cada um no seu display. Quadro de **33,6 ms** no OLED 1 e **33,2 ms** no OLED 2, a 400 kHz: o mesmo tempo dos 32,7 ms de 23/10, então o `Wire1` não perde velocidade.
+- O usuário viu os dois OLEDs funcionando, sem log.
+- **Pendente, para a montagem do B na caixa** (06/11/2026: o B está fora das telas e o encoder, desinstalado), junto com o encoder religado: um log do `ground` atual (compilado depois de 06/11/2026: a flag `WIRE_INTERFACES_COUNT` voltou ao `platformio.ini`, e a `oled_task` lê o estado uma vez por volta) com o `c` mostrando os dois OLEDs presentes, o `<` trocando de linha no giro e a pressão longa zerando o alvo marcado.
 
 ### Comandos do B para o A pelo console (23/10/2026)
 

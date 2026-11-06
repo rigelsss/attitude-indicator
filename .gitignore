@@ -13,3 +13,4 @@ logs/
 /docs/explicacao-mpu6050.md
 /docs/*.txt
 *jpeg
+.pio-corrompido/

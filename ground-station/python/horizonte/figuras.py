@@ -78,6 +78,10 @@ def _escala_nova(atual, minimo, ys, zero):
     margem = 0.15 * max(hi - lo, 1e-9)
     novo_lo = 0.0 if zero else min(lo - margem, minimo[0])
     novo_hi = max(hi + margem, minimo[1])
+    # Dados fora do centro de uma escala que precisa incluir a mínima continuam "folgados" e dão a mesma escala:
+    # devolvê-la redesenharia o fundo a cada atualização (até 32 % delas nos CSV de 27/10/2026)
+    if math.isclose(novo_lo, a_lo, abs_tol=1e-9) and math.isclose(novo_hi, a_hi, abs_tol=1e-9):
+        return None
     return (novo_lo, novo_hi)
 
 

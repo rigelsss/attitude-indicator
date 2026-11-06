@@ -76,6 +76,8 @@ def test_uma_atualizacao_cabe_em_100_ms(painel):
     ((0, 40), [30, 31], True, None),                      # cabe e ocupa pouco, mas já é a escala mínima
     ((0, 200), [10, 20], True, (0.0, 40)),                # ocupa menos de 40 % de uma escala ampliada: volta
     ((-10, 10), [math.nan], False, None),                 # só buracos: mantém
+    ((-10, 25.75), [20, 25], False, None),                # folgado, mas a escala recalculada é a mesma: mantém
+    ((0, 101.5), [90, 100], True, None),                  # idem, começando em 0
 ])
 def test_escala_so_muda_quando_precisa(atual, ys, zero, esperado):
     from horizonte.figuras import _escala_nova

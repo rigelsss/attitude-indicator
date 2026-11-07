@@ -10,7 +10,7 @@ Projeto final da disciplina **Sistemas Embarcados 2026.2**. Usa Arduino via Plat
 > - **ESP A:** pronto, na caixa final da demonstração, com as calibrações gravadas.
 > - **ESP B:** horizonte no TFT, dois OLEDs, encoder, alarmes, página web, WebSocket e comandos para o A com confirmação.
 > - **PC:** cliente Python com log em CSV, gráficos, comandos e scripts de análise.
-> - **Em andamento:** montagem do ESP B na caixa (power bank, buzzer com transistor e anel de LEDs WS2812). Depois vêm o relatório e a apresentação.
+> - **Em andamento:** montagem do ESP B na caixa (power bank, buzzer com transistor e anel de LEDs WS2812). Depois vem a apresentação.
 >
 > Ver [Estado do projeto](#estado-do-projeto).
 
@@ -54,8 +54,8 @@ ESP A (avião) ──ESP-NOW (50 Hz)──▶ ESP B (solo) ──Wi-Fi AP / WebS
 | B | 2 × OLED 0,96" 128x64 | Dados (OLED 1) e link com a saúde do A (OLED 2) |
 | B | Encoder KY-040 | Alvo do zero (giro), zero (pressão longa) e reconhecimento do alarme (pressão curta) |
 | B | LED vermelho e LED azul da placa | Alarme e estado do link |
-| B | Buzzer ativo com BC337 | Alarme sonoro (aguardando o diodo 1N4148) |
-| B | Fita WS2812 IP67 (~65 LEDs em dois anéis), conversor de nível BSS138 e potenciômetro de 10 kΩ | Anel de LEDs da caixa, com brilho ajustável (em montagem) |
+| B | Buzzer ativo com transistor NPN (BU406 da sucata) | Alarme sonoro (aguardando o diodo 1N4148) |
+| B | Fita WS2812 IP67 (~65 LEDs em dois anéis), conversor de nível BSS138 e potenciômetro de 10 kΩ | Anel de LEDs da caixa: horizonte em "nível de bolha" e flash do alarme, com brilho ajustável (firmware pronto; fita a caminho) |
 | B | Power bank 10 000 mAh | Alimentação do ESP B e da fita |
 
 ### Pinagem do ESP A
@@ -80,7 +80,7 @@ Na GY-521, deixe **AD0 desconectado** (a placa já o mantém em nível baixo, o 
 | OLED 1 (dados): SDA, SCL | 21, 22 (`Wire`, endereço `0x3C`) |
 | OLED 2 (link): SDA, SCL | 4, 19 (`Wire1`, também `0x3C`: um barramento para cada) |
 | Encoder: CLK, DT, SW | 32, 33, 25 (alimentar o módulo em 3V3, nunca em 5 V) |
-| Buzzer | 26, pelo BC337 (1 kΩ na base, 1N4148 em paralelo com o buzzer) |
+| Buzzer | 26, por um transistor NPN (resistor na base, 1N4148 em paralelo com o buzzer; [caixa-b.md](docs/caixa-b.md)) |
 | LED do link | 2 (o LED azul da própria placa) |
 | LED de alarme (vermelho) | 13, com resistor de 330 Ω |
 | Fita de LEDs (DIN) | 27, pelo conversor BSS138 e um resistor de 330 Ω |
@@ -238,7 +238,7 @@ O diagnóstico faz um scan a 100 kHz e depois aceita comandos de uma letra, sem 
 
 Os valores do MPU são brutos, sem calibração; os do BME280 já vêm compensados com os coeficientes de fábrica do chip, e os do HMC5883L vêm em µT, mas sem calibração. O procedimento de cada teste, os resultados e a orientação dos eixos estão em [docs/hardware.md](docs/hardware.md).
 
-O ESP B tem um diagnóstico equivalente para o hardware dele (LEDs, os dois barramentos I2C, OLEDs, encoder, TFT e sprite): `pio run -e ground_diag -t upload`, em `firmware/ground`; depois, regrave o `ground`.
+O ESP B tem um diagnóstico equivalente para o hardware dele (LEDs, os dois barramentos I2C, OLEDs, encoder, TFT, sprite e, com as teclas `w` e `p`, a fita de LEDs e o potenciômetro): `pio run -e ground_diag -t upload`, em `firmware/ground`; depois, regrave o `ground`.
 
 ## Estado do projeto
 
@@ -259,7 +259,7 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 - [x] Cliente Python e métricas: jitter do loop, perda e latência ([cliente-python.md](docs/cliente-python.md))
 - [x] Caixa do ESP A, que é o modelo final da demonstração
 - [ ] Caixa do ESP B: power bank, buzzer com transistor e anel de LEDs ([caixa-b.md](docs/caixa-b.md))
-- [ ] Relatório, slides e ensaio da apresentação
+- [ ] Slides e ensaio da apresentação
 
 Os testes de detalhe que não mudam a demonstração ficam para depois: o projeto pode virar TCC ([plano.md](docs/plano.md), "Adiado para o TCC").
 

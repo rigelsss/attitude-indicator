@@ -10,16 +10,16 @@ Cada etapa termina com algo **demonstrável**. Tópico da disciplina entre colch
 | 4 | 29/10–04/11 | B: horizonte no TFT (sprite sem flicker) + OLED secundário; encoder via interrupção (troca de telas); alarmes com buzzer/LEDs; timeout de link | SPI, GPIO, interrupções |
 | 5 | 05–11/11 | B: AP Wi-Fi + página web (LittleFS) + WebSocket JSON; comandos web → B → A com ACK | IoT |
 | 6 | 12–18/11 | Cliente Python (log CSV, gráficos, comandos); métricas: jitter do loop, perda de pacotes, latência; montagem no modelo | IoT, RTOS |
-| 7 | 19–30/11 | **Folga** para atrasos; testes de duração; relatório, slides, diagrama e ensaio da apresentação | — |
+| 7 | 19–30/11 | **Folga** para atrasos; slides curtos e ensaio da apresentação (sem relatório, decidido em 07/11/2026) | — |
 
 ## Situação em 07/11/2026: modelo final e prioridade até a entrega
 
 - **A caixa do A é o modelo final** (decisão do autor, 06/11/2026). A caixa usada em todas as bancadas é a da demonstração. Valem as calibrações gravadas (bias, seis posições, montagem `z`, magnetômetro `m`) e a conferência da montagem de 23/10/2026. Não há transferência nem recalibração; os itens que esperavam o "modelo final" saem das pendências (abaixo, em cada um).
 - **Prioridade até a entrega: a caixa do B** ([caixa-b.md](caixa-b.md)). A estética da caixa vem antes de testes de detalhe, que ficam para o TCC (seção seguinte). Na fila:
   1. **Montagem na caixa:** a caixa e o power bank estão prontos; falta o adaptador USB-C → micro-USB (chega de 5 a 9/11/2026) para instalar a protoboard, o power bank, o buzzer, o potenciômetro do brilho e o encoder.
-  2. **Buzzer com o BC337:** falta o 1N4148 (chega de 6 a 12/11/2026).
-  3. **Anel de LEDs** (saiu dos opcionais): fita WS2812 IP67, dois anéis em série no GPIO 27 (em cima da tampa e nas laterais, na canaleta), com o conversor de nível BSS138 e o potenciômetro do brilho. Firmware a planejar.
-  4. **Bancadas curtas da montagem:** o `ground` com os dois OLEDs e o alvo da pressão longa, o encoder religado, o power bank (desligamento por carga baixa e brownout), o SPI do TFT pelo cabo da tampa, o som do BANK ANGLE na página ([web.md](web.md)).
+  2. **Buzzer com transistor:** o BC337 não foi comprado; candidato da sucata, o BU406 (470 Ω na base; [caixa-b.md](caixa-b.md), "Buzzer"). Falta o 1N4148 (chega de 6 a 12/11/2026).
+  3. **Anel de LEDs** (saiu dos opcionais; a fita chega de 9 a 11/11/2026): fita WS2812 IP67, dois anéis em série no GPIO 27 (em cima da tampa e nas laterais, na canaleta), com o conversor de nível BSS138 e o potenciômetro do brilho. **Firmware implementado em 07/11/2026** (`lib/led_ring`, `lib/ws2812_rmt`, `led_task`, teclas `w` e `p` no `ground_diag`; [caixa-b.md](caixa-b.md), "Firmware"); falta a bancada com a fita.
+  4. **Bancadas curtas da montagem** (~15 min, depois de fixar o power bank e a protoboard e furar a caixa para o encoder e o potenciômetro; os dois OLEDs já funcionam, conferido pelo usuário em 07/11/2026): o log do `ground` com o `c` dos dois OLEDs e o alvo da pressão longa, o encoder religado, o power bank (desligamento por carga baixa e brownout), o SPI do TFT pelo cabo da tampa, o som do BANK ANGLE na página ([web.md](web.md)).
 - **Mudanças de 07/11/2026:** alarme de nariz para baixo em −20° (era −10°, o valor da FAA; [solo.md](solo.md)); o AP aceita 4 aparelhos (era 3; [web.md](web.md), passo 3), e o teste do aparelho recusado foi dispensado; som "bank angle" na página ([web.md](web.md), "Som do BANK ANGLE").
 
 ## Adiado para o TCC
@@ -137,5 +137,5 @@ Andamento em [cliente-python.md](cliente-python.md).
 - Mesmo canal para o AP e o ESP-NOW (fixo em 1) — validar já na semana 3
 - O GY-273 é HMC5883L (0x1E), mas alguns módulos vendidos assim trazem um clone QMC5883L (0x0D), que usa outra biblioteca: confirmar no diagnóstico `i2cscan`
 - O magnetômetro sofre interferência de ímãs, de correntes nos fios de alimentação e da própria protoboard: calibrar já montado no modelo (**a caixa atual é o modelo final, 07/11/2026**: a calibração gravada vale)
-- Buzzer ativo direto no GPIO: medir a corrente; se passar de 20 mA, usar transistor (29/10/2026: decidido usar um BC337, [caixa-b.md](caixa-b.md); falta o 1N4148, chega de 6 a 12/11/2026)
+- Buzzer ativo direto no GPIO: medir a corrente; se passar de 20 mA, usar transistor (29/10/2026: decidido usar um BC337, que não foi comprado; 07/11/2026: BU406 da sucata ou outro NPN pequeno, [caixa-b.md](caixa-b.md); falta o 1N4148, chega de 6 a 12/11/2026)
 - Power bank do B desligando sozinho por carga baixa, ou brownout pelo cabo: conferir na bancada ([caixa-b.md](caixa-b.md))

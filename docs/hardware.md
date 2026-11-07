@@ -1301,6 +1301,7 @@ Segundo OLED no `Wire1` ([caixa-b.md](caixa-b.md), "Segundo OLED"). Log `firmwar
 - **`i`:** `0x3C` nos dois barramentos, um dispositivo em cada: `Wire` (SDA 21 / SCL 22) e `Wire1` (SDA 4 / SCL 19). Os dois módulos no mesmo endereço não se enxergam.
 - **`o`:** moldura, "ESP B - OLED 1" / "ESP B - OLED 2" e o xadrez, cada um no seu display. Quadro de **33,6 ms** no OLED 1 e **33,2 ms** no OLED 2, a 400 kHz: o mesmo tempo dos 32,7 ms de 23/10, então o `Wire1` não perde velocidade.
 - O usuário viu os dois OLEDs funcionando, sem log.
+- **07/11/2026:** o usuário confirmou os dois OLEDs instalados e funcionando, também sem log. O log abaixo fica para a bancada curta da montagem, com o power bank e a protoboard fixados e o encoder e o potenciômetro nos furos da caixa.
 - **Pendente, para a montagem do B na caixa** (06/11/2026: o B está fora das telas e o encoder, desinstalado), junto com o encoder religado: um log do `ground` atual (compilado depois de 06/11/2026: a flag `WIRE_INTERFACES_COUNT` voltou ao `platformio.ini`, e a `oled_task` lê o estado uma vez por volta) com o `c` mostrando os dois OLEDs presentes, o `<` trocando de linha no giro e a pressão longa zerando o alvo marcado.
 
 ### Comandos do B para o A pelo console (23/10/2026)

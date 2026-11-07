@@ -46,7 +46,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 ## Comandos (PowerShell, a partir de `firmware/aircraft` ou `firmware/ground`)
 - Compilar/gravar: `pio run -e aircraft -t upload` / `pio run -e ground -t upload`
 - Diagnóstico I2C (ESP A): `pio run -e i2cscan -t upload`
-- Diagnóstico do hardware do B (LEDs, I2C, OLED, encoder, TFT, sprite): `pio run -e ground_diag -t upload`; depois, regravar o `ground`
+- Diagnóstico do hardware do B (LEDs, I2C, OLED, encoder, TFT, sprite, fita de LEDs `w`, potenciômetro `p`, recuperação do driver da fita `r` e `f`): `pio run -e ground_diag -t upload`; depois, regravar o `ground`
 - B com a telemetria do WebSocket a 20 Hz (bancada 2): `pio run -e ground_ws20 -t upload`; depois, regravar o `ground`
 - Teste de pulsos falsos no INT (ESP A, tecla `F`): `pio run -e aircraft_pulsetest -t upload`; depois, regravar o `aircraft`
 - Teste do reinício da fusão com a caixa em movimento (ESP A, tecla `R`): `pio run -e aircraft_resettest -t upload`; depois, regravar o `aircraft`

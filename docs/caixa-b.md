@@ -2,28 +2,34 @@
 
 Discutido em 29/10/2026, **sem código ainda**. Reúne as decisões sobre a montagem do ESP B na caixa e os extras que vieram com ela. Nada aqui foi medido: as correntes e a autonomia são estimativas, a conferir na bancada e registrar no [hardware.md](hardware.md).
 
-**Prioridade:** o segundo OLED e o buzzer entram antes (não dependem da fita). O **anel de LEDs é o último item do projeto**, só se sobrar tempo ([plano.md](plano.md), "Opcionais"). A proa no anel é um extra dentro desse extra.
+**Prioridade (revista em 07/11/2026):** a caixa do B é a prioridade até a entrega, com o anel de LEDs ([plano.md](plano.md), "Situação em 07/11/2026"). O segundo OLED já está no firmware (02/11/2026). A proa no anel continua um extra.
+
+**Situação em 07/11/2026:** a caixa e o power bank estão prontos. Falta o adaptador USB-C → micro-USB (chega de 5 a 9/11) para instalar a protoboard, o power bank, o buzzer, o potenciômetro e o encoder, e o 1N4148 do buzzer (de 6 a 12/11). Faltam soldar os pinos do conversor de nível.
 
 ## Peças (29/10/2026)
 
 | Peça | Situação |
 |---|---|
 | Power bank Espada BTE-28E (10 000 mAh, 32 Wh; saídas de 5 V e 3,1 A no rótulo) | comprado |
-| Fita WS2812B, 1 m, 60 LEDs/m | comprada |
-| 2 módulos conversores de nível bidirecionais I2C (BSS138, 3,3 ↔ 5 V) | comprados |
+| ~~Fita WS2812B, 1 m, 60 LEDs/m~~ | trocada pela de baixo |
+| **Fita WS2812 IP67, 5 m, 300 LEDs (60 LEDs/m), 5 V** | chegou (07/11/2026) |
+| 2 módulos conversores de nível bidirecionais I2C (BSS138, 3,3 ↔ 5 V) | chegaram; falta soldar os pinos |
+| Canaleta para fita de LED, com difusor | disponível, o bastante para os dois anéis |
+| Jack P4 macho e fêmea, cabo USB 5 V do power bank para a fita | para a alimentação da fita (abaixo) |
+| Adaptador USB-C → micro-USB (power bank → ESP B) | chega de 5 a 9/11/2026 |
 | Conectores macho e fêmea de 4 pinos para a tampa (provavelmente JST XH 2,54 mm; conferir) | comprados |
-| BC337 (10 a 20) e 1N4148 (20 a 50) | a comprar |
+| BC337 (10 a 20) e 1N4148 (20 a 50) | BC337 disponível; 1N4148 chega de 6 a 12/11/2026 |
 | Capacitor de 1000 µF (10 ou 16 V), resistores de 330 Ω, 1 kΩ e 2,2 kΩ, capacitores de 100 nF | já disponíveis |
-| Potenciômetro linear de 10 kΩ | conferir se há um |
+| Potenciômetro linear de 10 kΩ | disponível |
 | 74AHCT125 / 74HCT125 / 74HCT541 | **não encontrados em DIP** em tempo hábil; só reserva (ver "Sinal da fita") |
 
 Atenção na compra de CIs: o **74HC** (sem o T) alimentado em 5 V só aceita como "1" uma entrada acima de 3,5 V e não converte os 3,3 V do ESP. O **HCT/AHCT** aceita a partir de 2,0 V.
 
 ## Alimentação pelo power bank
 
-- **Consumo estimado do B sem a fita:** 200–350 mA (ESP32 com o AP e o ESP-NOW 120–180 mA, com picos de ~400 mA; TFT ~20–60 mA; cada OLED ~20 mA; LEDs de alarme). **Com o anel:** ~0,6–1 A.
-- **Autonomia estimada:** ~5 Ah úteis em 5 V (32 Wh, eficiência de 80–85 %). Isso dá ~15–18 h sem a fita e ~5–8 h com ela.
-- **A fita é alimentada direto pelos 5 V do power bank** (cabo separado ou um "Y"), nunca pelo VIN ou pelo 3V3 da placa. O GND é comum com o ESP, e um capacitor de 1000 µF fica entre o 5 V e o GND, na entrada da fita.
+- **Consumo estimado do B sem a fita:** 200–350 mA (ESP32 com o AP e o ESP-NOW 120–180 mA, com picos de ~400 mA; TFT ~20–60 mA; cada OLED ~20 mA; LEDs de alarme). **Com os dois anéis:** ~0,6–1,5 A, conforme o brilho (teto no firmware; seção "Brilho e corrente").
+- **Autonomia estimada:** ~5 Ah úteis em 5 V (32 Wh, eficiência de 80–85 %). Isso dá ~15–18 h sem a fita e ~3–8 h com ela, conforme o brilho.
+- **A fita é alimentada direto pelos 5 V do power bank** (cabo USB separado, pelo jack P4; 07/11/2026), nunca pelo VIN ou pelo 3V3 da placa. O GND é comum com o ESP, e um capacitor de 1000 µF fica entre o 5 V e o GND, na entrada da fita.
 - **Bancada a fazer:**
   1. **Desligamento automático por carga baixa:** muitos power banks desligam abaixo de 50–100 mA. Deixar o B ligado no power bank por 30–60 min. Se ele desligar sozinho, o B reinicia, e isso pode ser confundido com o travamento do B ([plano.md](plano.md), semana 6).
   2. **Brownout:** um cabo micro-USB fino derruba a tensão nos picos do Wi-Fi. Procurar `Brownout detector was triggered` no monitor. Usar um cabo curto e bom.
@@ -39,15 +45,15 @@ Atenção na compra de CIs: o **74HC** (sem o T) alimentado em 5 V só aceita co
 
   | Conector | Pinos |
   |---|---|
-  | 1. Fita | 5V, GND, DIN, (vazio) |
+  | 1. Fita | DIN, DOUT (o sinal volta do anel de cima para o lateral), 2 vagos. Os 5 V e o GND da fita passam pelo P4 (07/11/2026) |
   | 2. OLED 1 | 3V3, GND, SDA (21), SCL (22) |
   | 3. OLED 2 | 3V3, GND, SDA2 (4), SCL2 (19) |
   | 4. TFT (a) | 3V3, GND, SCLK (18), MOSI (23) |
   | 5. TFT (b) | CS (5), DC (16), RST (17), (vazio) |
 
-  - **Risco:** os conectores são iguais e podem ser trocados ao fechar a tampa. Os 5 V da fita numa linha de 3V3 ou de dados queimam o display. Marcar cada par com cor e número e separar a saída do conector da fita da dos displays.
+  - **Risco:** os conectores são iguais e podem ser trocados ao fechar a tampa. Com os 5 V da fita no P4 (07/11/2026), nenhum conector de 4 pinos leva 5 V, mas uma troca ainda liga o sinal de um display no de outro. Marcar cada par com cor e número.
   - O BLK do TFT continua preso ao 3V3 do lado da tampa ([solo.md](solo.md), passo 0).
-  - Fio de 22 AWG no 5V e no GND da fita. O JST XH aguenta 3 A por pino.
+  - Fio de 22 AWG no 5V e no GND da fita, do cabo USB ao P4 e do P4 às fitas.
   - **SPI do TFT pelo cabo da tampa (~20–30 cm):** se aparecerem pixels errados ou faixas, baixar a frequência do SPI no `platformio.ini`. Conferir na bancada da montagem.
 
 ## Segundo OLED
@@ -72,11 +78,25 @@ Atenção na compra de CIs: o **74HC** (sem o T) alimentado em 5 V só aceita co
 
 ## Anel de LEDs (última prioridade)
 
-### Montagem
+### Montagem (revista em 07/11/2026: dois anéis)
 
-- **Fita colada no topo da tampa, rente às bordas.** O perímetro é de 56 cm. Cortando nas marcas (1,67 cm por LED): **9 LEDs em cada lado de 15,5 cm e 7 em cada lado de 12,5 cm, 32 no total**. A sobra (~28 LEDs) fica de reserva.
-- **Cantos cortados e emendados com fio:** 3 fios por canto (5V, dado, GND), 22–24 AWG, pontes curtas e termorretrátil. A dobra em 45° sem solda força as trilhas e pode abrir com a tampa sendo manuseada.
-- **Difusor** (perfil com difusor leitoso, acrílico fosco ou papel vegetal): sem ele, a fita fica pontilhada e ofusca.
+![Esquema da fita de LEDs no ESP B](img/ligacao-fita.svg)
+
+Esquema: [img/ligacao-fita.svg](img/ligacao-fita.svg). Os rótulos iguais (+5V, GND, 3V3) estão ligados entre si.
+
+
+- **Dois anéis, ~32 LEDs cada, ~65 no total:**
+  - **em cima, na borda da tampa, sem canaleta.** O perímetro é de 56 cm. Cortando nas marcas (1,67 cm por LED): **9 LEDs em cada lado de 15,5 cm e 7 em cada lado de 12,5 cm, 32 no total**. O silicone do IP67 já espalha um pouco a luz;
+  - **nas laterais, dentro da canaleta com difusor**, que deixa a luz contínua e suave para quem está em volta. O perímetro é o mesmo, ~32 LEDs.
+- **Em série, num pino só** (decidido em 07/11/2026): GPIO 27 → conversor → anel de cima → anel lateral, como uma fita só. Se o anel de cima estiver na tampa, o sinal volta pelo 4º pino do conector 1 (DOUT). A alternativa, um pino por anel (27 e 14), foi descartada: gasta um GPIO e um canal do conversor sem ganho.
+- **Cantos do anel de cima cortados e emendados com fio:** 3 fios por canto (5V, dado, GND), 22–24 AWG, pontes curtas e termorretrátil. Ali a dobra seria no plano da fita, o que força as trilhas. **No anel lateral, a fita contorna os cantos sem cortar** (a dobra é no sentido em que ela flexiona); a canaleta, se for rígida, é cortada em 45° nos cantos.
+- **Fita IP67** (silicone):
+  - **largura de ~12 mm e altura de ~4–5 mm** com o silicone: medir a fita e a abertura interna da canaleta antes de cortar (muitas canaletas são para fitas de 10 mm);
+  - em cada corte, abrir o silicone para soldar e vedar a ponta depois (cola quente ou silicone);
+  - o adesivo do verso costuma descolar do silicone: colar com cola de silicone ou presilhas; na canaleta, o perfil segura a fita;
+  - o silicone dissipa pior, mas com o teto de corrente e o brilho baixo não pesa.
+- **Alimentação:** um cabo USB do power bank (porta separada da do ESP, GND comum) leva os 5 V à fita. Um **jack P4 macho e fêmea** separa a alimentação ao abrir a caixa. Ao encaixar um P4, a ponta raspa no contato do corpo e pode dar um curto rápido nos 5 V: **conectar com o power bank desligado**. O sinal (DIN e DOUT) passa pelo conector 1, e o GND de referência dele é o do P4. O capacitor de 1000 µF fica logo depois do P4.
+- **Pontos de solda:** cada ponta da fita tem 3 pontos. Na entrada são VCC, GND e DIN, e na saída VCC, GND e DOUT. A ordem varia entre fitas: siga a serigrafia e a seta, porque o sinal só anda no sentido dela. O anel de cima recebe a força e o sinal na entrada e devolve o DOUT pela saída. O anel lateral recebe o sinal na entrada e a força pela outra ponta (VCC e GND são contínuos ao longo da fita), o que deixa os fios de 5 V longe do fio de dados.
 - **Posição de cada LED em mm no `config.h`**, calculada a partir das medidas. Assim os cantos irregulares não importam. O LED 0 é onde entra o DIN; o canto de início e o sentido (horário ou anti-horário) ficam para a montagem.
 
 ### Visual (opção A, "nível de bolha")
@@ -100,7 +120,17 @@ Atenção na compra de CIs: o **74HC** (sem o T) alimentado em 5 V só aceita co
 
 ### Brilho e corrente
 
-- **Teto de corrente da fita no firmware** (por exemplo, `setMaxPowerInVoltsAndMilliamps(5, 1000)` da FastLED), no `config.h`. Sem ele, 32 LEDs em branco cheio pedem ~1,9 A. Em branco a ~25 %, a estimativa é de ~0,5 A. Cada LED gasta ~1 mA mesmo apagado.
+- **Teto de corrente da fita no firmware** (por exemplo, `setMaxPowerInVoltsAndMilliamps(5, 1300)` da FastLED), no `config.h`. **Com os dois anéis (~65 LEDs), ele é obrigatório:** em branco cheio, a fita pediria ~3,9 A, mais que os 3,1 A do rótulo do power bank (provavelmente o total das saídas), que também alimenta o ESP B (200–350 mA, picos de ~400–500 mA). Cada LED gasta ~1 mA mesmo apagado.
+- **Brilho com o teto de 1,3 A (estimativa de 07/11/2026):**
+
+  | Cor do anel | Por LED no máximo | 65 LEDs | Com o teto |
+  |---|---|---|---|
+  | Branco (nivelado) | ~60 mA | ~3,9 A | ~19 mA por LED, ~1/3 da potência; parece ~65–70 % do brilho (o olho é logarítmico) |
+  | Vermelho (alarme) ou azul | ~20 mA | ~1,3 A | sem corte |
+  | Marrom (lado baixo) | ~25–30 mA | ~1,8 A | ~75 % |
+
+  Em ambiente fechado, sobra brilho; o potenciômetro deixa a fita abaixo do teto na maior parte do curso, e o teto só age perto do máximo. A canaleta come ~20–40 % da luz.
+- **Bancada para escolher o teto** (com um medidor USB, se houver): anel todo branco, potenciômetro no máximo; começar em 1,3 A e subir para 1,6 e 2 A se faltar brilho, observando se o power bank desliga, se o monitor do B mostra `Brownout` e se o P4 ou o cabo esquentam. Fica o maior valor que passar com folga. Entra no passo da fita no `ground_diag`.
 - **Potenciômetro linear de 10 kΩ para o brilho:** extremos no **3V3** (nunca 5 V) e no GND, cursor no **GPIO 34** e 100 nF do GPIO 34 ao GND.
   - Precisa ser um pino do **ADC1** (GPIO 32 a 39): o ADC2 não funciona com o Wi-Fi ligado, e o B mantém o AP. O 32 e o 33 são do encoder; o 34 é só de entrada.
   - No firmware: média e histerese (o ADC do ESP32 é ruidoso e pouco linear), curva de gama no curso, brilho mínimo (o anel nunca some) e máximo abaixo do teto de corrente.
@@ -119,7 +149,8 @@ Atenção na compra de CIs: o **74HC** (sem o T) alimentado em 5 V só aceita co
 
 - Task própria, de baixa prioridade, sem disputar com a `link_task` e a `display_task`; a taxa de atualização fica para o plano.
 - O cálculo das cores (posição dos LEDs, faixa morta, saturação, estados) fica numa lógica pura em `lib/`, com testes `native`.
-- Pinos, dimensões, número de LEDs, teto de corrente e limites no `config.h`.
+- Pinos, dimensões, número de LEDs (os dois anéis, com a posição de cada LED), teto de corrente e limites no `config.h`.
+- **O que cada anel mostra:** a proposta é a mesma lógica do "nível de bolha" nos dois (cada LED tem a sua posição x, y), com os alarmes e a perda de link por cima. Decidir no plano do firmware.
 - Um passo de bancada no `ground_diag` para testar a fita sozinha.
 
 ## Pinos previstos no B
@@ -128,5 +159,5 @@ Atenção na compra de CIs: o **74HC** (sem o T) alimentado em 5 V só aceita co
 |---|---|
 | 4 / 19 | SDA / SCL do `Wire1` (OLED 2) |
 | 26 | buzzer, pelo BC337 (já previsto) |
-| 27 | DIN da fita |
+| 27 | DIN da fita (os dois anéis, em série) |
 | 34 | cursor do potenciômetro do brilho |

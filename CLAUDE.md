@@ -9,7 +9,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - **Contrato**: `firmware/shared/include/telemetry.h` (binário, ESP-NOW) e `docs/protocolo-websocket.md` (JSON). Se um mudar, atualize os dois firmwares e incremente `TELEMETRY_VERSION`.
 
 ## Documentos de referência (fonte da verdade)
-- `docs/plano.md`: etapas. Trabalhe **só na etapa pedida**; não adiante fusão, rádio ou RTOS por conta própria.
+- `docs/plano.md`: etapas. Trabalhe **só na etapa pedida**; não adiante fusão, rádio ou RTOS por conta própria. A caixa do A já é o modelo final (06/11/2026); testes de detalhe ficam em "Adiado para o TCC".
 - `docs/hardware.md`: evidência de bancada (endereços, medidas, testes). Se um teste contradisser o `config.h`, corrija o `config.h` e registre o teste aqui.
 - `docs/calibracao.md`: estratégia de calibração do MPU6050. Siga-a; se precisar divergir, pergunte antes.
 - `docs/fusao.md`: filtro complementar (roll/pitch), calibração de montagem (`z`), limites e roteiro de validação.
@@ -19,7 +19,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - `docs/radio.md`: ESP-NOW (configuração do A e do B, campos do pacote, contadores do console) e a bancada do rádio.
 - `docs/web.md`: semana 5: comandos do B para o A (camada única de comandos, ACK, reenvio), servidor web, WebSocket e página.
 - `docs/solo.md`: semana 4 do ESP B: decisões (TFT só com o horizonte, páginas do OLED pelo encoder, LEDs, sprite de 8 bits, buzzer adiado), passos, ligação e diagnóstico (`ground_diag`).
-- `docs/caixa-b.md`: montagem do B na caixa (power bank, layout e conectores da tampa, segundo OLED no `Wire1`, buzzer com BC337, anel de LEDs WS2812B, última prioridade); discutido em 29/10/2026, sem código.
+- `docs/caixa-b.md`: montagem do B na caixa (power bank, layout e conectores da tampa, segundo OLED no `Wire1`, buzzer com BC337, dois anéis de LEDs WS2812 em série, potenciômetro do brilho, P4); prioridade até a entrega desde 07/11/2026.
 - `docs/cliente-python.md`: semana 6: cliente Python (leitura sem bloqueio, CSV, reconexão, comandos), métricas, campos `tb`/`n`/`loop_us` e `origin` do JSON, diagnóstico do Wi-Fi do PC.
 - `docs/tasks.md`: tasks do ESP A (núcleos, prioridades, filas, logger com um consumidor só) e as medições de tempo de cada passo da semana 3.
 - Antes de concluir uma etapa, atualize o doc afetado (procedimento de uso, resultados, decisões).
@@ -52,7 +52,7 @@ Projeto final de Sistemas Embarcados (entrega: fim de novembro/2026). Dois ESP32
 - Teste do reinício da fusão com a caixa em movimento (ESP A, tecla `R`): `pio run -e aircraft_resettest -t upload`; depois, regravar o `aircraft`
 - A/B de tempo sem o Wi-Fi ligado (ESP A): `pio run -e aircraft_noradio -t upload`; depois, regravar o `aircraft`
 - Monitor: `pio device monitor -b 115200` (no `ground`, o filtro `log2file` grava em `firmware/ground/logs`)
-- Página web no B: `pio run -e ground -t uploadfs`
+- Página web no B: `pio run -e ground -t uploadfs` (o som `ground-station/web/bank-angle.mp3` fica fora do git; docs/web.md, "Som do BANK ANGLE")
 - Testes de lógica: `pio test -e native`
 - Testes do cliente Python (a partir de `ground-station/python`): `python -m pytest`; dependências: `python -m pip install -r requirements.txt`
 - Cliente Python (a partir de `ground-station/python`): `python cliente.py` (o B, com o PC na Horizonte-ESP) ou `python cliente.py --url ws://127.0.0.1:8765/` com o simulador `python sim_b.py` (`--sem-a`; as falhas em `-h`); `?` no cliente lista os comandos

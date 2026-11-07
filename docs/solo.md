@@ -90,9 +90,9 @@ Os resultados vão para o [hardware.md](hardware.md).
 
 **Limites, pelos critérios de aviação:**
 
-- **Alarme (warning), atitude anormal:** bank > 45°, pitch > +25° ou pitch < −10°. É a definição de "upset" do *Airplane Upset Recovery Training Aid*, também usada pela FAA (AC 120-111). O pitch é assimétrico: nariz para baixo é mais perigoso.
+- **Alarme (warning), atitude anormal:** bank > 45°, pitch > +25° ou pitch < −20°. É a definição de "upset" do *Airplane Upset Recovery Training Aid*, também usada pela FAA (AC 120-111), com uma mudança: o nariz para baixo, que na definição é −10°, aqui vai a **−20° (escolha do projeto, 07/11/2026)**. Com a caixa na mão, o −10° alarmava fácil demais. O pitch continua assimétrico, porque o nariz para baixo é mais perigoso.
 - **Aviso (caution) de bank:** > 35°, o início do "BANK ANGLE" do EGPWS em aeronaves como o 737.
-- **Histerese de 3°** em todos os limites (o aviso sai abaixo de 32°, o alarme abaixo de 42° de bank, +22° e acima de −7° de pitch). Os limites entram na hora: o filtro já é suave, e o aviso deve ser imediato.
+- **Histerese de 3°** em todos os limites (o aviso sai abaixo de 32°, o alarme abaixo de 42° de bank, +22° e acima de −17° de pitch). Os limites entram na hora: o filtro já é suave, e o aviso deve ser imediato.
 
 | Prioridade | Condição | LED de alarme (GPIO 13) | LED do link (GPIO 2) |
 |---|---|---|---|
@@ -185,7 +185,7 @@ Pendência da semana 3 ([radio.md](radio.md), "Passo 5"): com o link ruim, os pa
 - **Sinais** (testes de geometria): roll à direita gira o horizonte no sentido anti-horário (lado esquerdo desce); nariz para cima desce o horizonte; roll de 90° deixa a terra à direita; em dorso, a terra fica em cima.
 - **Estado visual em `lib/pfd_state`** (testes `native`, revisão de 23/10/2026): a escolha entre horizonte e bandeira, o motivo, a marca de degradada e a validade da proa saíram da `display_task` para uma função pura. **A proa só vale com a atitude mostrada:** um pacote incoerente (roll NaN com `VAL_ATT` e `VAL_HDG` ligadas) mostrava o X vermelho com a proa numérica; agora mostra `---`.
 - **Bandeira de falha:** sem dado atual (a mesma regra do alarme e do OLED, `linkSnapshot`) ou com `VAL_ATT` desligada, a atitude some: fundo preto, **X vermelho** de canto a canto, `ATT` em vermelho e o motivo (`SEM SINAL`, `LINK PERDIDO`, `DADO ATRASADO`, `ATT INVALIDA`). A caixa de proa continua, com `---`.
-- **Alarmes no TFT, com os termos da aviação:** `BANK ANGLE` em âmbar (aviso, > 35°) e `ATTITUDE` em vermelho (alarme de atitude anormal). `ATT DEGRADADA` em âmbar com a `VAL_ATT_DEGRADED`.
+- **Alarmes no TFT, com os termos da aviação:** `BANK ANGLE` em âmbar (aviso, > 35°) e `ATTITUDE` em vermelho (alarme de atitude anormal). `ATT DEGRADADA` em âmbar com a `VAL_ATT_DEGRADED`. A página web também fala "bank angle" ([web.md](web.md), "Som do BANK ANGLE").
 - **Linhas suavizadas** (bancada de 23/10/2026): com a caixa a −1,4° de roll na mesa, os traços de 60 px da escala de pitch apareciam quebrados por um degrau de 1 px no meio, e o horizonte de 2 px (duas linhas deslocadas) tinha degraus desencontrados. Agora os traços das escalas têm 2 px, com o `drawWideLine` da TFT_eSPI, que mistura a borda com o fundo lido do sprite (no RGB332 há poucos tons intermediários, então a suavização é discreta). O horizonte é uma faixa cheia de 3 px (dois triângulos), com as bordas paralelas e **sem** suavização: suavizado, ele levou o maior quadro a 40–42 ms com a caixa inclinada (24 quadros/s), contra 38 ms parada e 30–32 ms antes da suavização.
 - **Cores** escolhidas no RGB332 e convertidas com o `color8to16` da TFT_eSPI, para cada cor ser representada exatamente no sprite de 8 bits. Fontes de bitmap (1, 2 e 4).
 - **O sprite é alocado no `setup()`, antes do Wi-Fi** (`displayInit`), com o heap ainda sem fragmentar; sem memória, o TFT mostra `SEM MEMORIA PARA O SPRITE`, e o resto do firmware segue.

@@ -44,12 +44,13 @@
 
 // ---------- Limites de alarme (docs/solo.md, passo 1) ----------
 // Alarme (warning) = atitude anormal ("upset") pela definição do Airplane Upset Recovery Training Aid, também
-// usada pela FAA (AC 120-111): bank > 45°, pitch > +25° ou < −10°. Aviso (caution) = "BANK ANGLE" do EGPWS,
+// usada pela FAA (AC 120-111): bank > 45°, pitch > +25° ou < −10°. Aqui o nariz para baixo vai a −20° (escolha do
+// projeto, 07/11/2026: o −10° alarmava fácil demais na caixa na mão). Aviso (caution) = "BANK ANGLE" do EGPWS,
 // que em aeronaves como o 737 começa em 35°. Cada limite sai com ALARM_HYST_DEG a menos
 #define ALARM_BANK_CAUTION_DEG 35.0f
 #define ALARM_BANK_DEG         45.0f
 #define ALARM_PITCH_UP_DEG     25.0f
-#define ALARM_PITCH_DOWN_DEG   10.0f    // nariz para baixo (pitch < −10°)
+#define ALARM_PITCH_DOWN_DEG   20.0f    // nariz para baixo (pitch < −20°; o valor da FAA é −10°)
 #define ALARM_HYST_DEG         3.0f
 #define ALARM_INVALID_DELAY_MS 1000     // atitude inválida (fora das calibrações) por mais que isto: alarme
 #define LINK_TIMEOUT_MS  500
@@ -72,10 +73,11 @@
 // nunca são oferecidos, mas um aparelho ausente no boot intermediário pode voltar com um IP da faixa atual
 #define AP_DHCP_INICIO_PAR    2          // 192.168.4.2 a .12 nos boots pares
 #define AP_DHCP_INICIO_IMPAR  100        // 192.168.4.100 a .110 nos boots ímpares
-#define AP_MAX_STATIONS  3                // aparelhos no AP ao mesmo tempo, o notebook incluído (o 4º é recusado).
-                                          // Com o notebook e 4 celulares, o B travou no driver Wi-Fi em todas as
-                                          // rodadas; com o notebook e até 2 celulares, nunca (27/10/2026,
-                                          // docs/cliente-python.md). Os slots do WebSocket continuam 8
+#define AP_MAX_STATIONS  4                // aparelhos no AP ao mesmo tempo, o notebook incluído (o 5º é recusado).
+                                          // Com o notebook e 4 celulares (5), o B travou no driver Wi-Fi em todas
+                                          // as rodadas; com 4 celulares sem o notebook, nunca (27/10/2026,
+                                          // docs/cliente-python.md). 3 até 07/11/2026. Os slots do WebSocket
+                                          // continuam 8
 #define AP_MAX_CLIENTS   8                // WebSockets ao mesmo tempo (um aparelho pode ter mais de uma aba).
                                           // O SDK tem 16 sockets: 2 de escuta + 8 WebSockets + HTTP_MAX_CONNS (4)
                                           // = 14. IGUAL ao WEBSOCKETS_SERVER_CLIENT_MAX do platformio.ini

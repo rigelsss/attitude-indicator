@@ -7,7 +7,7 @@
 void setUp() {}
 void tearDown() {}
 
-static const AlarmConfig CFG = {35.0f, 45.0f, 25.0f, 10.0f, 3.0f, 1000, 500, 250, 100, 2000, 100};
+static const AlarmConfig CFG = {35.0f, 45.0f, 25.0f, 20.0f, 3.0f, 1000, 500, 250, 100, 2000, 100};
 
 // Link OK, atitude válida e nivelada
 static AlarmInputs level() {
@@ -102,10 +102,10 @@ static void test_bank_warning_and_hysteresis() {
 static void test_pitch_limits_asymmetric() {
     AlarmLogic a(CFG);
     TEST_ASSERT_EQUAL(AlarmKind::None, a.update(att(0, 24.9f), 0).kind);
-    TEST_ASSERT_EQUAL(AlarmKind::None, a.update(att(0, -9.9f), 20).kind);   // −10 para baixo, e não −25
-    TEST_ASSERT_EQUAL(AlarmKind::AttitudeWarning, a.update(att(0, -10.1f), 40).kind);
-    TEST_ASSERT_EQUAL(AlarmKind::AttitudeWarning, a.update(att(0, -7.0f), 60).kind);   // sai acima de −7
-    TEST_ASSERT_EQUAL(AlarmKind::None, a.update(att(0, -6.9f), 80).kind);
+    TEST_ASSERT_EQUAL(AlarmKind::None, a.update(att(0, -19.9f), 20).kind);   // −20 para baixo, e não −25
+    TEST_ASSERT_EQUAL(AlarmKind::AttitudeWarning, a.update(att(0, -20.1f), 40).kind);
+    TEST_ASSERT_EQUAL(AlarmKind::AttitudeWarning, a.update(att(0, -17.0f), 60).kind);   // sai acima de −17
+    TEST_ASSERT_EQUAL(AlarmKind::None, a.update(att(0, -16.9f), 80).kind);
     TEST_ASSERT_EQUAL(AlarmKind::AttitudeWarning, a.update(att(0, 25.1f), 100).kind);
     TEST_ASSERT_EQUAL(AlarmKind::AttitudeWarning, a.update(att(0, 22.0f), 120).kind);
     TEST_ASSERT_EQUAL(AlarmKind::None, a.update(att(0, 21.9f), 140).kind);

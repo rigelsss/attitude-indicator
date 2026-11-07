@@ -94,12 +94,13 @@ Plano aprovado em 23/10/2026.
   - **Comandos recentes na conexão:** o B guarda o último estado dos `WS_RECENT_CMDS` (8) comandos mais recentes, por `seq`, e os manda logo depois do `hello`. Cobre o cliente derrubado e a página recarregada.
   - O `c` mostra a linha `ws:` (telemetrias puladas, filas refeitas por terem enchido, quadros pela metade, clientes derrubados). Fica de fora o que a biblioteca escreve sozinha no `loop()` (resposta do handshake, com o buffer vazio, e o pong, que os navegadores não pedem).
 - **WebSocket na porta 81** (contrato em [protocolo-websocket.md](protocolo-websocket.md), revisado):
-  - `hello` na conexão (declinação, PIN exigido, taxas);
+  - `hello` na conexão (declinação, PIN exigido, taxas e, desde 07/11/2026, o limite do aviso de bank para o som da página);
   - `tel` a 30 Hz, só com clientes conectados, com o campo `cur` (a regra única de dado atual, `linkSnapshot`);
   - `cmd` com o andamento de cada comando, de qualquer origem, para todos (a `command_task` tem uma fila de eventos própria para a página);
   - comandos recebidos: conferidos pelo `webParseCommand` (JSON, nome, PIN, argumento) e enviados à `command_task` com a origem `página`. Uma recusa no B volta só para quem pediu.
 - **Até 8 celulares ao mesmo tempo** (decisão de 24/10/2026). O AP aceitava só 4 (padrão do `softAP`) e o WebSocket, 5. Agora `AP_MAX_CLIENTS` 8 no `config.h` (passado ao `softAP`) e `-DWEBSOCKETS_SERVER_CLIENT_MAX=8` no `platformio.ini` (a biblioteca não vê o `config.h`; um `static_assert` no `web_task` confere que os dois são iguais). Não 10: o SDK pré-compilado tem 16 sockets (`CONFIG_LWIP_MAX_SOCKETS`), e 2 de escuta + 8 WebSockets + 4 conexões HTTP = 14 deixa folga de 2 para recarregamentos (com 10, a conta fecharia em 16 exatos). Os 8 clientes a 30 Hz somam ~110 kB/s no canal 1, o mesmo do ESP-NOW: conferir na bancada se as perdas do link sobem com vários celulares (se subirem, baixar o `WS_RATE_HZ`).
   - **28/10/2026: o AP passou a aceitar 3 aparelhos** (`AP_MAX_STATIONS`, o notebook incluído; o 4º é recusado pelo AP). Com o notebook e 4 celulares, o B travou no driver Wi-Fi em todas as rodadas; com o notebook e até 2 celulares, nunca ([cliente-python.md](cliente-python.md), "Bancada da investigação do travamento"). Os slots do WebSocket (`AP_MAX_CLIENTS`, 8) não mudaram: um aparelho pode abrir mais de uma aba. **Bancada de 02/11/2026:** o notebook e os 2 celulares juntos (`3/3`), sem travamento, com 586 ms de telemetria pausada pela trava de memória ([cliente-python.md](cliente-python.md), "Bancada de 02/11/2026, parte 1"). A recusa do 4º aparelho ficou pendente, por falta do aparelho.
+  - **07/11/2026: 4 aparelhos** (`AP_MAX_STATIONS` 4, o 5º é recusado). Os travamentos só aconteceram com 5 (o notebook e 4 celulares); com os 4 celulares sem o notebook, nunca. A recusa do 5º não será testada: o limite é do `softAP` do ESP-IDF, e o autor confia nele. Na demonstração, se o notebook estiver na rede, evitar os 4 celulares junto (o notebook saindo e voltando ao AP era o gatilho correlacionado).
 - **PIN** (`WEB_CMD_PIN`, "2468"; decisão de 23/10/2026): todos veem, só quem digita o PIN comanda. Protege contra o uso acidental, não contra quem capture o tráfego (sem criptografia).
 - **Console do B:** o `c` mostra a página (gravada ou não), os clientes, as mensagens de telemetria, os comandos aceitos e recusados, a linha `http:` (requisições, conexões abertas, fechadas por ociosidade ou para dar lugar, recusadas) e o heap com o maior bloco livre.
 - **Flash:** o firmware passou a 73 % (servidor HTTP, WebSocket e ArduinoJson); com o servidor HTTP próprio no lugar do `WebServer`, 72 %.
@@ -112,6 +113,7 @@ Plano aprovado em 23/10/2026.
 - **Dados:** roll, pitch, proa (MAG ou VERD, alternados por um botão, com a declinação do `hello`), altitude, pressão, temperatura e curva, com `---` pelas mesmas regras do OLED (pressão e temperatura seguem a `VAL_ALT`).
 - **Link e ESP A:** taxa, perdidos, quedas, idade, atraso, sensores e calibração em curso.
 - **Alarme:** a condição atual, com a cor do nível e a marca de reconhecido.
+- **Som do BANK ANGLE** (07/11/2026): botão "Som" no topo; seção abaixo.
 - **Comandos:** campo do PIN (lembrado na sessão do navegador, quando ele permite), botões de zerar atitude e altitude e de calibrar giroscópio e magnetômetro (as calibrações pedem um segundo toque de confirmação, sem diálogos do navegador) e o seletor da taxa. Um registro com os últimos 10 comandos mostra o andamento de cada um pelo `seq`, inclusive os pedidos pelo console e pelo encoder.
 - **Conexão:** reconecta a cada 2 s; sem conexão, a página mostra tudo como indisponível.
 - **Telemetria parada com o socket aberto** (revisão de 24/10/2026): a conexão pode morrer sem o `onclose` (Wi-Fi fora do alcance, B travado), e a última atitude ficaria congelada como válida. A página guarda a hora de cada `tel` (`performance.now()`): sem `tel` por 1 s, tudo vira indisponível (bandeira `SEM TELEMETRIA`, selo "sem telemetria"); por 5 s, ela abandona o socket e reconecta.
@@ -120,6 +122,21 @@ Plano aprovado em 23/10/2026.
 - **Sem favicon:** `<link rel="icon" href="data:,">` no `index.html`; o pedido de `/favicon.ico` dava 404 e um erro do núcleo na serial (o `LittleFS.exists()` desta versão também chama o `open()` e escreve o mesmo erro).
 - **Registro de comandos:** uma linha que sai do registro (limite de 10) sai também do mapa `seq` → linha; um evento posterior de um comando ainda em curso cria uma linha nova no topo.
 - Funciona no celular (uma coluna) e no PC (grade).
+
+## Som do BANK ANGLE (07/11/2026)
+
+A página fala "bank angle", como o EGPWS na cabine, para quem acompanha pelo notebook ou pelo celular.
+
+- **Quando:** com o alarme `bank_caution` (bank > 35°) e também com o `attitude` enquanto o \|roll\| passar do `bank_caution` do `hello` (acima de 45° o tipo do alarme muda, mas o bank continua excessivo, e o EGPWS segue falando). Um "bank angle" a cada 2 s (`BANK_REPEAT_MS`), começando na hora. A histerese é a do B: o aviso termina abaixo de 32°.
+- **Para como o EGPWS** (decisão de 07/11/2026): o alarme reconhecido (botão curto do encoder ou tecla `k` do B), o bank de volta abaixo do aviso, a falta de dado atual, a atitude inválida e o som desligado só impedem a próxima repetição. **O "bank angle" que começou sempre termina** (no máximo ~1,7 s), e nunca começa um por cima de outro. Cortar a fala no meio foi considerado e descartado: 1,7 s não justifica.
+  - Um alarme novo (por exemplo, o aviso virando alarme) não está reconhecido e volta a falar na hora, ou logo que a fala em curso terminar.
+- **Revisão de 07/11/2026:** ligar e desligar o som antes de o MP3 terminar de carregar deixava o botão em "desligado" e tocava a confirmação. Agora a página confere de novo o botão depois do carregamento (cada ativação tem um número, e uma antiga não toca nada), e o carregamento é um só, mesmo com o botão apertado várias vezes.
+- **Sem "PULL UP":** no GPWS, ele depende da razão de descida e da proximidade do terreno (modos 1 e 2, com o radioaltímetro), e não do ângulo do nariz. Não há aviso falado padrão para atitude anormal; o nariz para baixo fica com o alarme visual `ATTITUDE`. Um "SINK RATE" pela variação da altitude do barômetro não faz sentido numa caixa de bancada: ideia para o TCC.
+- **Botão "Som: desligado/ligado"** no topo, desligado ao abrir: o navegador só toca som depois de um toque na página. Ao ligar, a página fala um "bank angle" para confirmar que o som funciona no aparelho. Não é lembrado entre recarregamentos, pela mesma regra do navegador.
+- **Áudio:** `ground-station/web/bank-angle.mp3`, um "bank angle" só (~1,7 s, 27 kB, MP3), decodificado uma vez pela Web Audio API na hora em que o som é ligado (um pedido HTTP por página, e não um por alarme). O servidor do B o manda como `audio/mpeg` (`lib/http_static`).
+  - **Fora do git:** é uma gravação de terceiros (provavelmente a do EGPWS, convertida de um vídeo), e o repositório é público. O `.gitignore` exclui `ground-station/web/*.mp3` e `docs/audio/`. Para gravar no B: copiar o arquivo para `ground-station/web/bank-angle.mp3` e rodar `pio run -e ground -t uploadfs`.
+  - **Sem o arquivo** (ou se ele não decodificar), a página usa a voz sintética do aparelho (`speechSynthesis`, "bank angle" em inglês). Funciona sem internet nas vozes locais do Windows e do Android.
+- **Bancada a fazer:** ligar o som no notebook e num celular, inclinar a caixa além de 35° e de 45°, reconhecer pelo encoder e conferir que para; repetir sem o MP3 no LittleFS para ouvir a voz sintética.
 
 ## Diagnóstico de rede e bancada de vários celulares (24/10/2026)
 

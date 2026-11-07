@@ -31,8 +31,9 @@ struct WebTelemetry {
 
 // Telemetria ("tel"). Devolve o tamanho escrito (0 se não coube)
 size_t webBuildTelemetry(const WebTelemetry &t, char *out, size_t n);
-// Boas-vindas ("hello"): declinação, taxas aceitas e se os comandos exigem PIN
-size_t webBuildHello(float declinationDeg, bool pinRequired, char *out, size_t n);
+// Boas-vindas ("hello"): declinação, taxas aceitas, se os comandos exigem PIN e o limite do aviso de bank (a página
+// toca o "BANK ANGLE" acima dele, também com o alarme de atitude anormal; docs/web.md, "Som do BANK ANGLE")
+size_t webBuildHello(float declinationDeg, bool pinRequired, float bankCautionDeg, char *out, size_t n);
 // Andamento de um comando ("cmd"), para todos os clientes. rid 0: sem o campo
 size_t webBuildCmdEvent(uint8_t cmd, int32_t arg, uint16_t seq, CmdState state, bool localFull, const char *origin,
                         uint16_t rid, char *out, size_t n);

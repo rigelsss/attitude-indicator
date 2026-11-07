@@ -111,10 +111,11 @@ static void test_buffer_too_small() {
 
 static void test_hello_and_events() {
     char buf[300];
-    webBuildHello(-20.7f, true, buf, sizeof(buf));
+    webBuildHello(-20.7f, true, 35.0f, buf, sizeof(buf));
     JsonDocument d = parse(buf);
     TEST_ASSERT_EQUAL_STRING("hello", d["type"]);
     TEST_ASSERT_TRUE(d["pin"].as<bool>());
+    TEST_ASSERT_EQUAL_FLOAT(35.0f, d["bank_caution"].as<float>());
     TEST_ASSERT_EQUAL_INT(4, d["rates"].size());
     webBuildCmdEvent(CMD_SET_RATE_HZ, 25, 777, CmdState::Accepted, false, "página", 0, buf, sizeof(buf));
     d = parse(buf);

@@ -89,7 +89,8 @@ class SimuladorB:
 
     # ---------- mensagens ----------
     def _hello(self):
-        return _json({"type": "hello", "decl": self.decl, "pin": bool(self.pin), "rates": list(TAXAS_HZ)})
+        return _json({"type": "hello", "decl": self.decl, "pin": bool(self.pin), "bank_caution": 35.0,
+                      "rates": list(TAXAS_HZ)})
 
     def _tel(self):
         self._n += 1

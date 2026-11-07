@@ -53,6 +53,7 @@ let stale = false;          // socket aberto, mas sem "tel" há mais de TEL_STAL
 let decl = 0;               // declinação magnética (hello e tel)
 let headingTrue = false;    // MAG ou VERD
 let pinRequired = true;
+let bankCaution = null;     // limite do aviso de bank (hello); sem ele, o som segue só o tipo do alarme
 
 // ---------- Armazenamento local (só conveniência: pode falhar em janela privada) ----------
 
@@ -85,6 +86,7 @@ function connect() {
       decl = m.decl || 0;
       pinRequired = !!m.pin;
       $('pin-row').hidden = !pinRequired;
+      bankCaution = typeof m.bank_caution === 'number' ? m.bank_caution : null;
     } else if (m.type === 'tel') {
       last = m;
       lastTelAt = performance.now();
@@ -212,6 +214,103 @@ function render() {
   alarmEl.className = `alarm ${an[1]}${al.acked ? ' acked' : ''}`;
 
   drawPfd(t, cur, valid, att, hdgOk, gyroOnly, al.kind);
+  const bankOver = al.kind === 'bank_caution' ||
+                   (al.kind === 'attitude' && bankCaution !== null && Math.abs(t.roll) > bankCaution);
+  bankSound(att && !al.acked && bankOver);
+}
+
+// ---------- Som do BANK ANGLE (docs/web.md, "Som do BANK ANGLE") ----------
+// Como o EGPWS: "bank angle" repetido enquanto o bank passar do aviso, também com o alarme de atitude anormal
+// (bank > 45°). O alarme reconhecido (encoder ou tecla k do B), o bank de volta abaixo do aviso, a falta de dado
+// atual e o som desligado só impedem a próxima repetição: o "bank angle" que começou termina (~1,7 s), como no EGPWS.
+// O navegador só toca som depois de um toque na página: o botão "Som" liga. O arquivo bank-angle.mp3 fica fora do
+// git (gravação de terceiros); sem ele, uma voz sintética do aparelho diz "bank angle"
+
+const BANK_SOUND_URL = 'bank-angle.mp3';
+const BANK_REPEAT_MS = 2000;   // do início de um "bank angle" ao início do próximo (o arquivo tem ~1,7 s)
+let soundOn = false;           // o botão
+let soundReady = false;        // ligado e com o carregamento desta ativação concluído
+let soundSeq = 0;              // ativação atual: um carregamento de uma ativação antiga não toca nada
+let audioCtx = null;
+let bankBuffer = null;         // áudio decodificado; null = voz sintética
+let loading = null;            // carregamento em curso (compartilhado entre ativações)
+let currentSrc = null;         // MP3 tocando agora: um "bank angle" não começa por cima de outro
+let lastBankAt = -Infinity;
+
+function bankAngleBusy() {
+  return currentSrc !== null || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending));
+}
+
+function playBankAngle() {
+  if (bankAngleBusy()) return;
+  if (audioCtx && bankBuffer) {
+    const src = audioCtx.createBufferSource();
+    src.buffer = bankBuffer;
+    src.connect(audioCtx.destination);
+    src.onended = () => { if (currentSrc === src) currentSrc = null; };
+    currentSrc = src;
+    src.start();
+  } else if ('speechSynthesis' in window) {
+    const u = new SpeechSynthesisUtterance('bank angle');
+    u.lang = 'en-US';
+    u.rate = 1.1;
+    speechSynthesis.speak(u);
+  }
+}
+
+// active: bank além do aviso, alarme não reconhecido e dado atual. Sem ele, nada novo começa, e um alarme que
+// volta fala na hora (ou logo que o "bank angle" em curso terminar)
+function bankSound(active) {
+  if (!active) {
+    lastBankAt = -Infinity;
+    return;
+  }
+  if (!soundReady || bankAngleBusy()) return;
+  const now = performance.now();
+  if (now - lastBankAt < BANK_REPEAT_MS) return;
+  lastBankAt = now;
+  playBankAngle();
+}
+
+async function fetchBankSound() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!audioCtx) audioCtx = new Ctx();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    if (bankBuffer) return;
+    const r = await fetch(BANK_SOUND_URL);
+    if (!r.ok) return;   // sem o arquivo no LittleFS: voz sintética
+    const data = await r.arrayBuffer();
+    bankBuffer = await new Promise((ok, fail) => audioCtx.decodeAudioData(data, ok, fail));
+  } catch (e) {
+    bankBuffer = null;   // falhou: voz sintética
+  }
+}
+
+// Um carregamento por vez: ligar, desligar e ligar de novo rápido espera o mesmo, sem um segundo pedido ao B
+function loadBankSound() {
+  if (!loading) loading = fetchBankSound().finally(() => { loading = null; });
+  return loading;
+}
+
+function setupSound() {
+  const btn = $('sound');
+  btn.addEventListener('click', async () => {
+    soundOn = !soundOn;
+    const seq = ++soundSeq;
+    soundReady = false;
+    btn.textContent = soundOn ? 'Som: ligado' : 'Som: desligado';
+    btn.classList.toggle('on', soundOn);
+    if (!soundOn) return;   // o "bank angle" em curso termina; nada novo começa
+    // A Web Audio e a voz sintética precisam ser destravadas dentro do toque: o resume() sai antes do await
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    await loadBankSound();
+    if (!soundOn || seq !== soundSeq) return;   // desligado (ou religado) durante o carregamento
+    soundReady = true;
+    lastBankAt = performance.now();
+    playBankAngle();   // confirmação: o som funciona neste aparelho
+  });
 }
 
 // ---------- Horizonte (mesmos sinais do TFT: roll à direita gira o horizonte no sentido anti-horário) ----------
@@ -433,6 +532,7 @@ function setupCommands() {
 }
 
 setupCommands();
+setupSound();
 render();
 connect();
 setInterval(checkTelemetry, 250);

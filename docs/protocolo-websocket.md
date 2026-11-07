@@ -9,11 +9,12 @@ Todas as mensagens são objetos JSON com o campo `type`. Um número não finito 
 ### `hello` (na conexão)
 
 ```json
-{ "type": "hello", "decl": -20.7, "pin": true, "rates": [10, 20, 25, 50] }
+{ "type": "hello", "decl": -20.7, "pin": true, "bank_caution": 35.0, "rates": [10, 20, 25, 50] }
 ```
 
 - `decl`: declinação magnética do local (`MAG_DECLINATION_DEG` no `config.h` do B, negativa para oeste). Proa verdadeira = `hdg + decl`, levada a 0..360.
 - `pin`: os comandos exigem o PIN (`WEB_CMD_PIN`).
+- `bank_caution`: limite do aviso de bank em graus (`ALARM_BANK_CAUTION_DEG`, desde 07/11/2026). A página fala "bank angle" com o aviso e também com o alarme de atitude anormal enquanto o \|roll\| passar dele ([web.md](web.md), "Som do BANK ANGLE"). Um cliente que não o recebe segue só o `alarm.kind`.
 - `rates`: taxas aceitas pelo `set_rate`.
 - Logo depois do `hello`, o B manda o **último estado dos até 8 comandos mais recentes** (mensagens `cmd`, do mais antigo ao mais novo), de qualquer origem. Assim, uma página recarregada ou reconectada mostra o resultado de um comando que terminou enquanto ela estava fora.
 

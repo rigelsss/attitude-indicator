@@ -14,3 +14,6 @@ logs/
 /docs/*.txt
 *jpeg
 .pio-corrompido/
+# Som do BANK ANGLE: gravação de terceiros, fica fora do repositório público (docs/web.md, "Som do BANK ANGLE")
+/docs/audio/
+/ground-station/web/*.mp3

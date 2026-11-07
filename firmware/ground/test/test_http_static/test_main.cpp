@@ -52,6 +52,7 @@ static void test_content_types() {
     TEST_ASSERT_EQUAL_STRING("text/html; charset=utf-8", httpContentType("/index.html"));
     TEST_ASSERT_EQUAL_STRING("application/javascript; charset=utf-8", httpContentType("/app.js"));
     TEST_ASSERT_EQUAL_STRING("text/css; charset=utf-8", httpContentType("/style.css"));
+    TEST_ASSERT_EQUAL_STRING("audio/mpeg", httpContentType("/bank-angle.mp3"));
     TEST_ASSERT_EQUAL_STRING("text/plain; charset=utf-8", httpContentType("/x.bin"));
 }
 

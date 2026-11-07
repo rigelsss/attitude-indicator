@@ -33,7 +33,7 @@ header {
 h1 { margin: 0; font-size: 1.15rem; }
 h2 { margin: 0 0 10px; font-size: 1rem; color: var(--muted); font-weight: 600; }
 
-.badges { display: flex; gap: 6px; }
+.badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .badge {
   padding: 2px 10px;
   border-radius: 999px;
@@ -88,6 +88,18 @@ canvas {
 .alarm.caution { color: #000; background: var(--warn); }
 .alarm.warning { color: #fff; background: var(--bad); }
 .alarm.acked { opacity: 0.75; }
+
+.sound-btn {
+  font: inherit;
+  font-size: 0.85em;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sound-btn.on { color: #000; background: var(--warn); border-color: var(--warn); }
 
 .grid {
   display: grid;

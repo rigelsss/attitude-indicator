@@ -43,6 +43,7 @@ const char *httpContentType(const char *path) {
     if (endsWith(path, ".svg")) return "image/svg+xml";
     if (endsWith(path, ".png")) return "image/png";
     if (endsWith(path, ".ico")) return "image/x-icon";
+    if (endsWith(path, ".mp3")) return "audio/mpeg";   // som do BANK ANGLE (docs/web.md)
     return "text/plain; charset=utf-8";
 }
 

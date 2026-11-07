@@ -108,11 +108,12 @@ size_t webBuildTelemetry(const WebTelemetry &t, char *out, size_t n) {
     return finish(doc, out, n);
 }
 
-size_t webBuildHello(float declinationDeg, bool pinRequired, char *out, size_t n) {
+size_t webBuildHello(float declinationDeg, bool pinRequired, float bankCautionDeg, char *out, size_t n) {
     JsonDocument doc;
     doc["type"] = "hello";
     doc["decl"] = declinationDeg;
     doc["pin"] = pinRequired;
+    doc["bank_caution"] = bankCautionDeg;
     JsonArray rates = doc["rates"].to<JsonArray>();
     for (int r : {10, 20, 25, 50}) rates.add(r);
     return finish(doc, out, n);

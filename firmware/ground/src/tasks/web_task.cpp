@@ -348,7 +348,7 @@ static void wsPush(uint8_t num, const WsOut &o) {
 static size_t buildOut(const WsOut &o) {
     switch (o.kind) {
     case WsOut::Kind::Hello:
-        return webBuildHello(MAG_DECLINATION_DEG, WEB_CMD_PIN[0] != '\0', s_msg, sizeof(s_msg));
+        return webBuildHello(MAG_DECLINATION_DEG, WEB_CMD_PIN[0] != '\0', ALARM_BANK_CAUTION_DEG, s_msg, sizeof(s_msg));
     case WsOut::Kind::Cmd:
         return webBuildCmdEvent(o.ce.ev.cmd, o.ce.ev.arg, o.ce.ev.seq, o.ce.ev.state, o.ce.localFull,
                                 cmdOriginText(o.ce.ev.origin), o.ce.ev.rid, s_msg, sizeof(s_msg));

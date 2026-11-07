@@ -63,6 +63,61 @@
 #define ALARM_DOUBLE_ON_MS      100
 #define ALARM_BUZZER_ENABLED    0       // buzzer adiado (sem transistor); 1 liga o PIN_BUZZER junto com o LED
 
+// ---------- Anel de LEDs (docs/caixa-b.md, "Anel de LEDs"; lib/led_ring) ----------
+// Fita WS2812 em dois anéis em série: o de cima (tampa, sem canaleta) primeiro, depois o lateral (na canaleta).
+// GPIO 27 → conversor BSS138 → 330 Ω → DIN; 5 V do power bank pelo P4 (docs/img/ligacao-fita.svg)
+#define PIN_LED_STRIP    27
+#define PIN_LED_POT      34       // cursor do potenciômetro do brilho (ADC1: o ADC2 não funciona com o Wi-Fi)
+#define LED_COLOR_GRB    true     // ordem das cores da WS2812 (GRB); false para RGB, se o vermelho e o verde saírem trocados
+#define LED_RMT_CHANNEL  0        // canal do RMT (lib/ws2812_rmt usa 2 blocos: o canal 1 fica reservado)
+#define LED_RATE_HZ      30
+// Geometria de cada anel: medidas do retângulo dos LEDs (cauda → nariz, esquerda → direita), LEDs por lado, canto
+// onde entra o DIN e sentido (visto de cima, nariz para longe). Canto e sentido: acertar com a tecla w do
+// ground_diag na montagem. LedCorner: TailLeft, TailRight, NoseRight, NoseLeft
+#define LED_TOP_DEPTH_MM    125.0f
+#define LED_TOP_WIDTH_MM    155.0f
+#define LED_TOP_N_NOSE      9
+#define LED_TOP_N_RIGHT     7
+#define LED_TOP_N_TAIL      9
+#define LED_TOP_N_LEFT      7
+#define LED_TOP_START       LedCorner::TailLeft
+#define LED_TOP_CLOCKWISE   true
+#define LED_TOP_GAIN        0.7f     // sem difusor, o de cima parece mais forte: ajustar a olho na montagem
+#define LED_SIDE_DEPTH_MM   125.0f
+#define LED_SIDE_WIDTH_MM   155.0f
+#define LED_SIDE_N_NOSE     9
+#define LED_SIDE_N_RIGHT    7
+#define LED_SIDE_N_TAIL     9
+#define LED_SIDE_N_LEFT     7
+#define LED_SIDE_START      LedCorner::TailLeft
+#define LED_SIDE_CLOCKWISE  true
+#define LED_SIDE_GAIN       1.0f
+#define LED_TOP_COUNT  (LED_TOP_N_NOSE + LED_TOP_N_RIGHT + LED_TOP_N_TAIL + LED_TOP_N_LEFT)
+#define LED_SIDE_COUNT (LED_SIDE_N_NOSE + LED_SIDE_N_RIGHT + LED_SIDE_N_TAIL + LED_SIDE_N_LEFT)
+#define LED_COUNT      (LED_TOP_COUNT + LED_SIDE_COUNT)
+// Cores ("nível de bolha"): branco até a faixa morta, depois mistura contínua até o azul (lado alto) ou o marrom
+// (lado baixo), puros na saturação. O marrom em LED tende ao laranja: ajustar a olho na montagem
+#define LED_DEADBAND_DEG    1.0f
+#define LED_SATURATION_DEG  20.0f
+#define LED_COLOR_WHITE     {255, 255, 255}
+#define LED_COLOR_SKY       {0, 70, 255}
+#define LED_COLOR_GROUND    {140, 50, 0}
+#define LED_COLOR_AMBER     {255, 110, 0}
+#define LED_COLOR_ALARM     {255, 0, 0}
+#define LED_FLASH_ON_MS     500      // alarme de atitude sem reconhecimento: anel vermelho por 500 ms...
+#define LED_FLASH_PERIOD_MS 3000     // ...a cada 3 s (reconhecido: só o horizonte)
+#define LED_SPIN_PERIOD_MS  2000     // sem dado atual: uma volta do LED vermelho
+#define LED_PULSE_PERIOD_MS 1500     // A calibrando: um ciclo do âmbar
+#define LED_PULSE_MIN       0.2f
+// Brilho pelo potenciômetro e teto de corrente (docs/caixa-b.md, "Brilho e corrente")
+#define LED_POT_HYST        40       // contagens do ADC (de 4095)
+#define LED_POT_GAMMA       2.2f
+#define LED_BRIGHT_MIN      0.05f    // o anel nunca some
+#define LED_MA_PER_CHANNEL  20.0f
+#define LED_MA_IDLE         1.0f
+#define LED_MA_MAX          1300.0f  // teto da fita; subir até ~2000 se a bancada permitir
+#define LED_RETRY_MS        5000     // driver da fita sem reinstalar depois de uma recuperação: nova tentativa
+
 // ---------- Rede ----------
 #define AP_SSID          "Horizonte-ESP"
 #define AP_PASS          "horizonte123"   // mín. 8 caracteres
@@ -172,6 +227,9 @@
 #define WEB_TASK_PERIOD_MS      5      // volta: atende HTTP e WebSocket
 #define WEB_NET_EVENT_QUEUE_LEN 32     // eventos de rede para a serial (AP, HTTP, WebSocket; diagnóstico)
 #define WEB_MSG_BYTES           768    // maior mensagem JSON montada (a telemetria tem ~450 bytes)
+#define LED_TASK_CORE           1      // anel de LEDs: abaixo da display_task, fora do núcleo do Wi-Fi
+#define LED_TASK_PRIO           1
+#define LED_TASK_STACK          4096
 #define SERIAL_TASK_CORE        0
 #define SERIAL_TASK_PRIO        1
 #define SERIAL_TASK_STACK       4096
@@ -194,6 +252,8 @@
 #define DIAG_BTN_LONG_MS      600      // pressão longa a partir deste tempo
 #define DIAG_TFT_COLOR_MS     700      // teste t: tempo de cada cor cheia
 #define DIAG_SPRITE_FRAMES    20       // teste s: quadros enviados para a média do tempo
+#define DIAG_LED_BRIGHT       0.25f    // teclas w (fita): brilho dos passos de orientação
+#define DIAG_POT_PRINT_MS     200      // tecla p: leitura do potenciômetro a cada 200 ms
 
 // MAC da Placa A (avião)
 static const uint8_t PEER_MAC[6] = {0x1C, 0x69, 0x20, 0xA4, 0xE9, 0x44};

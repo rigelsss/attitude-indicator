@@ -14,6 +14,8 @@
 //                (docs/web.md, passo 2)
 //   web_task     (prio 1, núcleo 0) — página (HTTP, LittleFS) e WebSocket: telemetria em JSON e comandos com
 //                PIN (docs/web.md, passo 3)
+//   led_task     (prio 1, núcleo 1) — anel de LEDs da caixa: horizonte em "nível de bolha", estados e flash do
+//                alarme, brilho pelo potenciômetro e teto de corrente (docs/caixa-b.md, "Anel de LEDs")
 //   serial_task  (prio 1, núcleo 0) — única dona do Serial depois do boot: teclas e impressão
 // Serial: c = estado | r = resumo por segundo (começa ligado) | a = fluxo de pacotes (10 Hz) | k = reconhecer o
 // alarme | g, m, z, 0, f, X = comandos para o A.
@@ -23,6 +25,7 @@
 #include "tasks/alarm_task.h"
 #include "tasks/command_task.h"
 #include "tasks/input_task.h"
+#include "tasks/led_task.h"
 #include "tasks/link_task.h"
 #include "tasks/display_task.h"
 #include "tasks/oled_task.h"
@@ -62,7 +65,7 @@ void setup() {
     Serial.begin(115200);
     delay(SERIAL_START_DELAY_MS);   // tempo para o monitor reabrir depois do reset
     // Até a serial_task começar, só o setup() escreve no Serial
-    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, comandos, alarme, encoder, OLED, TFT, web e serial)\n",
+    Serial.printf("[B] boot — compilado em %s — TelemetryPacket = %u bytes, contrato v%d (tasks: link, comandos, alarme, encoder, OLED, TFT, LEDs, web e serial)\n",
                   BUILD_STAMP, (unsigned)sizeof(TelemetryPacket), TELEMETRY_VERSION);
     Serial.printf("[B] reinício anterior: %s\n", resetReasonText(esp_reset_reason()));
     // O sprite do TFT (57,6 kB contíguos) é alocado antes do Wi-Fi, com o heap ainda sem fragmentar. Sem ele, o
@@ -80,6 +83,8 @@ void setup() {
     if (!oledTaskStart()) Serial.println("[B] ERRO: sem memória para a oled_task; seguindo sem o OLED");
     if (!displayTaskStart()) Serial.println("[B] ERRO: sem memória para a display_task; seguindo sem o TFT");
     else if (!tftOk) Serial.println("[B] TFT sem sprite: só a mensagem de erro na tela");
+    // Sem o anel, o resto segue: o c mostra "leds: task não iniciada"
+    if (!ledTaskStart()) Serial.println("[B] ERRO: sem memória para a led_task; seguindo sem o anel de LEDs");
     // Sem a página, o resto segue
     if (!webTaskStart()) Serial.println("[B] ERRO: sem memória para a web_task; seguindo sem a página");
     if (!serialTaskStart()) fatal("[B] ERRO: sem memória para a serial_task; reiniciando em 1 s");

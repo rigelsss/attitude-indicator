@@ -1,0 +1,4 @@
+{
+  "name": "ws2812_rmt",
+  "platforms": "espressif32"
+}

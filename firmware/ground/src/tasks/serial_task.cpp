@@ -10,6 +10,7 @@
 #include "command_task.h"
 #include "display_task.h"
 #include "input_task.h"
+#include "led_task.h"
 #include "link_task.h"
 #include "oled_task.h"
 #include "radio_rx.h"
@@ -295,6 +296,18 @@ static void printState(bool streamR, bool streamA) {
                       ALARM_BANK_CAUTION_DEG, ALARM_BANK_DEG, ALARM_PITCH_UP_DEG, ALARM_PITCH_DOWN_DEG, ALARM_HYST_DEG);
     else
         Serial.println("alarme: task não iniciada");
+    LedStatus ls;
+    if (ledCurrent(ls))
+        Serial.printf("leds: %s%s | brilho %.0f %% (potenciômetro %u, média %u) | corrente estimada %.0f mA (teto %.0f) | "
+                      "quadros %lu, limitados pelo teto %lu | driver da fita: %s, envio %lu us, falhas %lu, recuperações %lu "
+                      "(sem sucesso %lu) | %d LEDs (cima %d, lateral %d)\n",
+                      ledModeText(ls.mode), ls.alarmActive ? " + flash do alarme" : "", ls.brightness * 100.0f,
+                      (unsigned)ls.potRaw, (unsigned)ls.potValue, ls.estimatedMa, LED_MA_MAX, (unsigned long)ls.frames,
+                      (unsigned long)ls.cappedFrames, ws2812StateText(ls.driver), (unsigned long)ls.showUs,
+                      (unsigned long)ls.failures, (unsigned long)ls.recoveries, (unsigned long)ls.recoveryFailures,
+                      LED_COUNT, LED_TOP_COUNT, LED_SIDE_COUNT);
+    else
+        Serial.println("leds: task não iniciada");
     InputStatus in;
     if (inputCurrent(in))
         Serial.printf("encoder: alvo da pressão longa %s | cliques horário %lu, anti-horário %lu | inválidas %lu | "

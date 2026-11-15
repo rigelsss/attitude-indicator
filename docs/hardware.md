@@ -1304,6 +1304,67 @@ Segundo OLED no `Wire1` ([caixa-b.md](caixa-b.md), "Segundo OLED"). Log `firmwar
 - **07/11/2026:** o usuário confirmou os dois OLEDs instalados e funcionando, também sem log. O log abaixo fica para a bancada curta da montagem, com o power bank e a protoboard fixados e o encoder e o potenciômetro nos furos da caixa.
 - **Pendente, para a montagem do B na caixa** (06/11/2026: o B está fora das telas e o encoder, desinstalado), junto com o encoder religado: um log do `ground` atual (compilado depois de 06/11/2026: a flag `WIRE_INTERFACES_COUNT` voltou ao `platformio.ini`, e a `oled_task` lê o estado uma vez por volta) com o `c` mostrando os dois OLEDs presentes, o `<` trocando de linha no giro e a pressão longa zerando o alvo marcado.
 
+### Conversor de nível BSS138 (09/11/2026)
+
+Teste estático com o multímetro, sem firmware: LV no 3V3 e HV no 5V/VIN do ESP B (alimentado pela USB), GND comum. Para o sinal da fita ([caixa-b.md](caixa-b.md), "Sinal da fita"). **Passou no módulo 2, canal 1.**
+
+- **Módulo 1: estragado na soldagem dos pinos** (pelo usuário). Fora de uso.
+- **Módulo 2, canal 1:**
+  - LV1 no GND → HV1 = **0 V** (LV → HV, o sentido da fita; o MOSFET conduz);
+  - HV1 no GND → LV1 = **0 V** (HV → LV; 0 V e não ~0,6 V, então não é só o diodo interno);
+  - nos dois testes, os outros HVn ficaram em **4,85–4,95 V**: os canais não interferem entre si e não há ponte de solda entre eles.
+- Uma primeira tentativa deu HV1 em 4,8 V com o LV aterrado; refeita, passou. Provavelmente o jumper e a medição estavam em canais diferentes (a ordem dos pinos é `LV1 LV2 LV GND LV3 LV4`).
+- Canais 2 a 4 do módulo 2 não testados. A fita usa só um (o canal 1).
+- **Não testado:** a velocidade. A 800 kHz, a subida pelo pull-up de 10 kΩ pode não bastar; isso só aparece com a fita (passo `w` do `ground_diag`).
+
+### Buzzer com o BU406 (14/11/2026)
+
+Buzzer ativo de 5 V com o (+) no VIN do ESP B, chaveado por um **BU406** da sucata ([caixa-b.md](caixa-b.md), "Buzzer"). Ligação na protoboard: GPIO 26 → **434 Ω** (dois de 220 Ω em série; não havia 470 Ω) → base; **10 kΩ da base ao GND**; emissor no GND; coletor no (−) do buzzer; **1N4007** em paralelo com o buzzer, com a faixa no (+) (no lugar do 1N4148). B alimentado pela USB do PC. **Passou.**
+
+**1. Desligado, em continuidade:** sem curto VIN–GND nem 3V3–GND; a aba isolada; a faixa do diodo no VIN; o 434 Ω medido em Ω (o bipe de continuidade do multímetro não soa através de um resistor).
+- **Erro de montagem encontrado:** o 10 kΩ tinha sido posto entre o **emissor** e o GND, no lugar de base–GND. Ao movê-lo para a base, o emissor ficou sem ligação ao GND. Na primeira tentativa da etapa 4 o buzzer não tocou: com o comando no 3V3, a perna B deu 3,19 V (o divisor 434 Ω / 10 kΩ sozinho, ~3,16 V) e a perna E, 2,8 V (solta, acompanhando a base). **Corrigido com um jumper do emissor ao GND.** Depois: base–GND = 9,91 kΩ.
+
+**2. BU406 no modo diodo, fora da protoboard:**
+
+| Vermelha → preta | Medido |
+|---|---|
+| B → E | 0,534 V |
+| B → C | 0,493 V |
+| E → B, C → B, C → E, E → C | OL |
+
+Junções normais (B→E acima de B→C, como num NPN; o emissor é o pino da direita). E→C em OL: **sem o diodo de proteção interno**.
+
+**3. Energizado, com o comando solto:** VIN 4,9 V; coletor 4,8 V; base 0 V; buzzer mudo.
+
+**4. Comando no 3V3 (jumper na ponta livre do 434 Ω):** apito forte; **Vbe 0,65 V**; **Vce 0,1 V** (saturado: o 434 Ω fica); VIN 4,9 V tocando (sem queda); para na hora ao soltar; **10 ciclos** de ~1 s sem reinício nem `Brownout` (conferido pela linha `compilado em` no monitor; os OLEDs não estavam ligados).
+
+**5. Correntes: não medidas** (decisão do usuário). Pelo cálculo, a base recebe ≈ (3,3 − 0,65) / 434 ≈ **6,1 mA** (menos ~0,07 mA do 10 kΩ). A do buzzer fica sem número; os indícios de que é pequena são o VIN igual com e sem o buzzer e o Vce de 0,1 V.
+
+**6. Comando no GPIO 26, com o firmware antigo (`ALARM_BUZZER_ENABLED 0`, o pino nunca configurado):** mudo no boot e nos resets pelo EN; base 0 V (só o 10 kΩ a segura); BU406 frio depois de 2 min.
+
+**7. Firmware** (`ALARM_BUZZER_ENABLED 1`; o buzzer segue o `out.buzzer` da `lib/alarm_logic`: o ritmo do LED, mudo com o alarme reconhecido e no link perdido ou dado atrasado):
+- **`ground_diag`, tecla `b`** (carimbo `2026-11-14 19:33:45`; logs `device-monitor-261114-193419` e `-195514`): no primeiro teste, nenhum som, com o `[buzzer] 3 bipes…` e o `[buzzer] fim` impressos e a base subindo alguns décimos no multímetro. O 3V3 na mesma coluna tocou, e as continuidades do pino 26 até o resistor passaram; ao refazer o `b` depois de reencaixar o jumper do GPIO 26, os 3 bipes saíram. **Causa provável: o jumper do GPIO 26 mal encaixado na coluna.**
+- **`ground`** (carimbo `2026-11-14 19:56:03`; logs `device-monitor-261114-195653` e `-195915`), com o A ligado e a caixa inclinada na mão; reconhecimento pela tecla `k` (o encoder não está instalado):
+
+| Teste | No log | Buzzer (de ouvido) |
+|---|---|---|
+| Boot do B | sem `Brownout` | mudo |
+| Aviso de bank | +35,1° e −35,1° | 2 Hz |
+| Atitude anormal por bank | +45,1° e −45,3° | 5 Hz |
+| Atitude anormal por pitch | +25,0° a +25,4° e −20,1° | 5 Hz |
+| Histerese | de 45° volta ao aviso em 41,7°; `terminou` | para |
+| `k` com a atitude anormal ativa | `reconhecido: ATITUDE ANORMAL` (duas vezes) | cala; LED aceso fixo |
+| Alarme novo depois do reconhecido | `terminou` e nova `ATITUDE ANORMAL` 0,9 s depois | volta a bipar |
+| A desligado | `DADO ATRASADO` e, 240 ms depois, `LINK PERDIDO` | mudo; LED a 1 Hz |
+
+- A troca de condição com o alarme reconhecido (de 50° para ~40°, voltando a bipar a 2 Hz) foi conferida de ouvido pelo usuário, mas não aparece nos dois logs. O `test_buzzer` do `pio test -e native` cobre o caso.
+
+**Volume:** alto demais na protoboard; resolvido com fita sobre o furo do buzzer.
+
+**Montagem na base da caixa (14/11/2026):** o buzzer, o BU406 e os resistores foram fixados na posição final, com o TFT e os OLEDs desligados para dar espaço. Na primeira ligação, o buzzer **apitou sem parar**. O usuário corrigiu a ligação sem informar a causa. Depois disso, o `b` do `ground_diag` deu os 3 bipes.
+
+**8. No power bank** (`ground` gravado; B só no power bank, pelo adaptador USB-C → micro-USB; sem TFT nem OLEDs): 5 alarmes de atitude anormal (bank acima de 45°, ~10 s cada), com bipes a 5 Hz. O **LED do link ficou aceso direto**, então não houve reinício. **Sem registro serial**, porque não havia monitor: um `Brownout` sem reinício não teria aparecido. O registro pela serial fica para a bancada do `ground` com tudo montado (TFT, OLEDs e encoder ligados de novo).
+
 ### Comandos do B para o A pelo console (23/10/2026)
 
 Passos 1 e 2 da semana 5 ([web.md](web.md)). Log `firmware/ground/logs/261023-211045` (B com carimbo `2026-10-23 21:03:03`; A regravado antes). O A ficou no power bank, parado na mesa. Nenhuma linha embaralhada pela USB.

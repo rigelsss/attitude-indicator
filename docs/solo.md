@@ -108,7 +108,7 @@ Os resultados vão para o [hardware.md](hardware.md).
 - **As piscadas começam acesas** e contam a fase a partir da mudança de condição: um alarme novo aparece na hora. Com a fase contada desde o boot, as duas piscadas da atitude inválida podiam atrasar até ~1,7 s (revisão de 23/10/2026).
 - **Mudanças de alarme descartadas** com a fila cheia são contadas e avisadas na serial (`[alarme] N mudanças descartadas`), e o `c` mostra o total, como os eventos do link.
 - Uma condição diferente (inclusive o alarme caindo para o aviso), ou a mesma voltando depois de terminar, alarma de novo.
-- **Buzzer:** os mesmos ritmos do LED, desligado por `ALARM_BUZZER_ENABLED 0`.
+- **Buzzer:** os mesmos ritmos do LED, desligado por `ALARM_BUZZER_ENABLED 0`. **14/11/2026:** ligado (`ALARM_BUZZER_ENABLED 1`, pelo BU406), mudo no reconhecimento e no link perdido ou dado atrasado ([caixa-b.md](caixa-b.md), "Buzzer").
 - **Console do B:** `[alarme] … ATITUDE ANORMAL (roll …, pitch …, valid …, status …)`, `terminou`, `reconhecido`; o `c` mostra o alarme atual e os limites.
 - No passo 4, o dado velho (atraso estimado) entra na condição 1.
 

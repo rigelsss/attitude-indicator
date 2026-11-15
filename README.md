@@ -54,7 +54,7 @@ ESP A (avião) ──ESP-NOW (50 Hz)──▶ ESP B (solo) ──Wi-Fi AP / WebS
 | B | 2 × OLED 0,96" 128x64 | Dados (OLED 1) e link com a saúde do A (OLED 2) |
 | B | Encoder KY-040 | Alvo do zero (giro), zero (pressão longa) e reconhecimento do alarme (pressão curta) |
 | B | LED vermelho e LED azul da placa | Alarme e estado do link |
-| B | Buzzer ativo com transistor NPN (BU406 da sucata) | Alarme sonoro (aguardando o diodo 1N4148) |
+| B | Buzzer ativo com transistor NPN (BU406 da sucata) | Alarme sonoro (testado na protoboard e no power bank em 14/11/2026; falta o registro serial com o B montado) |
 | B | Fita WS2812 IP67 (~65 LEDs em dois anéis), conversor de nível BSS138 e potenciômetro de 10 kΩ | Anel de LEDs da caixa: horizonte em "nível de bolha" e flash do alarme, com brilho ajustável (firmware pronto; fita a caminho) |
 | B | Power bank 10 000 mAh | Alimentação do ESP B e da fita |
 
@@ -80,18 +80,18 @@ Na GY-521, deixe **AD0 desconectado** (a placa já o mantém em nível baixo, o 
 | OLED 1 (dados): SDA, SCL | 21, 22 (`Wire`, endereço `0x3C`) |
 | OLED 2 (link): SDA, SCL | 4, 19 (`Wire1`, também `0x3C`: um barramento para cada) |
 | Encoder: CLK, DT, SW | 32, 33, 25 (alimentar o módulo em 3V3, nunca em 5 V) |
-| Buzzer | 26, por um transistor NPN (resistor na base, 1N4148 em paralelo com o buzzer; [caixa-b.md](docs/caixa-b.md)) |
+| Buzzer | 26, pelo BU406 (434 Ω na base, 10 kΩ base–GND, 1N4007 em paralelo com o buzzer; [caixa-b.md](docs/caixa-b.md)) |
 | LED do link | 2 (o LED azul da própria placa) |
 | LED de alarme (vermelho) | 13, com resistor de 330 Ω |
-| Fita de LEDs (DIN) | 27, pelo conversor BSS138 e um resistor de 330 Ω |
+| Fita de LEDs (DIN) | 27, pelo conversor BSS138 e um resistor de 330 Ω (na tampa, junto do primeiro LED) |
 | Potenciômetro do brilho (cursor) | 34 (ADC1; extremos no 3V3 e no GND, 100 nF ao GND) |
 
 A montagem do ESP B foi testada peça por peça com o ambiente `ground_diag` ([solo.md](docs/solo.md), passo 0; resultados no [hardware.md](docs/hardware.md)). A fonte da verdade são os arquivos `include/config.h` de cada firmware e, para o TFT, o `platformio.ini` do ground.
 
-Ligação da fita de LEDs na caixa do B: dois anéis em série, alimentados pelo power bank através de um jack P4 ([caixa-b.md](docs/caixa-b.md)).
+Ligação da fita de LEDs na caixa do B: dois anéis em série, os dois na tampa removível (a face de cima e a borda), alimentados pelo power bank; +5V, GND e DIN passam para a tampa por um conector JST SM de 3 vias ([caixa-b.md](docs/caixa-b.md)).
 
 <p align="center">
-  <img src="docs/img/ligacao-fita.svg" width="800" alt="Esquema da fita de LEDs no ESP B: GPIO 27, conversor BSS138 e 330 ohms até o anel de cima; o DOUT dele volta ao anel lateral; 5 V do power bank pelo P4">
+  <img src="docs/img/ligacao-fita.svg" width="800" alt="Esquema da fita de LEDs no ESP B: os dois anéis na tampa removível; GPIO 27, conversor BSS138 e 330 ohms; pela abertura passa um conector JST de 3 vias, com o 330 ohms na tampa">
 </p>
 
 ## Estrutura do repositório

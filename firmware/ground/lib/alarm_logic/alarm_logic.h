@@ -44,7 +44,10 @@ const char *alarmKindShort(AlarmKind k);
 struct AlarmOutput {
     AlarmKind kind;
     bool      acked;
-    bool      alarmLed;   // LED de alarme (e buzzer) neste instante
+    bool      alarmLed;   // LED de alarme neste instante
+    bool      buzzer;     // buzzer neste instante: o ritmo do LED, só sem reconhecimento (reconhecido = mudo,
+                          // enquanto o LED fica aceso fixo) e só nas condições de atitude (aviso de bank, atitude
+                          // anormal, atitude inválida); link perdido e dado atrasado ficam só no LED (caixa-b.md)
     bool      linkLed;    // LED do link: aceso com o link OK
 };
 

@@ -268,6 +268,59 @@ static void test_data_late_pauses_invalid_timer() {
     TEST_ASSERT_EQUAL(AlarmKind::AttInvalid, a.update(in, 6100).kind);
 }
 
+// Buzzer: o ritmo do LED nas condições de atitude, mudo no reconhecimento (o LED fica aceso fixo) e mudo no link
+// perdido e no dado atrasado (só o LED)
+static void test_buzzer() {
+    AlarmLogic a(CFG);
+    TEST_ASSERT_FALSE(a.update(level(), 0).buzzer);
+    // Aviso de bank (2 Hz): toca com o LED aceso, cala com o LED apagado
+    AlarmOutput o = a.update(att(36.0f, 0), 100);
+    TEST_ASSERT_TRUE(o.alarmLed);
+    TEST_ASSERT_TRUE(o.buzzer);
+    o = a.update(att(36.0f, 0), 350);
+    TEST_ASSERT_FALSE(o.alarmLed);
+    TEST_ASSERT_FALSE(o.buzzer);
+    // Atitude anormal (5 Hz)
+    TEST_ASSERT_TRUE(a.update(att(50.0f, 0), 400).buzzer);
+    TEST_ASSERT_FALSE(a.update(att(50.0f, 0), 500).buzzer);
+    TEST_ASSERT_TRUE(a.update(att(50.0f, 0), 600).buzzer);
+    // Reconhecido: LED aceso fixo, buzzer mudo, inclusive na fase que seria acesa
+    TEST_ASSERT_TRUE(a.acknowledge());
+    o = a.update(att(50.0f, 0), 600);
+    TEST_ASSERT_TRUE(o.alarmLed);
+    TEST_ASSERT_FALSE(o.buzzer);
+    TEST_ASSERT_FALSE(a.update(att(50.0f, 0), 800).buzzer);
+    // Condição nova (caiu para o aviso): volta a tocar
+    TEST_ASSERT_TRUE(a.update(att(40.0f, 0), 820).buzzer);
+    // Fim do alarme: mudo
+    TEST_ASSERT_FALSE(a.update(level(), 900).buzzer);
+
+    // Atitude inválida: as duas piscadas também no buzzer
+    AlarmLogic b(CFG);
+    AlarmInputs inv = level();
+    inv.attValid = false;
+    b.update(inv, 0);
+    TEST_ASSERT_TRUE(b.update(inv, 1000).buzzer);
+    TEST_ASSERT_FALSE(b.update(inv, 1150).buzzer);
+    TEST_ASSERT_TRUE(b.update(inv, 1250).buzzer);
+    TEST_ASSERT_FALSE(b.update(inv, 1500).buzzer);
+
+    // Link perdido e dado atrasado: só o LED
+    AlarmLogic c(CFG);
+    AlarmInputs lost = level();
+    lost.linkOk = false;
+    o = c.update(lost, 1000);
+    TEST_ASSERT_EQUAL(AlarmKind::LinkLost, o.kind);
+    TEST_ASSERT_TRUE(o.alarmLed);
+    TEST_ASSERT_FALSE(o.buzzer);
+    AlarmInputs late = level();
+    late.dataLate = true;
+    o = c.update(late, 2000);
+    TEST_ASSERT_EQUAL(AlarmKind::DataLate, o.kind);
+    TEST_ASSERT_TRUE(o.alarmLed);
+    TEST_ASSERT_FALSE(o.buzzer);
+}
+
 static void test_kind_text() {
     TEST_ASSERT_EQUAL_STRING("DADO ATRASADO", alarmKindText(AlarmKind::DataLate));
     TEST_ASSERT_EQUAL_STRING("nenhum", alarmKindText(AlarmKind::None));
@@ -295,6 +348,7 @@ int main() {
     RUN_TEST(test_non_finite_angles_are_invalid);
     RUN_TEST(test_data_late);
     RUN_TEST(test_data_late_pauses_invalid_timer);
+    RUN_TEST(test_buzzer);
     RUN_TEST(test_kind_text);
     return UNITY_END();
 }

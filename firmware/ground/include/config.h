@@ -38,7 +38,8 @@
 #define BTN_LONG_MS      1000     // pressão longa (comandos da semana 5: não disparar sem querer)
 
 // ---------- Alarmes (docs/solo.md) ----------
-#define PIN_BUZZER       26       // buzzer ativo, ADIADO (sem transistor; usar um se a corrente passar de ~12 mA)
+#define PIN_BUZZER       26       // buzzer ativo de 5 V (+ no VIN) por um BU406: GPIO → 434 Ω → base, 10 kΩ base–GND,
+                                  // 1N4007 no buzzer (docs/caixa-b.md, "Buzzer"; bancada em hardware.md, 14/11/2026)
 #define PIN_LED_LINK     2        // LED azul da placa: link ESP-NOW (o verde externo no 27 saiu, 23/10/2026)
 #define PIN_LED_ALARM    13       // vermelho externo, 330 Ω: inclinação excessiva / perda de link
 
@@ -61,11 +62,13 @@
 #define ALARM_WARNING_BLINK_MS  100     // atitude anormal: 5 Hz
 #define ALARM_DOUBLE_PERIOD_MS  2000    // atitude inválida: duas piscadas de ALARM_DOUBLE_ON_MS a cada 2 s
 #define ALARM_DOUBLE_ON_MS      100
-#define ALARM_BUZZER_ENABLED    0       // buzzer adiado (sem transistor); 1 liga o PIN_BUZZER junto com o LED
+#define ALARM_BUZZER_ENABLED    1       // buzzer no ritmo do LED de alarme, mudo no reconhecimento e no link perdido
+                                        // ou dado atrasado (lib/alarm_logic, out.buzzer); 0 o deixa desligado
 
 // ---------- Anel de LEDs (docs/caixa-b.md, "Anel de LEDs"; lib/led_ring) ----------
-// Fita WS2812 em dois anéis em série: o de cima (tampa, sem canaleta) primeiro, depois o lateral (na canaleta).
-// GPIO 27 → conversor BSS138 → 330 Ω → DIN; 5 V do power bank pelo P4 (docs/img/ligacao-fita.svg)
+// Fita WS2812 em dois anéis em série, os dois na tampa removível: o de cima (face da tampa, sem canaleta) primeiro,
+// depois o da borda da tampa (na canaleta; LED_SIDE_*).
+// GPIO 27 → conversor BSS138 → JST de 3 vias (dados) → 330 Ω (na tampa) → DIN; +5V e GND pelo mesmo JST (docs/img/ligacao-fita.svg)
 #define PIN_LED_STRIP    27
 #define PIN_LED_POT      34       // cursor do potenciômetro do brilho (ADC1: o ADC2 não funciona com o Wi-Fi)
 #define LED_COLOR_GRB    true     // ordem das cores da WS2812 (GRB); false para RGB, se o vermelho e o verde saírem trocados
@@ -254,6 +257,8 @@
 #define DIAG_SPRITE_FRAMES    20       // teste s: quadros enviados para a média do tempo
 #define DIAG_LED_BRIGHT       0.25f    // teclas w (fita): brilho dos passos de orientação
 #define DIAG_POT_PRINT_MS     200      // tecla p: leitura do potenciômetro a cada 200 ms
+#define DIAG_BUZZER_BEEPS     3        // tecla b: bipes de DIAG_BUZZER_BEEP_MS, com o mesmo intervalo entre eles
+#define DIAG_BUZZER_BEEP_MS   200
 
 // MAC da Placa A (avião)
 static const uint8_t PEER_MAC[6] = {0x1C, 0x69, 0x20, 0xA4, 0xE9, 0x44};

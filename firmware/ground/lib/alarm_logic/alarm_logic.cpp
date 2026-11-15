@@ -75,6 +75,9 @@ AlarmOutput AlarmLogic::update(const AlarmInputs &in, uint32_t nowMs) {
     out.kind = kind_;
     out.acked = acked_;
     out.alarmLed = ledOn(nowMs);
+    // O buzzer segue o LED, mas cala no reconhecimento e não toca no link perdido nem no dado atrasado
+    const bool linkKind = kind_ == AlarmKind::LinkLost || kind_ == AlarmKind::DataLate;
+    out.buzzer = out.alarmLed && !acked_ && !linkKind;
     out.linkLed = in.linkOk;
     return out;
 }

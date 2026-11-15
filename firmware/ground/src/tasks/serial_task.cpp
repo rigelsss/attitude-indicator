@@ -300,7 +300,7 @@ static void printState(bool streamR, bool streamA) {
     if (ledCurrent(ls))
         Serial.printf("leds: %s%s | brilho %.0f %% (potenciômetro %u, média %u) | corrente estimada %.0f mA (teto %.0f) | "
                       "quadros %lu, limitados pelo teto %lu | driver da fita: %s, envio %lu us, falhas %lu, recuperações %lu "
-                      "(sem sucesso %lu) | %d LEDs (cima %d, lateral %d)\n",
+                      "(sem sucesso %lu) | %d LEDs (cima %d, borda %d)\n",
                       ledModeText(ls.mode), ls.alarmActive ? " + flash do alarme" : "", ls.brightness * 100.0f,
                       (unsigned)ls.potRaw, (unsigned)ls.potValue, ls.estimatedMa, LED_MA_MAX, (unsigned long)ls.frames,
                       (unsigned long)ls.cappedFrames, ws2812StateText(ls.driver), (unsigned long)ls.showUs,

@@ -71,7 +71,7 @@ static void alarmTask(void *) {
         digitalWrite(PIN_LED_ALARM, out.alarmLed ? HIGH : LOW);
         digitalWrite(PIN_LED_LINK, out.linkLed ? HIGH : LOW);
 #if ALARM_BUZZER_ENABLED
-        digitalWrite(PIN_BUZZER, out.alarmLed ? HIGH : LOW);
+        digitalWrite(PIN_BUZZER, out.buzzer ? HIGH : LOW);
 #endif
         const AlarmStatus st = {out.kind, out.acked, out.linkLed};
         xQueueOverwrite(s_status, &st);

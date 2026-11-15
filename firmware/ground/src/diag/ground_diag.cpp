@@ -2,6 +2,7 @@
 // do firmware: sem tasks nem rádio, cada peça testada sozinha pela serial.
 //   1  liga/desliga o LED do link (PIN_LED_LINK, o azul da placa)
 //   2  liga/desliga o LED de alarme (PIN_LED_ALARM, vermelho externo)
+//   b  buzzer (PIN_BUZZER, pelo BU406): DIAG_BUZZER_BEEPS bipes de DIAG_BUZZER_BEEP_MS
 //   i  scan dos dois I2C (Wire: PIN_I2C_SDA/SCL; Wire1: PIN_I2C1_SDA/SCL) e conferência dos OLEDs (ADDR_OLED_DATA)
 //   o  os dois OLEDs: moldura, "OLED 1" ou "OLED 2" e um xadrez; mede o tempo de um quadro a DIAG_OLED_FREQ_HZ
 //   e  liga/desliga o fluxo do encoder: passos de quadratura (com sinal; 2 por clique no KY-040 da bancada),
@@ -334,8 +335,8 @@ static void stripStep() {
         s_leds[1] = {0, 0, 255};
         s_leds[LED_TOP_COUNT] = {0, 255, 0};
         s_leds[LED_TOP_COUNT + 1] = {0, 0, 255};
-        Serial.printf("[fita] passo 1/7: LED 0 verde e LED 1 azul em cada anel (cima: 0 e 1; lateral: %d e %d). O verde "
-                      "é onde entra o DIN; o azul mostra o sentido. Esperado pelo config.h: cima em %s, %s; lateral em %s, %s\n",
+        Serial.printf("[fita] passo 1/7: LED 0 verde e LED 1 azul em cada anel (cima: 0 e 1; borda: %d e %d). O verde "
+                      "é onde entra o DIN; o azul mostra o sentido. Esperado pelo config.h: cima em %s, %s; borda em %s, %s\n",
                       LED_TOP_COUNT, LED_TOP_COUNT + 1, ledCornerText(LED_TOP_START), LED_TOP_CLOCKWISE ? "horário" : "anti-horário",
                       ledCornerText(LED_SIDE_START), LED_SIDE_CLOCKWISE ? "horário" : "anti-horário");
         stripShow(DIAG_LED_BRIGHT);
@@ -343,7 +344,7 @@ static void stripStep() {
     case 2:
         Serial.println("[fita] passo 2/7: o primeiro LED de cada lado, na ordem da fita (pelo config.h):");
         describeRing("cima", TOP_GEOM, 0);
-        describeRing("lateral", SIDE_GEOM, LED_TOP_COUNT);
+        describeRing("borda", SIDE_GEOM, LED_TOP_COUNT);
         stripShow(DIAG_LED_BRIGHT);
         break;
     case 3: Serial.println("[fita] passo 3/7: vermelho cheio"); fill({255, 0, 0}); stripShow(1.0f); break;
@@ -431,8 +432,20 @@ static void pollPot() {
     }
 }
 
+// Bloqueia o laço por ~1 s (DIAG_BUZZER_BEEPS × 2 × DIAG_BUZZER_BEEP_MS); no diagnóstico, isso não atrapalha
+static void testBuzzer() {
+    Serial.printf("[buzzer] %d bipes de %d ms no GPIO %d\n", DIAG_BUZZER_BEEPS, DIAG_BUZZER_BEEP_MS, PIN_BUZZER);
+    for (int i = 0; i < DIAG_BUZZER_BEEPS; i++) {
+        digitalWrite(PIN_BUZZER, HIGH);
+        delay(DIAG_BUZZER_BEEP_MS);
+        digitalWrite(PIN_BUZZER, LOW);
+        delay(DIAG_BUZZER_BEEP_MS);
+    }
+    Serial.println("[buzzer] fim");
+}
+
 static void printHelp() {
-    Serial.println("[diag] teclas: 1 = LED do link | 2 = LED de alarme | i = scan I2C (os dois) | o = os dois OLEDs | e = encoder | "
+    Serial.println("[diag] teclas: 1 = LED do link | 2 = LED de alarme | b = buzzer (3 bipes) | i = scan I2C (os dois) | o = os dois OLEDs | e = encoder | "
                    "t = TFT | v = inverter cores do TFT | s = sprite 8 bits | h = heap | w = fita de LEDs (passo a passo) | "
                    "p = potenciômetro | r = recuperação do driver da fita | f = recuperação malsucedida");
 }
@@ -445,6 +458,7 @@ void setup() {
     Serial.begin(115200);
     delay(500);   // tempo para o monitor reabrir depois do reset
     Serial.printf("\n[diag] ESP B — diagnóstico do hardware — compilado em %s\n", BUILD_STAMP);
+    Serial.printf("[diag] buzzer: GPIO %d\n", PIN_BUZZER);
     Serial.printf("[diag] LEDs: link GPIO %d, alarme GPIO %d | I2C: OLED 1 SDA %d, SCL %d; OLED 2 SDA %d, SCL %d | "
                   "encoder: CLK %d, DT %d, SW %d\n",
                   PIN_LED_LINK, PIN_LED_ALARM, PIN_I2C_SDA, PIN_I2C_SCL, PIN_I2C1_SDA, PIN_I2C1_SCL, PIN_ENC_CLK,
@@ -454,6 +468,8 @@ void setup() {
     pinMode(PIN_LED_ALARM, OUTPUT);
     digitalWrite(PIN_LED_LINK, LOW);
     digitalWrite(PIN_LED_ALARM, LOW);
+    pinMode(PIN_BUZZER, OUTPUT);
+    digitalWrite(PIN_BUZZER, LOW);
     // O KY-040 tem pull-ups no CLK e no DT (alimentado em 3V3); o botão usa o pull-up interno
     pinMode(PIN_ENC_CLK, INPUT);
     pinMode(PIN_ENC_DT, INPUT);
@@ -464,7 +480,7 @@ void setup() {
     Serial.printf("[diag] encoder: estado inicial CLK %d, DT %d (parado num clique: 1 e 1 ou 0 e 0; o KY-040 da "
                   "bancada descansa nos dois, com 2 passos por clique)\n",
                   (s_encPrev >> 1) & 1, s_encPrev & 1);
-    Serial.printf("[diag] fita: DIN GPIO %d, %d LEDs (cima %d, lateral %d) | potenciômetro: GPIO %d\n", PIN_LED_STRIP,
+    Serial.printf("[diag] fita: DIN GPIO %d, %d LEDs (cima %d, borda %d) | potenciômetro: GPIO %d\n", PIN_LED_STRIP,
                   LED_COUNT, LED_TOP_COUNT, LED_SIDE_COUNT, PIN_LED_POT);
     if (ws2812Begin(PIN_LED_STRIP, LED_RMT_CHANNEL, LED_COUNT, LED_COLOR_GRB)) {
         fill({0, 0, 0});
@@ -484,6 +500,7 @@ void loop() {
         switch (k) {
         case '1': toggleLed(PIN_LED_LINK, s_ledLink, "LED do link"); break;
         case '2': toggleLed(PIN_LED_ALARM, s_ledAlarm, "LED de alarme"); break;
+        case 'b': testBuzzer(); break;
         case 'i': scanI2C(); break;
         case 'o': testOleds(); break;
         case 'e':

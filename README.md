@@ -13,11 +13,17 @@ O **horizonte artificial** (*attitude indicator*) é o instrumento de painel que
 - **Arfagem (*pitch*)** indica quanto o nariz aponta para cima ou para baixo. Quando o nariz sobe, a linha do horizonte desce na tela e aparece mais céu.
 - **Rolagem (*roll*)** indica a inclinação lateral do avião. Quando a asa direita baixa, o lado direito da linha do horizonte sobe na tela. O ponteiro e a escala no arco superior indicam o ângulo de inclinação.
 
+### O que é a proa (*heading*)?
+
+A **proa** é a direção para a qual o nariz do avião aponta, vista de cima. O ângulo cresce no sentido horário a partir do norte. Norte é `000°`, leste é `090°`, sul é `180°` e oeste é `270°`. No GIF, o nariz parte do norte e gira 90° à direita até o leste. Em seguida, volta ao norte e gira 90° à esquerda até o oeste. A proa magnética aparece na parte de baixo do instrumento e a linha do horizonte permanece nivelada durante os giros.
+
+No ESP A, o magnetômetro **HMC5883L** fornece a referência de norte magnético. O firmware usa a arfagem e a rolagem para compensar a inclinação do sensor e combina a leitura com o giroscópio para acompanhar os giros. A telemetria leva a **proa magnética** (`MAG`). A estação de solo pode aplicar a declinação magnética configurada para exibir a **proa verdadeira** (`VERD`), referida ao norte geográfico. [Como o firmware calcula a proa](docs/magnetometro.md)
+
 <p align="center">
-  <img src="docs/img/horizonte-artificial.gif" width="780" alt="Simulação do horizonte artificial. A linha desce quando o nariz sobe, sobe quando o nariz baixa e gira no sentido oposto ao da inclinação das asas. O símbolo do avião permanece fixo.">
+  <img src="docs/img/horizonte-artificial.gif" width="780" alt="Simulação de arfagem, rolagem e proa. Visto de cima, o avião gira do norte (000°) para o leste (090°), volta ao norte e gira para o oeste (270°). O horizonte permanece nivelado nesses giros e o valor da proa magnética aparece na parte de baixo do instrumento.">
 </p>
 
-[Ver os quatro exemplos em uma imagem estática](docs/img/horizonte-artificial-leitura.png)
+[Ver os quatro exemplos de arfagem e rolagem em uma imagem estática](docs/img/horizonte-artificial-leitura.png)
 
 > **Estado registrado em 15/11/2026:** os dois firmwares, a página web e o cliente Python já foram exercitados em bancada.
 > - **ESP A:** pronto, na caixa final da demonstração, com as calibrações gravadas.

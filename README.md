@@ -6,11 +6,11 @@ Horizonte artificial em bancada com dois ESP32. Uma placa fica no modelo, mede a
 
 Projeto final da disciplina **Sistemas Embarcados 2026.2**. Usa Arduino via PlatformIO e cobre I2C, SPI, interrupções, FreeRTOS, ESP-NOW e IoT.
 
-> **Estado (07/11/2026):** firmware e software completos e validados em bancada.
+> **Estado registrado em 15/11/2026:** os dois firmwares, a página web e o cliente Python já foram exercitados em bancada.
 > - **ESP A:** pronto, na caixa final da demonstração, com as calibrações gravadas.
 > - **ESP B:** horizonte no TFT, dois OLEDs, encoder, alarmes, página web, WebSocket e comandos para o A com confirmação.
 > - **PC:** cliente Python com log em CSV, gráficos, comandos e scripts de análise.
-> - **Em andamento:** montagem do ESP B na caixa (power bank, buzzer com transistor e anel de LEDs WS2812). Depois vem a apresentação.
+> - **Montagem do ESP B:** buzzer instalado na base e testado no power bank em 14/11, com cinco alarmes sem reinício. O conector JST SM da fita foi definido em 15/11. Ainda faltam a bancada dos dois anéis WS2812, o registro serial com a caixa montada e o ensaio da apresentação.
 >
 > Ver [Estado do projeto](#estado-do-projeto).
 
@@ -28,7 +28,7 @@ ESP A (avião) ──ESP-NOW (50 Hz)──▶ ESP B (solo) ──Wi-Fi AP / WebS
 - **ESP A, o avião:**
   - lê o MPU6050, o magnetômetro e o barômetro pelo I2C, em tasks FreeRTOS acionadas pela interrupção do MPU (200 Hz);
   - aplica as calibrações e calcula roll e pitch com um filtro complementar, a proa compensada pela inclinação e a altitude relativa;
-  - envia um `TelemetryPacket` via ESP-NOW a 50 Hz e executa os comandos recebidos do B (calibrações, zeros, taxa), confirmando cada um;
+  - envia um `TelemetryPacket` via ESP-NOW a 50 Hz por padrão e executa os comandos recebidos do B (calibrações, zeros, taxa), confirmando cada um;
   - mostra o status num OLED pequeno.
 - **ESP B, a estação de solo:**
   - recebe os pacotes, conta perdas e atrasos e desenha o horizonte no TFT;
@@ -54,8 +54,8 @@ ESP A (avião) ──ESP-NOW (50 Hz)──▶ ESP B (solo) ──Wi-Fi AP / WebS
 | B | 2 × OLED 0,96" 128x64 | Dados (OLED 1) e link com a saúde do A (OLED 2) |
 | B | Encoder KY-040 | Alvo do zero (giro), zero (pressão longa) e reconhecimento do alarme (pressão curta) |
 | B | LED vermelho e LED azul da placa | Alarme e estado do link |
-| B | Buzzer ativo com transistor NPN (BU406 da sucata) | Alarme sonoro (testado na protoboard e no power bank em 14/11/2026; falta o registro serial com o B montado) |
-| B | Fita WS2812 IP67 (~65 LEDs em dois anéis), conversor de nível BSS138 e potenciômetro de 10 kΩ | Anel de LEDs da caixa: horizonte em "nível de bolha" e flash do alarme, com brilho ajustável (firmware pronto; fita a caminho) |
+| B | Buzzer ativo com transistor NPN (BU406 da sucata) | Alarme sonoro de atitude. Testado na protoboard e, já na base da caixa, com o power bank |
+| B | Fita WS2812 IP67 (64 LEDs na configuração inicial), conversor de nível BSS138 e potenciômetro de 10 kΩ | Dois anéis de horizonte em "nível de bolha" com flash de alarme e brilho ajustável. Firmware implementado, com validação física pendente |
 | B | Power bank 10 000 mAh | Alimentação do ESP B e da fita |
 
 ### Pinagem do ESP A
@@ -86,7 +86,7 @@ Na GY-521, deixe **AD0 desconectado** (a placa já o mantém em nível baixo, o 
 | Fita de LEDs (DIN) | 27, pelo conversor BSS138 e um resistor de 330 Ω (na tampa, junto do primeiro LED) |
 | Potenciômetro do brilho (cursor) | 34 (ADC1; extremos no 3V3 e no GND, 100 nF ao GND) |
 
-A montagem do ESP B foi testada peça por peça com o ambiente `ground_diag` ([solo.md](docs/solo.md), passo 0; resultados no [hardware.md](docs/hardware.md)). A fonte da verdade são os arquivos `include/config.h` de cada firmware e, para o TFT, o `platformio.ini` do ground.
+Os testes de bancada do ESP B usam o ambiente `ground_diag`. Os parâmetros estão no [config.h do ESP A](firmware/aircraft/include/config.h), no [config.h do ESP B](firmware/ground/include/config.h) e, para o TFT, no [platformio.ini do ESP B](firmware/ground/platformio.ini). Consulte o [roteiro do diagnóstico](docs/solo.md) e os [resultados de bancada](docs/hardware.md).
 
 Ligação da fita de LEDs na caixa do B: dois anéis em série, os dois na tampa removível (a face de cima e a borda), alimentados pelo power bank; +5V, GND e DIN passam para a tampa por um conector JST SM de 3 vias ([caixa-b.md](docs/caixa-b.md)).
 
@@ -122,6 +122,13 @@ O IntelliSense pressupõe Windows e o PlatformIO instalado em `%USERPROFILE%/.pl
 Cada firmware é um projeto PlatformIO independente. Os comandos partem da raiz do repositório:
 
 ```powershell
+pio run -d firmware/aircraft -e aircraft
+pio run -d firmware/ground -e ground
+```
+
+Para gravar e acompanhar a serial, use um terminal para cada bloco.
+
+```powershell
 # ESP A
 cd firmware/aircraft
 pio run -e aircraft -t upload
@@ -136,7 +143,7 @@ pio run -e ground -t uploadfs      # página web no LittleFS
 pio device monitor -b 115200
 ```
 
-As duas placas usam a mesma porta (COM7, uma de cada vez). Antes de `upload` e `uploadfs`, o `check_board_mac.py` confere o MAC da placa e cancela se ela não for a do ambiente. Feche o monitor antes de gravar: ele prende a porta, e o `upload` falha. A primeira linha do boot mostra `compilado em AAAA-MM-DD HH:MM:SS`, o que confirma que a placa está com o firmware que acabou de ser gravado. No `ground`, o monitor grava o log em `firmware/ground/logs`.
+Os dois projetos estão configurados para a COM7, usada por uma placa de cada vez na bancada. Se a porta mudar, ajuste `upload_port` e `monitor_port` no `platformio.ini` correspondente. Antes de `upload` e `uploadfs`, o `check_board_mac.py` confere se o MAC da placa bate com `custom_board_mac`. Feche o monitor para liberar a porta antes de gravar. Confira o carimbo `compilado em AAAA-MM-DD HH:MM:SS` na linha de boot ou, no ESP B, com a tecla `c`. O monitor do `ground` salva o log em `firmware/ground/logs`.
 
 ### Console do ESP A
 
@@ -163,7 +170,7 @@ O ESP B recebe a telemetria por ESP-NOW, cria o AP `Horizonte-ESP` com a página
 
 | Tecla (ESP B) | Função |
 |---|---|
-| `c` | Estado: MACs, canal, link, alarme, OLEDs, encoder, rede (aparelhos, WebSockets, HTTP) e memória |
+| `c` | Estado do firmware, rádio, link, alarme, OLEDs, encoder, rede e memória. A linha `leds:` mostra estado do driver WS2812, brilho, corrente estimada e falhas |
 | `r` | Liga ou desliga o resumo por segundo (começa ligado): recebidos, perdidos, duplicados, fora de ordem, intervalos, idade, atraso estimado e totais |
 | `a` | Liga ou desliga o fluxo de pacotes (10 Hz): `seq`, roll, pitch, proa, altitude, `status`, `valid` e `loop_us` |
 | `k` | Reconhece o alarme ativo: o LED de alarme para de piscar e fica aceso enquanto a condição durar. A pressão curta do encoder faz o mesmo |
@@ -172,40 +179,47 @@ O ESP B recebe a telemetria por ESP-NOW, cria o AP `Horizonte-ESP` com a página
 - **TFT** ([solo.md](docs/solo.md), passo 5): o horizonte artificial, com escala de pitch, escala de roll e proa. Mostra uma bandeira de falha (X vermelho) quando o dado não é atual ou a atitude é inválida, e `BANK ANGLE` / `ATTITUDE` nos alarmes.
 - **OLEDs** ([solo.md](docs/solo.md), passo 3; [caixa-b.md](docs/caixa-b.md)): o OLED 1, à esquerda do TFT, mostra os dados; o OLED 2, à direita, o link e a saúde do A. Todo dado inválido ou sem link aparece como `---`.
 - **Encoder:** o giro escolhe o alvo do zero, marcado com `<` no OLED 1 (atitude ou altitude). A pressão longa (1 s) zera o alvo marcado, com o andamento no rodapé.
-- **Alarmes** ([solo.md](docs/solo.md), passo 1): o LED vermelho (GPIO 13) avisa link perdido, dado atrasado, atitude inválida, atitude anormal e bank > 35°, cada um com um ritmo. O LED azul da placa fica aceso com o link OK.
-  - A atitude anormal segue a definição de "upset" da FAA (bank > 45° ou pitch > +25°), com o nariz para baixo em −20° em vez dos −10° da FAA (escolha do projeto).
-  - O aviso de bank > 35° segue o "BANK ANGLE" do EGPWS.
+- **Alarmes:** o LED vermelho sinaliza perda de link, dado atrasado, atitude inválida, atitude anormal e aviso de inclinação. O LED azul fica aceso com o link OK. Os limites do firmware são `|roll| > 35°` para `BANK ANGLE` e `|roll| > 45°`, `pitch > +25°` ou `pitch < −20°` para atitude anormal. [Alarmes do ESP B](docs/solo.md#passo-1-alarmes)
+- **Buzzer:** acompanha o ritmo do LED vermelho nos alarmes de atitude. Perda de link e dado atrasado são avisos visuais. Ao reconhecer o alarme com `k` ou com um toque curto no encoder, o buzzer cala e o LED fica aceso enquanto a condição persistir. [Montagem do buzzer](docs/caixa-b.md#buzzer)
 
 ### Página web
 
-Depois do `uploadfs`, conecte-se à rede `Horizonte-ESP` (senha `horizonte123`) e abra `http://192.168.4.1`. O AP aceita até 4 aparelhos ([web.md](docs/web.md)).
+Depois do `uploadfs`, conecte-se à rede `Horizonte-ESP` (senha `horizonte123`) e abra `http://192.168.4.1`. O AP aceita até quatro aparelhos. O WebSocket usa `ws://192.168.4.1:81/` e envia telemetria a 30 Hz por padrão. [Página web e WebSocket](docs/web.md)
 - Todos veem o horizonte e os dados; os comandos pedem o PIN (`WEB_CMD_PIN` no `config.h` do B).
 - O botão **Som** faz a página falar "bank angle" enquanto o aviso de bank estiver ativo.
 - O arquivo de áudio (`ground-station/web/bank-angle.mp3`) é uma gravação de terceiros e fica fora do repositório. Sem ele, a página usa a voz sintética do aparelho ([web.md](docs/web.md), "Som do BANK ANGLE").
 
 ### Cliente Python
 
-A partir de `ground-station/python` ([cliente-python.md](docs/cliente-python.md)):
+A partir da raiz do repositório, instale as dependências. Com o PC na rede `Horizonte-ESP`, rode o cliente.
 
 ```powershell
+cd ground-station/python
 python -m pip install -r requirements.txt
-python cliente.py                                   # com o PC na rede Horizonte-ESP
-python sim_b.py                                     # ou: simulador do B no próprio PC...
-python cliente.py --url ws://127.0.0.1:8765/        # ...e o cliente ligado a ele
-python graficos.py                                  # gráficos ao vivo do CSV mais recente de logs/
-python analisar.py logs\<nome>-tel.csv              # figuras e resumo de uma gravação
+python cliente.py
 ```
 
-O cliente grava a telemetria e os eventos em CSV, reconecta sozinho e aceita comandos pelo terminal (`?` lista os comandos). Os scripts `analisar_a.py` e `analisar_b.py` fazem as figuras de jitter, perdas e memória a partir dos logs do monitor serial.
+Para experimentar sem as placas, abra dois terminais em `ground-station/python`. Inicie o simulador no primeiro e o cliente no segundo.
+
+```powershell
+python sim_b.py
+```
+
+```powershell
+python cliente.py --url ws://127.0.0.1:8765/
+```
+
+O cliente grava a telemetria e os eventos em CSV, reconecta sozinho e aceita comandos pelo terminal (`?` lista os comandos). Rode `python graficos.py` em outro terminal para acompanhar o CSV mais recente ou passe um arquivo `*-tel.csv` a `python analisar.py` para gerar figuras e um resumo da gravação. Os scripts `analisar_a.py` e `analisar_b.py` processam os logs do monitor serial. [Cliente Python](docs/cliente-python.md)
 
 ## Testes
 
 A lógica pura (calibração, fusão, barômetro, magnetômetro, contrato, alarmes, link, JSON, servidor HTTP…) roda no PC, sem placa:
 
 ```powershell
-Push-Location firmware/aircraft; pio test -e native; Pop-Location
-Push-Location firmware/ground; pio test -e native; Pop-Location
-Push-Location ground-station/python; python -m pytest; Pop-Location
+pio test -d firmware/aircraft -e native
+pio test -d firmware/ground -e native
+python -m pip install -r ground-station/python/requirements.txt
+python -m pytest ground-station/python
 ```
 
 O ambiente `native` usa o compilador do PC: é preciso ter um GCC no PATH. No Windows, por exemplo, o do MSYS2 UCRT64 (`C:\msys64\ucrt64\bin`).
@@ -238,7 +252,24 @@ O diagnóstico faz um scan a 100 kHz e depois aceita comandos de uma letra, sem 
 
 Os valores do MPU são brutos, sem calibração; os do BME280 já vêm compensados com os coeficientes de fábrica do chip, e os do HMC5883L vêm em µT, mas sem calibração. O procedimento de cada teste, os resultados e a orientação dos eixos estão em [docs/hardware.md](docs/hardware.md).
 
-O ESP B tem um diagnóstico equivalente para o hardware dele (LEDs, os dois barramentos I2C, OLEDs, encoder, TFT, sprite e, com as teclas `w` e `p`, a fita de LEDs e o potenciômetro): `pio run -e ground_diag -t upload`, em `firmware/ground`; depois, regrave o `ground`.
+## Diagnóstico do ESP B
+
+Grave o ambiente `ground_diag` e abra o monitor a partir da raiz do repositório.
+
+```powershell
+pio run -d firmware/ground -e ground_diag -t upload
+pio device monitor -d firmware/ground -b 115200 --echo
+```
+
+| Tecla | Ação |
+|---|---|
+| `i`, `o` | Varre os dois barramentos I2C e testa os dois OLEDs |
+| `1`, `2`, `e`, `t`, `s` | Testa os LEDs da placa, o encoder, o TFT e o sprite |
+| `b` | Emite três bipes de 200 ms |
+| `w`, `p` | Percorre os padrões da fita e acompanha a leitura do potenciômetro |
+| `r`, `f` | Exercita a recuperação do driver RMT após timeout e após falha de reinstalação |
+
+Ao concluir o diagnóstico, feche o monitor e regrave o ambiente `ground`. [Diagnóstico e montagem da caixa](docs/caixa-b.md)
 
 ## Estado do projeto
 
@@ -258,8 +289,15 @@ Etapas conforme o [plano de desenvolvimento](docs/plano.md):
 - [x] ESP B: AP Wi-Fi, página web e WebSocket; comandos com confirmação (ACK) ([web.md](docs/web.md))
 - [x] Cliente Python e métricas: jitter do loop, perda e latência ([cliente-python.md](docs/cliente-python.md))
 - [x] Caixa do ESP A, que é o modelo final da demonstração
-- [ ] Caixa do ESP B: power bank, buzzer com transistor e anel de LEDs ([caixa-b.md](docs/caixa-b.md))
+- [x] Buzzer instalado na base do ESP B e testado no power bank ([hardware.md](docs/hardware.md))
+- [ ] Validar os dois anéis e registrar o ensaio da caixa do ESP B completa ([caixa-b.md](docs/caixa-b.md))
 - [ ] Slides e ensaio da apresentação
+
+### Próximas verificações de bancada
+
+1. No `ground_diag`, conferir a quantidade de LEDs por lado, o canto de entrada, o sentido dos anéis e a leitura do potenciômetro com `w` e `p`.
+2. Medir a corrente da fita no padrão branco e observar o aquecimento do JST e do cabo. O firmware limita a corrente **estimada** da fita a 1,3 A na configuração atual. Medir também a autonomia com o conjunto alimentado pelo power bank.
+3. Com o firmware `ground` e a caixa completa, registrar pela serial um ensaio com atitude normal, alarmes, reconhecimento e perda de link. Usar `c` para registrar o carimbo da compilação e os indicadores da fita. [Roteiro de montagem e bancada](docs/caixa-b.md)
 
 Os testes de detalhe que não mudam a demonstração ficam para depois: o projeto pode virar TCC ([plano.md](docs/plano.md), "Adiado para o TCC").
 

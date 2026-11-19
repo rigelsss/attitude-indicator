@@ -6,6 +6,21 @@ Discutido em 29/10/2026. Reúne as decisões sobre a montagem do ESP B na caixa 
 
 **Situação em 07/11/2026:** a caixa e o power bank estão prontos. Falta o adaptador USB-C → micro-USB (chega de 5 a 9/11) para instalar a protoboard, o power bank, o buzzer, o potenciômetro e o encoder, o 1N4148 do buzzer (de 6 a 12/11) e a fita de LEDs (de 9 a 11/11). O conversor de nível (módulo 2) foi soldado e testado em 09/11/2026. Os dois OLEDs já estão instalados e funcionando (conferido pelo usuário, 07/11/2026).
 
+**Situação em 18/11/2026:** o adaptador e a fita chegaram, e o buzzer está montado e funcionando. **O encoder foi danificado na montagem e fica fora da apresentação** (seção "Sem o encoder"; [hardware.md](hardware.md), "Encoder do B danificado na montagem"). Próximos passos: o potenciômetro, as telas na tampa e a fita.
+
+## Sem o encoder (18/11/2026)
+
+Na montagem, o encoder parou de funcionar. Entre as causas estão os pinos soltos, cianoacrilato na protoboard e o R1 do verso danificado na ressoldagem ([hardware.md](hardware.md), "Encoder do B danificado na montagem"). **Decisão do usuário: o encoder fica fora da apresentação.** Não há encoder reserva.
+
+- **O firmware não muda.** Com o encoder desligado, o `ground` mantém o pull-up interno no CLK, no DT e no SW, e não aparecem cliques nem apertos falsos (bancada de 02/11/2026). O OLED 1 continua mostrando o `<` em ROLL/PIT, o alvo do boot, sem efeito.
+- **Como zerar sem o encoder** (os comandos já existem e passaram na bancada; [web.md](web.md) e [cliente-python.md](cliente-python.md)):
+  1. **Página no celular** (rede Horizonte-ESP): botões **Zerar atitude** e **Zerar altitude**, com o PIN. É o caminho para a apresentação: o comando volta concluído em ~40 ms, e o andamento aparece em todos os aparelhos conectados;
+  2. **cliente Python** no PC: `z` (atitude) e `0` (altitude);
+  3. **console do B** (USB): `z` e `0`.
+- **Reconhecer o alarme:** sem o encoder, só pela tecla `k` do console do B. A página não tem esse botão. Na apresentação, o alarme termina sozinho quando a condição acaba. Acrescentar o reconhecimento na página exigiria mudar o firmware e a página, e só será feito se o usuário pedir.
+- **O potenciômetro continua só no brilho da fita.** Não serve para zerar: cada ajuste do brilho poderia disparar um zero sem querer, e um potenciômetro não tem um gesto claro de "executar".
+- **O furo do encoder na parede da frente:** fica vazio ou tampado.
+
 ## Peças (29/10/2026)
 
 | Peça | Situação |
@@ -41,7 +56,7 @@ Atenção na compra de CIs: o **74HC** (sem o T) alimentado em 5 V só aceita co
 - **Quem olha de frente é o piloto.** O nariz do avião é a borda da tampa mais distante do observador, a asa direita fica à direita dele e a borda mais próxima é a cauda. O TFT e o anel se comportam como o horizonte visto da cabine.
 - **A caixa fica com o lado longo (15,5 cm) de frente para o observador:** a linha de displays é larga.
 - **Tampa (12,5 × 15,5 cm):** **OLED 1 | TFT | OLED 2** em linha, no centro, de pé para o observador. Com a fita na borda (~1 cm de largura), sobram ~10,5 × 13,5 cm por dentro.
-- **Encoder e potenciômetro na parede da frente** da caixa, do lado do piloto. Os fios correm por dentro da caixa até o ESP e não passam pela tampa. Na tampa, a mão cobriria os LEDs.
+- **Encoder e potenciômetro na parede da frente** da caixa, do lado do piloto (o encoder saiu em 18/11/2026; seção "Sem o encoder"). Os fios correm por dentro da caixa até o ESP e não passam pela tampa. Na tampa, a mão cobriria os LEDs.
 - **A tampa sai inteira** (revisto em 07/11/2026, como na caixa do A): leva o TFT, os dois OLEDs e os **dois anéis de LEDs**, e o circuito da base fica à vista. Na base ficam o ESP e a protoboard, o power bank, o conversor BSS138, o buzzer, o encoder e o potenciômetro.
 - **O que atravessa a abertura:**
   - **displays (TFT e OLEDs):** já têm os próprios conectores, separáveis (situação de 07/11/2026);

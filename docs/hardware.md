@@ -1365,6 +1365,27 @@ Junções normais (B→E acima de B→C, como num NPN; o emissor é o pino da di
 
 **8. No power bank** (`ground` gravado; B só no power bank, pelo adaptador USB-C → micro-USB; sem TFT nem OLEDs): 5 alarmes de atitude anormal (bank acima de 45°, ~10 s cada), com bipes a 5 Hz. O **LED do link ficou aceso direto**, então não houve reinício. **Sem registro serial**, porque não havia monitor: um `Brownout` sem reinício não teria aparecido. O registro pela serial fica para a bancada do `ground` com tudo montado (TFT, OLEDs e encoder ligados de novo).
 
+### Encoder do B danificado na montagem (18/11/2026)
+
+Encoder religado na parede da frente da caixa ([caixa-b.md](caixa-b.md), "Sem o encoder"). `ground_diag` com o carimbo `2026-11-18 17:48:50`, tecla `e`. Nesse ambiente, o CLK e o DT ficam **sem** o pull-up interno, de propósito: um pino sem contato aparece flutuando.
+
+| Log (`firmware/ground/logs/device-monitor-…`) | Resultado |
+|---|---|
+| `261118-174935` | Boot com `CLK 0, DT 0`. **O CLK ficou em 0 o tempo todo**, e só o DT alternava. Foram 3 602 bordas para ~52 passos (em 23/10, 127 bordas no teste inteiro) e 42 inválidas. 8 apertos curtos do botão |
+| `261118-175405` e `261118-175604` | Depois da cola: **o CLK e o DT flutuando juntos.** Já havia 9 274 bordas antes do primeiro clique, e o contador passou de 670 000 bordas e 45 000 inválidas. Os passos andavam sozinhos (+4 366, −2 418) |
+| `261118-181319` | Igual: 111 000 bordas e 1 568 inválidas, com os passos subindo e descendo sem clique. Nenhum aperto do botão |
+
+- **Causas encontradas pelo usuário:**
+  - na colagem do encoder, **cianoacrilato derramado na protoboard**. A cola curada é isolante e corta o contato das fileiras que atinge;
+  - **pinos do módulo meio soltos**: um contato que abre e fecha deixa o sinal flutuando, que é o padrão dos logs;
+  - na tentativa de refazer as soldas, **o R1 do verso foi danificado**. Na [foto](img/WhatsApp%20Image%202026-11-18%20at%2018.50.30.jpeg), a ilha da direita do R1 está com o cobre exposto, sem solda nem resistor, e há um resto deslocado à esquerda da ilha da esquerda. O R2 e o R3 (10 kΩ) parecem inteiros. O verso todo está brilhante, provavelmente de cola ou de fluxo.
+- **Medidas de resistência na barra do módulo** (antes da ressoldagem): CLK e DT ↔ `+` com ~10 kΩ, e alternando com o GND a cada clique. Bateram.
+- **O R1, pelo esquema comum do KY-040, é o pull-up do SW** (o botão). O CLK e o DT usam o R2 e o R3. O firmware **não depende do R1**: o SW usa o pull-up interno no `ground` e no `ground_diag` (`input_task.cpp`: "o botão do KY-040 não tem pull-up"). **Confirmado depois da ressoldagem (18/11/2026):** SW ↔ `+` aberto, CLK ↔ `+` 10 kΩ e DT ↔ `+` 10 kΩ. Só o pull-up do botão se perdeu, e o firmware não o usa. **Não testado depois da ressoldagem:** o `e` do `ground_diag`. Esse é o teste que decide se o encoder volta.
+- **Decisão do usuário (18/11/2026): o encoder fica fora da apresentação.** O firmware não muda. Com o encoder desligado, o pull-up interno do CLK e do DT no `ground` impede os cliques falsos ("Encoder desligado", 02/11/2026). Os zeros vão pela página, pelo cliente Python ou pelo console do B ([caixa-b.md](caixa-b.md), "Sem o encoder").
+- **Lições para a montagem:**
+  - prender o encoder pela porca do eixo; se precisar de cola, usar cola quente ou epóxi, longe da protoboard, dos pinos e do eixo;
+  - considerar perdidas as fileiras da protoboard atingidas por cianoacrilato. Não usar acetona: ela ataca o plástico da protoboard.
+
 ### Comandos do B para o A pelo console (23/10/2026)
 
 Passos 1 e 2 da semana 5 ([web.md](web.md)). Log `firmware/ground/logs/261023-211045` (B com carimbo `2026-10-23 21:03:03`; A regravado antes). O A ficou no power bank, parado na mesa. Nenhuma linha embaralhada pela USB.

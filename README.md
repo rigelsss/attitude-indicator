@@ -2,9 +2,22 @@
 
 [![CI](https://github.com/rigelsss/attitude-indicator/actions/workflows/ci.yml/badge.svg)](https://github.com/rigelsss/attitude-indicator/actions/workflows/ci.yml)
 
-Horizonte artificial em bancada com dois ESP32. Uma placa fica no modelo, mede a atitude (roll, pitch e proa) e a altitude relativa e transmite os dados sem fio. A outra mostra a atitude como um instrumento de painel e a disponibiliza para o navegador e para um cliente Python.
+Horizonte artificial em bancada com dois ESP32. A placa no modelo estima a atitude (arfagem e rolagem), a proa e a altitude relativa e transmite os dados sem fio. A estação de solo desenha o horizonte no TFT e disponibiliza a telemetria para o navegador e para um cliente Python.
 
 Projeto final da disciplina **Sistemas Embarcados 2026.2**. Usa Arduino via PlatformIO e cobre I2C, SPI, interrupções, FreeRTOS, ESP-NOW e IoT.
+
+## O que é um horizonte artificial?
+
+O **horizonte artificial** (*attitude indicator*) é o instrumento de painel que mostra a orientação do avião em relação ao horizonte, mesmo quando o piloto não consegue vê-lo pela janela. O símbolo do avião fica fixo no centro, enquanto a linha que separa o céu azul do solo marrom se move. [Manual da FAA, capítulo sobre instrumentos de voo](https://www.faa.gov/sites/faa.gov/files/regulations_policies/handbooks_manuals/aviation/phak/10_phak_ch8.pdf)
+
+- **Arfagem (*pitch*)** indica quanto o nariz aponta para cima ou para baixo. Quando o nariz sobe, a linha do horizonte desce na tela e aparece mais céu.
+- **Rolagem (*roll*)** indica a inclinação lateral do avião. Quando a asa direita baixa, o lado direito da linha do horizonte sobe na tela. O ponteiro e a escala no arco superior indicam o ângulo de inclinação.
+
+<p align="center">
+  <img src="docs/img/horizonte-artificial.gif" width="780" alt="Simulação do horizonte artificial. A linha desce quando o nariz sobe, sobe quando o nariz baixa e gira no sentido oposto ao da inclinação das asas. O símbolo do avião permanece fixo.">
+</p>
+
+[Ver os quatro exemplos em uma imagem estática](docs/img/horizonte-artificial-leitura.png)
 
 > **Estado registrado em 15/11/2026:** os dois firmwares, a página web e o cliente Python já foram exercitados em bancada.
 > - **ESP A:** pronto, na caixa final da demonstração, com as calibrações gravadas.

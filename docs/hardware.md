@@ -1380,11 +1380,31 @@ Encoder religado na parede da frente da caixa ([caixa-b.md](caixa-b.md), "Sem o 
   - **pinos do módulo meio soltos**: um contato que abre e fecha deixa o sinal flutuando, que é o padrão dos logs;
   - na tentativa de refazer as soldas, **o R1 do verso foi danificado**. Na [foto](img/WhatsApp%20Image%202026-11-18%20at%2018.50.30.jpeg), a ilha da direita do R1 está com o cobre exposto, sem solda nem resistor, e há um resto deslocado à esquerda da ilha da esquerda. O R2 e o R3 (10 kΩ) parecem inteiros. O verso todo está brilhante, provavelmente de cola ou de fluxo.
 - **Medidas de resistência na barra do módulo** (antes da ressoldagem): CLK e DT ↔ `+` com ~10 kΩ, e alternando com o GND a cada clique. Bateram.
-- **O R1, pelo esquema comum do KY-040, é o pull-up do SW** (o botão). O CLK e o DT usam o R2 e o R3. O firmware **não depende do R1**: o SW usa o pull-up interno no `ground` e no `ground_diag` (`input_task.cpp`: "o botão do KY-040 não tem pull-up"). **Confirmado depois da ressoldagem (18/11/2026):** SW ↔ `+` aberto, CLK ↔ `+` 10 kΩ e DT ↔ `+` 10 kΩ. Só o pull-up do botão se perdeu, e o firmware não o usa. **Não testado depois da ressoldagem:** o `e` do `ground_diag`. Esse é o teste que decide se o encoder volta.
-- **Decisão do usuário (18/11/2026): o encoder fica fora da apresentação.** O firmware não muda. Com o encoder desligado, o pull-up interno do CLK e do DT no `ground` impede os cliques falsos ("Encoder desligado", 02/11/2026). Os zeros vão pela página, pelo cliente Python ou pelo console do B ([caixa-b.md](caixa-b.md), "Sem o encoder").
+- ~~**O R1, pelo esquema comum do KY-040, é o pull-up do SW**~~ **(corrigido em 19/11/2026: nesta placa, o R1 é o pull-up do DT;** seção seguinte). Registro original: "SW ↔ `+` aberto, CLK ↔ `+` 10 kΩ e DT ↔ `+` 10 kΩ depois da ressoldagem". A medição de 19/11 e o `ground_diag` mostraram o contrário: **DT ↔ `+` aberto** e SW ↔ `+` 10 kΩ. O firmware não depende do R1: o `ground` liga o pull-up interno no CLK, no DT e no SW.
+- ~~**Decisão do usuário (18/11/2026): o encoder fica fora da apresentação.**~~ **Revista em 19/11/2026: o encoder volta** (seção seguinte).
 - **Lições para a montagem:**
   - prender o encoder pela porca do eixo; se precisar de cola, usar cola quente ou epóxi, longe da protoboard, dos pinos e do eixo;
   - considerar perdidas as fileiras da protoboard atingidas por cianoacrilato. Não usar acetona: ela ataca o plástico da protoboard.
+
+### Encoder do B recuperado: resto de fluxo nos pinos (19/11/2026)
+
+Encoder na parede da frente da caixa, sem os OLEDs ligados; A desligado. Logs em `firmware/ground/logs/device-monitor-…`.
+
+| Log | Firmware | Resultado |
+|---|---|---|
+| `261119-213250` | `ground` (`2026-11-19 21:31:56`) | Nenhum `[enc]` em ~45 s; o `c` deu cliques 0, **inválidas 0**: o CLK, o DT e o SW parados em nível alto |
+| — | multímetro, B ligado | GPIO 32, 33 e 25 alternando entre 3,3 V e 0 V como esperado, **com a ponta apertando os pinos**. Encostar a ponta no `+` e no `GND` vizinhos do módulo **apagou parcialmente o LED da placa** (curto do 3V3; o multímetro chegou a mostrar "6 V", leitura falsa no transitório) |
+| `261119-214220` | `ground` | **16 cliques** em ~25 s girando sem parar, sentido sempre certo; nenhum aperto do botão. O contador de boots do DHCP foi de 99 a 107 entre os dois logs sem gravação: reinícios pelos curtos da ponta |
+| `261119-214710` | `ground_diag`, `e`, **sem tocar no encoder** | ~36 000 bordas e ~9 000 inválidas em ~20 s (cerca de 2 000 bordas/s), passos andando sozinhos de +74 a −476: **CLK e DT flutuando juntos**. Nenhum evento do botão |
+| — | limpeza | O usuário **limpou o resto de fluxo de solda** dos pinos do módulo (da ressoldagem de 18/11) |
+| `261119-215651` | `ground_diag`, `e` | **Inválidas 0** do começo ao fim; o giro aparece nos dois sentidos; botão `CURTO (190 ms)`, `LONGO`, `solto (2050 ms)`. Restaram ~18 000 bordas que se anulam (passos ±1): **só o DT oscila**, sempre com o CLK parado (`CLK 0 DT 1` ↔ `CLK 0 DT 0`) |
+| `261119-220112` | `ground` (`2026-11-19 22:00:33`) | Parado: nenhum `[enc]`. 10 cliques horários → **7**; 10 anti-horários → **8 linhas** (o `c` conta 9; uma linha se perdeu num trecho de lixo da serial), duas delas a **55 ms** uma da outra (clique duplicado por repique). Botão curto (`nada a reconhecer`) e pressão longa (`zerar altitude` enviado, 3 reenvios, `sem resposta` com o A desligado) certos. `c`: inválidas 2, fila da ISR 0 |
+
+- **Causa principal: resto de fluxo de solda nos pinos do módulo.** A resina é isolante: no contato com o conector, o `+` e o `GND` do módulo só fechavam com os pinos apertados (a ponta do multímetro). Sem o `GND`, os contatos do giro e o botão fecham contra um nó solto (o `ground` não viu nada no primeiro log); sem o `+`, o `ground_diag` (sem pull-up interno) mostra o CLK e o DT flutuando. Depois da limpeza, as inválidas foram a zero e o botão voltou.
+- **O R1 desta placa é o pull-up do DT**, não do SW (corrige o registro de 18/11). Evidência: a medição de 19/11 (CLK ↔ `+` 10 kΩ, SW ↔ `+` 10 kΩ, **DT ↔ `+` aberto**) e o `ground_diag` limpo, em que só o DT oscila quando o contato dele abre. No `ground`, o DT fica só com o pull-up interno (~45 kΩ), mais fraco que os 10 kΩ do CLK.
+- **Resultado: o encoder funciona, com perdas.** Botão perfeito; o giro registra ~75–80 % dos cliques, mesmo devagar (1,5 a 5 s entre cliques), e às vezes duplica um. Causa provável: o DT só com o pull-up interno e um contato que ainda repica.
+- **Decisão do usuário (19/11/2026): o encoder volta para a apresentação, sem repor o pull-up do DT.** Perder alguns cliques é aceito: cada clique só alterna o alvo, e o `<` do OLED 1 mostra qual está marcado antes da pressão longa. O conserto, se um dia for preciso, é um resistor comum de 10 kΩ entre o DT e o `+` nas costas do conector do módulo. O firmware não muda.
+- **Lições:** depois de soldar, limpar o fluxo dos pinos (álcool isopropílico) antes de encaixar o conector; medir tensão nos pinos do ESP ou com garra, nunca nos pinos colados do módulo (curto do `+` com o `GND` reinicia o B).
 
 ### Comandos do B para o A pelo console (23/10/2026)
 
